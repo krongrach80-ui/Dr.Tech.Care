@@ -1583,76 +1583,98 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         {/* ภาพที่ 1: หน้าพักหน้าจอ (Screensaver) - Dr.Tech.Care */}
         {/* มีระบบกล้องตรวจจับคนไข้ + ชะลอดีเลย์ 1.8 วินาทีก่อนเลื่อนขึ้น */}
         {/* ---------------------------------------------------- */}
+        {/* ---------------------------------------------------- */}
+        {/* ภาพที่ 1: หน้าพักหน้าจอ (Screensaver) - Dr.Tech.Care */}
+        {/* มีระบบกล้องตรวจจับคนไข้ + ชะลอดีเลย์ 1.8 วินาทีก่อนเลื่อนขึ้น */}
+        {/* ---------------------------------------------------- */}
         {currentStep === 1 && (
           <div className="w-full flex-1 flex flex-col items-center justify-center text-center animate-fadeIn relative">
             
-            {/* กล่องแจ้งเตือนการตรวจพบใบหน้า พร้อมแถบความคืบหน้า 3 วินาที */}
-            {isPersonDetected ? (
-              <div className="absolute top-0 inset-x-2 z-30 bg-emerald-950/95 backdrop-blur-md border-2 border-emerald-400 text-white rounded-2xl p-3 shadow-2xl flex flex-col items-center animate-fadeIn">
-                <div className="flex items-center justify-between w-full text-xs font-black mb-1">
-                  <span className="flex items-center gap-1.5 text-emerald-300">
-                    <User className="w-4 h-4 text-emerald-400 animate-pulse" />
-                    <span>พบผู้ใช้แล้ว กรุณารอสักครู่</span>
-                  </span>
-                  <span className="font-mono text-yellow-300 font-black text-sm">
-                    {faceCountdownSeconds} วินาที ({presenceProgress}%)
-                  </span>
-                </div>
-                <div className="w-full h-3 bg-slate-800 rounded-full overflow-hidden mb-1 border border-emerald-500/30">
-                  <div
-                    className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-yellow-400 transition-all duration-75 rounded-full"
-                    style={{ width: `${presenceProgress}%` }}
-                  />
-                </div>
-                <p className="text-[11px] text-emerald-200 font-semibold">
-                  ⏳ กรุณามองกล้องต่อเนื่อง 3 วินาที ระบบจะไปหน้าถัดไปอัตโนมัติ...
-                </p>
-              </div>
-            ) : (
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-300 text-[#1E8A4C] text-xs font-bold shadow-xs mb-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>กำลังตรวจจับใบหน้า... (กรุณานั่งหรือยืนหน้ากล้อง)</span>
-              </div>
-            )}
-
-            {/* แสดงข้อความชัดเจนเมื่อกล้องมีปัญหา หรือไม่พบกล้อง (กล่องเดียว สั้น ชัดเจน เหมาะกับผู้สูงอายุ) */}
-            {cameraError && (
-              <div className="w-full bg-amber-50 border-2 border-amber-400 rounded-2xl p-3.5 mb-3 text-amber-950 text-xs shadow-md animate-fadeIn flex flex-col gap-2.5 text-left">
-                <div className="flex items-start gap-2.5">
-                  <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="font-black text-amber-900 text-sm">กล้องเว็บแคมยังไม่พร้อมใช้งาน</p>
-                    <p className="text-xs text-amber-900/90 mt-0.5 leading-relaxed">
-                      {cameraError}
+            {/* 1. กรณีกล้องมีปัญหา: เหลือกล่องแจ้งเตือนเพียง 1 กล่องเท่านั้น ข้อความสั้นเข้าใจง่าย + 2 ปุ่ม */}
+            {cameraError ? (
+              <div className="w-full max-w-xs bg-amber-50/95 border-2 border-amber-400 rounded-3xl p-3.5 sm:p-4 mb-2.5 text-amber-950 shadow-md animate-fadeIn flex flex-col gap-2.5 text-center">
+                <div className="flex flex-col items-center gap-1">
+                  <div className="w-9 h-9 rounded-full bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-700 shadow-2xs">
+                    <AlertCircle className="w-5 h-5 text-amber-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-amber-950 text-sm sm:text-base leading-tight">
+                      กล้องยังไม่พร้อมใช้งาน
+                    </h3>
+                    <p className="text-xs text-amber-900/90 mt-0.5 font-semibold leading-snug">
+                      กรุณาอนุญาตการใช้กล้อง หรือใช้รหัส PIN แทน
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 pt-0.5">
+
+                {/* ปุ่มในกล่องมีแค่ 2 ปุ่ม กดง่าย ชัดเจน */}
+                <div className="flex flex-col gap-2 pt-0.5">
                   <button
                     type="button"
                     onClick={startCamera}
-                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 transition active:scale-95 cursor-pointer shadow-xs"
+                    className="w-full min-h-[46px] py-2.5 px-4 rounded-xl bg-gradient-to-r from-[#2FB39A] to-[#1E8A4C] hover:from-[#259b84] hover:to-[#166534] text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shadow-md"
                   >
-                    <RefreshCw className="w-3.5 h-3.5" />
+                    <RefreshCw className="w-4 h-4" />
                     <span>ลองเปิดกล้องอีกครั้ง</span>
                   </button>
+
                   <button
                     type="button"
                     onClick={() => setShowPinModal(true)}
-                    className="px-3.5 py-1.5 rounded-xl bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold text-xs flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                    className="w-full min-h-[46px] py-2.5 px-4 rounded-xl bg-white hover:bg-amber-100/70 text-amber-950 border border-amber-300 font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shadow-2xs"
                   >
-                    <Key className="w-3.5 h-3.5 text-amber-800" />
+                    <Key className="w-4 h-4 text-amber-800" />
                     <span>ใช้รหัส PIN แทน</span>
                   </button>
                 </div>
               </div>
+            ) : isPersonDetected ? (
+              /* 2. กรณีตรวจพบใบหน้า: แสดงแถบความคืบหน้า 3 วินาทีแบบกระชับ ชัดเจน ไม่กินพื้นที่ */
+              <div className="w-full max-w-xs bg-emerald-50/95 border-2 border-emerald-400 text-[#0B2B2B] rounded-2xl p-2 sm:p-2.5 mb-2 shadow-md animate-fadeIn flex flex-col items-center">
+                <div className="flex items-center justify-between w-full text-xs font-black mb-1 px-0.5">
+                  <span className="flex items-center gap-1.5 text-[#1E8A4C]">
+                    <UserCheck className="w-4 h-4 text-emerald-600" />
+                    <span>ตรวจพบใบหน้าแล้ว</span>
+                  </span>
+                  <span className="font-mono text-[#1E8A4C] font-black text-xs bg-white px-2 py-0.5 rounded-lg border border-emerald-300 shadow-2xs">
+                    {faceCountdownSeconds} วินาที ({presenceProgress}%)
+                  </span>
+                </div>
+                <div className="w-full h-2.5 bg-white rounded-full overflow-hidden border border-emerald-300/80 shadow-inner">
+                  <div
+                    className="h-full bg-gradient-to-r from-[#2FB39A] to-[#1E8A4C] transition-all duration-100 rounded-full"
+                    style={{ width: `${presenceProgress}%` }}
+                  />
+                </div>
+              </div>
+            ) : (
+              /* 3. กรณีกล้องพร้อมแต่ยังไม่พบคน: สถานะกะทัดรัด สบายตา ไม่แย่งสายตา */
+              <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-emerald-50/80 border border-emerald-200 text-[#1E8A4C] text-xs font-bold shadow-2xs mb-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span>กำลังตรวจจับใบหน้า...</span>
+              </div>
             )}
 
-            {/* โลโก้ Dr.Tech.Care ทรงกลมพร้อมวงแหวนชาร์จรอบนอก 3 วินาที */}
-            <div className="relative group cursor-pointer my-2" onClick={triggerSlideUp}>
-              <div className="w-48 h-48 sm:w-56 sm:h-56 rounded-full border-4 border-emerald-400 shadow-2xl overflow-hidden flex flex-col items-center justify-center bg-gradient-to-b from-[#E8FAF3] via-[#DCF6EB] to-[#B8EDD7] relative transform group-hover:scale-105 transition duration-300">
+            {/* กรอบตรวจจับใบหน้าตรงกลาง (Face Viewfinder Frame) พร้อมวงแหวนความคืบหน้า 3 วินาที */}
+            <div className="relative group cursor-pointer my-1.5 sm:my-2 flex items-center justify-center" onClick={triggerSlideUp}>
+              {/* เส้นไกด์กรอบเล็งใบหน้า 4 มุม (Viewfinder Corner Accents) */}
+              <div className="absolute -inset-2.5 pointer-events-none">
+                <div className={`absolute top-0 left-0 w-5 h-5 border-t-2 border-l-2 rounded-tl-lg transition-colors duration-300 ${isPersonDetected ? 'border-emerald-500' : 'border-emerald-300/60'}`} />
+                <div className={`absolute top-0 right-0 w-5 h-5 border-t-2 border-r-2 rounded-tr-lg transition-colors duration-300 ${isPersonDetected ? 'border-emerald-500' : 'border-emerald-300/60'}`} />
+                <div className={`absolute bottom-0 left-0 w-5 h-5 border-b-2 border-l-2 rounded-bl-lg transition-colors duration-300 ${isPersonDetected ? 'border-emerald-500' : 'border-emerald-300/60'}`} />
+                <div className={`absolute bottom-0 right-0 w-5 h-5 border-b-2 border-r-2 rounded-br-lg transition-colors duration-300 ${isPersonDetected ? 'border-emerald-500' : 'border-emerald-300/60'}`} />
+              </div>
+
+              {/* วงแหวนโลโก้และเป้าเล็งใบหน้า */}
+              <div
+                className={`w-44 h-44 sm:w-52 sm:h-52 rounded-full border-4 shadow-xl overflow-hidden flex flex-col items-center justify-center relative transform group-hover:scale-105 transition-all duration-300 ${
+                  isPersonDetected
+                    ? 'border-emerald-500 bg-gradient-to-b from-[#E8F8F1] via-[#DCF6EB] to-[#B8EDD7] shadow-emerald-500/25 ring-4 ring-emerald-300/40'
+                    : 'border-emerald-300 bg-gradient-to-b from-[#E8FAF3] via-[#DCF6EB] to-[#B8EDD7]'
+                }`}
+              >
                 {/* SVG Medical & Health Tech Emblem */}
-                <svg className="w-24 h-24 sm:w-28 sm:h-28 text-[#1E8A4C]" viewBox="0 0 100 100" fill="none">
+                <svg className="w-20 h-20 sm:w-24 sm:h-24 text-[#1E8A4C]" viewBox="0 0 100 100" fill="none">
                   <circle cx="50" cy="50" r="44" stroke="#A7E8CD" strokeWidth="2" strokeDasharray="4 3" />
                   <rect x="42" y="18" width="16" height="64" rx="8" fill="#1E8A4C" />
                   <rect x="18" y="42" width="64" height="16" rx="8" fill="#1E8A4C" />
@@ -1660,16 +1682,16 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   <path d="M38 50 L46 50 L48 42 L52 58 L54 50 L62 50" stroke="#1E8A4C" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
 
-                <div className="absolute bottom-4 inset-x-0 text-center">
-                  <span className="font-extrabold text-[11px] sm:text-xs tracking-wider text-[#0B2B2B] uppercase">
+                <div className="absolute bottom-3.5 inset-x-0 text-center">
+                  <span className="font-extrabold text-[10px] sm:text-[11px] tracking-wider text-[#0B2B2B] uppercase">
                     SMART REHAB
                   </span>
                 </div>
 
-                <div className="absolute inset-0 rounded-full border-4 border-white/50 pointer-events-none animate-pulse" />
+                <div className="absolute inset-0 rounded-full border-2 border-white/60 pointer-events-none" />
               </div>
 
-              {/* วงแหวนชาร์จรอบนอกเมื่อตรวจพบใบหน้า (0 ถึง 100% ใน 3 วินาที) */}
+              {/* วงแหวนนับถอยหลังรอบนอก (Circular Progress Ring 3 วินาที) */}
               {presenceProgress > 0 && (
                 <svg className="absolute -inset-2 w-[calc(100%+16px)] h-[calc(100%+16px)] -rotate-90 pointer-events-none z-20">
                   <circle
@@ -1677,51 +1699,51 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                     cy="50%"
                     r="47%"
                     fill="none"
-                    stroke="#10b981"
+                    stroke="#10B981"
                     strokeWidth="6"
                     strokeDasharray="600"
                     strokeDashoffset={600 - (600 * presenceProgress) / 100}
                     strokeLinecap="round"
-                    className="filter drop-shadow-[0_0_10px_rgba(16,185,129,0.9)] transition-all duration-100"
+                    className="filter drop-shadow-[0_0_8px_rgba(16,185,129,0.8)] transition-all duration-100"
                   />
                 </svg>
               )}
             </div>
 
             {/* ข้อความต้อนรับและชื่อระบบ Dr.Tech.Care */}
-            <div className="mt-2 flex flex-col items-center">
-              <h1 className="text-3xl sm:text-4xl font-black text-[#0B2B2B] tracking-tight">
+            <div className="mt-1 flex flex-col items-center">
+              <h1 className="text-2xl sm:text-3xl font-black text-[#0B2B2B] tracking-tight">
                 Dr.Tech.Care
               </h1>
-              <p className="text-sm sm:text-base font-extrabold text-[#1E8A4C] mt-1">
+              <p className="text-xs sm:text-sm font-extrabold text-[#1E8A4C] mt-0.5">
                 ระบบกายภาพบำบัดและดูแลสุขภาพอัจฉริยะ
-              </p>
-              <p className="text-xs sm:text-sm text-slate-500 font-semibold mt-1 max-w-xs">
-                ยินดีต้อนรับสู่ระบบฟื้นฟูสมรรถภาพร่างกายสำหรับผู้สูงอายุ
               </p>
             </div>
 
-            {/* ปุ่มกดขนาดใหญ่ สำหรับผู้สูงอายุ */}
-            <div className="mt-5 w-full max-w-xs space-y-3">
+            {/* ปุ่มกดขนาดใหญ่ สำหรับผู้สูงอายุ (≥ 64px) */}
+            <div className="mt-3.5 sm:mt-4 w-full max-w-xs space-y-2">
               <button
                 data-kiosk-target="step1-start"
                 onClick={triggerSlideUp}
-                className="w-full min-h-[64px] sm:min-h-[72px] py-4 px-6 rounded-2xl bg-gradient-to-r from-[#2FB39A] via-[#1E8A4C] to-[#15803D] hover:from-[#259b84] hover:to-[#166534] text-white font-black text-base sm:text-lg shadow-xl hover:shadow-2xl active:scale-95 transition flex items-center justify-center gap-2.5 cursor-pointer border-2 border-emerald-300"
+                className="w-full min-h-[64px] sm:min-h-[70px] py-3.5 sm:py-4 px-6 rounded-2xl bg-gradient-to-r from-[#2FB39A] via-[#1E8A4C] to-[#15803D] hover:from-[#259b84] hover:to-[#166534] text-white font-black text-base sm:text-lg shadow-xl hover:shadow-2xl active:scale-95 transition flex items-center justify-center gap-2.5 cursor-pointer border-2 border-emerald-300"
                 id="btnSitInFrontOfCamera"
               >
                 <span>แตะหน้าจอเพื่อเริ่มต้นใช้งาน</span>
                 <ArrowRight className="w-6 h-6 shrink-0" />
               </button>
 
-              <button
-                data-kiosk-target="step1-pin"
-                onClick={() => setShowPinModal(true)}
-                className="w-full min-h-[48px] py-3 px-4 rounded-xl bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 font-bold text-xs sm:text-sm border border-slate-300 hover:border-emerald-400 flex items-center justify-center gap-2 transition cursor-pointer active:scale-95 shadow-xs"
-                id="btnKioskPinFallbackMain"
-              >
-                <Key className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>เข้าสู่ระบบด้วยรหัส PIN (ทางเลือก)</span>
-              </button>
+              {/* ซ่อนปุ่ม PIN ด้านล่างหากมีกล้อง error (เนื่องจากกล่องแจ้งเตือนมีปุ่ม PIN แล้ว) */}
+              {!cameraError && (
+                <button
+                  data-kiosk-target="step1-pin"
+                  onClick={() => setShowPinModal(true)}
+                  className="w-full min-h-[46px] py-2.5 px-4 rounded-xl bg-slate-100/90 hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 font-bold text-xs sm:text-sm border border-slate-300 hover:border-emerald-400 flex items-center justify-center gap-2 transition cursor-pointer active:scale-95 shadow-2xs"
+                  id="btnKioskPinFallbackMain"
+                >
+                  <Key className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>เข้าสู่ระบบด้วยรหัส PIN (ทางเลือก)</span>
+                </button>
+              )}
             </div>
           </div>
         )}
