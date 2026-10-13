@@ -411,10 +411,20 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
-  // Step 1 Presence State
+  // Step 1 Presence State & 3-Second Automatic Face Detection
   const [isPersonDetected, setIsPersonDetected] = useState<boolean>(false);
   const [presenceProgress, setPresenceProgress] = useState<number>(0);
+  const [faceCountdownSeconds, setFaceCountdownSeconds] = useState<number>(3);
   const [isSlideUpAnimating, setIsSlideUpAnimating] = useState<boolean>(false);
+
+  // Step 1: Prolonged No-Face Presence Inquiry Modal ("คุณอยู่หน้าเครื่องหรือไม่?")
+  const [showPresenceInquiryModal, setShowPresenceInquiryModal] = useState<boolean>(false);
+  const [modalArmPose, setModalArmPose] = useState<'none' | 'right_yes' | 'left_no'>('none');
+  const [modalRightArmProgress, setModalRightArmProgress] = useState<number>(0);
+  const [modalLeftArmProgress, setModalLeftArmProgress] = useState<number>(0);
+  const [modalRightArmSec, setModalRightArmSec] = useState<number>(3);
+  const [modalLeftArmSec, setModalLeftArmSec] = useState<number>(2);
+  const modalCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Step 2 & 3 Arm Pose State
   const [detectedArmPose, setDetectedArmPose] = useState<'none' | 'right_yes' | 'left_no'>('none');
@@ -444,6 +454,11 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   const [biometricPhase, setBiometricPhase] = useState<number>(0);
   const [biometricProgress, setBiometricProgress] = useState<number>(0);
   const challengeProgressRef = useRef<{ front: boolean; left: boolean; right: boolean }>({
+    front: false,
+    left: false,
+    right: false,
+  });
+  const [challengeProgress, setChallengeProgress] = useState<{ front: boolean; left: boolean; right: boolean }>({
     front: false,
     left: false,
     right: false,
@@ -617,84 +632,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     setCurrentStep(nextStep);
   }, []);
 
-  // 3. Step 1: Presence Detection Loop (Throttled ~15 FPS)
-  useEffect(() => {
-    if (currentStep !== 1) return;
-
-    let cancelled = false;
-    let rafId: number | null = null;
-    let presenceCounter = 0;
-    const REQUIRED_FRAMES = 27; // ~1.8 วินาทีที่ 15 FPS
-    let lastTime = 0;
-
-    const loop = () => {
-      if (cancelled) return;
-      const now = performance.now();
-      if (now - lastTime >= 66.6) {
-        lastTime = now;
-        const video = videoRef.current;
-        if (video && video.readyState >= 2 && !video.paused) {
-          try {
-            const res = poseService.detectHolistic(video, now, { enableHands: false });
-            const lm = res?.poseLandmarks;
-            const isPersonVisible = Boolean(
-              lm && (
-                (lm[0] && (lm[0].visibility === undefined || lm[0].visibility > 0.35)) ||
-                (lm[11] && lm[12])
-              )
-            );
-
-            if (isPersonVisible) {
-              presenceCounter++;
-              setIsPersonDetected(true);
-              const prog = Math.min(100, Math.round((presenceCounter / REQUIRED_FRAMES) * 100));
-              setPresenceProgress(prog);
-
-              if (presenceCounter % 8 === 0) audioFeedback.playHoldTick();
-
-              if (presenceCounter >= REQUIRED_FRAMES) {
-                presenceCounter = 0;
-                setIsPersonDetected(false);
-                setPresenceProgress(100);
-                audioFeedback.playRepSuccess();
-                changeStep(2);
-                return;
-              }
-            } else {
-              if (presenceCounter > 0) {
-                presenceCounter = Math.max(0, presenceCounter - 2);
-                setPresenceProgress(Math.round((presenceCounter / REQUIRED_FRAMES) * 100));
-              } else {
-                setIsPersonDetected(false);
-              }
-            }
-          } catch (e) {}
-        }
-      }
-      rafId = requestAnimationFrame(loop);
-    };
-
-    rafId = requestAnimationFrame(loop);
-
-    return () => {
-      cancelled = true;
-      if (rafId) cancelAnimationFrame(rafId);
-    };
-  }, [currentStep, changeStep]);
-
-  // Confetti helper
-  const triggerMiniGameConfetti = (originX = 0.5) => {
-    if (seniorSimpleMode) return;
-    try {
-      confetti({
-        particleCount: 40,
-        spread: 60,
-        origin: { x: originX, y: 0.6 },
-        colors: ['#22c55e', '#10b981', '#34d399', '#6ee7b7', '#fbbf24'],
-      });
-    } catch {}
-  };
-
   // Step Action Handlers
   const triggerSlideUp = useCallback(() => {
     if (isSlideUpAnimating) return;
@@ -714,7 +651,219 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     }, 600);
   }, [isSlideUpAnimating, changeStep]);
 
-  // 4. Confetti helper
+  // 3. Step 1: Automatic Face Presence (3s Hold) + Prolonged No-Face Inquiry Loop
+  useEffect(() => {
+    if (currentStep !== 1) return;
+
+    let cancelled = false;
+    let rafId: number | null = null;
+    let lastTime = performance.now();
+    let faceHoldMs = 0;
+    let noFaceIdleMs = 0;
+    let modalRightHoldMs = 0;
+    let modalLeftHoldMs = 0;
+    let lastAudioTickSec = -1;
+
+    const loop = () => {
+      if (cancelled) return;
+      const now = performance.now();
+      const delta = Math.min(200, now - lastTime);
+      lastTime = now;
+
+      const video = videoRef.current;
+      if (video && video.readyState >= 2 && !video.paused) {
+        try {
+          // กรณีโมดอลสอบถาม "คุณอยู่หน้าเครื่องหรือไม่?" เปิดอยู่: ใช้ MediaPipe Pose ตรวจจับยกแขนซ้าย/ขวา
+          if (showPresenceInquiryModal) {
+            const res = poseService.detectHolistic(video, now, { enableFace: false, enableHands: false });
+            const lm = res?.poseLandmarks;
+
+            // วาดภาพสะท้อนแบบกระจกเงาลง canvas ในโมดอล พร้อมจุดวงกลมบอกตำแหน่งข้อมือ
+            const canvas = modalCanvasRef.current;
+            if (canvas) {
+              const ctx = canvas.getContext('2d');
+              if (ctx) {
+                ctx.save();
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.translate(canvas.width, 0);
+                ctx.scale(-1, 1);
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                ctx.restore();
+
+                if (lm) {
+                  const rWrist = lm[16];
+                  const lWrist = lm[15];
+                  if (rWrist) {
+                    const rx = (1 - rWrist.x) * canvas.width;
+                    const ry = rWrist.y * canvas.height;
+                    ctx.beginPath();
+                    ctx.arc(rx, ry, modalArmPose === 'right_yes' ? 24 : 16, 0, Math.PI * 2);
+                    ctx.fillStyle = modalArmPose === 'right_yes' ? 'rgba(34, 197, 94, 0.9)' : 'rgba(34, 197, 94, 0.5)';
+                    ctx.fill();
+                    ctx.strokeStyle = '#FFFFFF';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                  }
+                  if (lWrist) {
+                    const lx = (1 - lWrist.x) * canvas.width;
+                    const ly = lWrist.y * canvas.height;
+                    ctx.beginPath();
+                    ctx.arc(lx, ly, modalArmPose === 'left_no' ? 24 : 16, 0, Math.PI * 2);
+                    ctx.fillStyle = modalArmPose === 'left_no' ? 'rgba(239, 68, 68, 0.9)' : 'rgba(239, 68, 68, 0.5)';
+                    ctx.fill();
+                    ctx.strokeStyle = '#FFFFFF';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                  }
+                }
+              }
+            }
+
+            if (lm) {
+              const leftShoulder = lm[11];
+              const leftWrist = lm[15];
+              const rightShoulder = lm[12];
+              const rightWrist = lm[16];
+
+              const isRightRaised = Boolean(rightWrist && rightShoulder && rightWrist.y < (rightShoulder.y - 0.05));
+              const isLeftRaised = Boolean(leftWrist && leftShoulder && leftWrist.y < (leftShoulder.y - 0.05));
+
+              // ถ้าผู้ใช้ยก แขนขวา (ใช่) -> ค้าง 3 วินาทีเพื่อยืนยัน
+              if (isRightRaised && !isLeftRaised) {
+                modalRightHoldMs += delta;
+                modalLeftHoldMs = Math.max(0, modalLeftHoldMs - delta * 2);
+
+                const prog = Math.min(100, Math.round((modalRightHoldMs / 3000) * 100));
+                const sec = Math.max(1, Math.ceil((3000 - modalRightHoldMs) / 1000));
+                setModalRightArmProgress(prog);
+                setModalRightArmSec(sec);
+                setModalArmPose('right_yes');
+
+                if (Math.floor(modalRightHoldMs / 1000) > lastAudioTickSec) {
+                  lastAudioTickSec = Math.floor(modalRightHoldMs / 1000);
+                  audioFeedback.playHoldTick();
+                }
+
+                if (modalRightHoldMs >= 3000) {
+                  modalRightHoldMs = 0;
+                  setShowPresenceInquiryModal(false);
+                  audioFeedback.playRepSuccess();
+                  try {
+                    voiceAssistant.speak('ยืนยันเข้าสู่ระบบเรียบร้อยค่ะ', { level: 'system' });
+                  } catch {}
+                  triggerSlideUp();
+                  return;
+                }
+              }
+              // ถ้าผู้ใช้ยก แขนซ้าย (ไม่) -> กลับไปหน้าแรก
+              else if (isLeftRaised && !isRightRaised) {
+                modalLeftHoldMs += delta;
+                modalRightHoldMs = Math.max(0, modalRightHoldMs - delta * 2);
+
+                const prog = Math.min(100, Math.round((modalLeftHoldMs / 2000) * 100));
+                const sec = Math.max(1, Math.ceil((2000 - modalLeftHoldMs) / 1000));
+                setModalLeftArmProgress(prog);
+                setModalLeftArmSec(sec);
+                setModalArmPose('left_no');
+
+                if (modalLeftHoldMs >= 2000) {
+                  modalLeftHoldMs = 0;
+                  setShowPresenceInquiryModal(false);
+                  audioFeedback.playHoldTick();
+                  try {
+                    voiceAssistant.speak('กลับสู่หน้าแรกเรียบร้อยค่ะ', { level: 'system' });
+                  } catch {}
+                  noFaceIdleMs = 0;
+                  return;
+                }
+              } else {
+                modalRightHoldMs = Math.max(0, modalRightHoldMs - delta * 1.5);
+                modalLeftHoldMs = Math.max(0, modalLeftHoldMs - delta * 1.5);
+                setModalRightArmProgress(Math.round((modalRightHoldMs / 3000) * 100));
+                setModalLeftArmProgress(Math.round((modalLeftHoldMs / 2000) * 100));
+                setModalArmPose('none');
+              }
+            }
+          } else {
+            // หน้าแรกปกติ: ตรวจจับใบหน้าอัตโนมัติด้วย MediaPipe FaceLandmarker / Pose
+            const res = poseService.detectHolistic(video, now, { enableFace: true, enableHands: false });
+            const lm = res?.poseLandmarks;
+            const faceLm = res?.faceLandmarks;
+
+            const isFaceVisible = Boolean(
+              (faceLm && faceLm.length > 0) ||
+              (lm && lm[0] && (lm[0].visibility === undefined || lm[0].visibility > 0.4) &&
+               lm[2] && (lm[2].visibility === undefined || lm[2].visibility > 0.3) &&
+               lm[5] && (lm[5].visibility === undefined || lm[5].visibility > 0.3))
+            );
+
+            if (isFaceVisible) {
+              faceHoldMs += delta;
+              noFaceIdleMs = 0;
+              setIsPersonDetected(true);
+
+              const prog = Math.min(100, Math.round((faceHoldMs / 3000) * 100));
+              const sec = Math.max(1, Math.ceil((3000 - faceHoldMs) / 1000));
+              setPresenceProgress(prog);
+              setFaceCountdownSeconds(sec);
+
+              if (Math.floor(faceHoldMs / 1000) > lastAudioTickSec) {
+                lastAudioTickSec = Math.floor(faceHoldMs / 1000);
+                audioFeedback.playHoldTick();
+              }
+
+              // ถ้าตรวจเจอใบหน้าต่อเนื่องครบ 3 วินาที ให้ไปหน้าถัดไปทันที (ไม่ต้องกดปุ่ม)
+              if (faceHoldMs >= 3000) {
+                faceHoldMs = 0;
+                setIsPersonDetected(false);
+                setPresenceProgress(100);
+                audioFeedback.playRepSuccess();
+                try {
+                  voiceAssistant.speak('ตรวจพบใบหน้าเรียบร้อยแล้วค่ะ กำลังเข้าสู่ระบบ', { level: 'system' });
+                } catch {}
+                triggerSlideUp();
+                return;
+              }
+            } else {
+              // ถ้าคนเดินออกไปก่อนครบ 3 วินาที ให้รีเซ็ตการนับใหม่
+              if (faceHoldMs > 0) {
+                faceHoldMs = 0;
+                setPresenceProgress(0);
+                setIsPersonDetected(false);
+                setFaceCountdownSeconds(3);
+                lastAudioTickSec = -1;
+              }
+
+              // ตรวจสอบกรณีไม่เจอใบหน้าเป็นเวลานาน (>= 10 วินาที)
+              if (!showPinModal && !isSlideUpAnimating && isCameraActive) {
+                noFaceIdleMs += delta;
+                if (noFaceIdleMs >= 10000) {
+                  noFaceIdleMs = 0;
+                  setShowPresenceInquiryModal(true);
+                  try {
+                    voiceAssistant.speak('คุณอยู่หน้าเครื่องหรือไม่คะ? ยกแขนขวาค้างไว้ 3 วินาทีเพื่อยืนยัน หรือยกแขนซ้ายเพื่อกลับหน้าแรกค่ะ', { level: 'system' });
+                  } catch {}
+                }
+              }
+            }
+          }
+        } catch (e) {
+          // ignore detection glitch
+        }
+      }
+
+      rafId = requestAnimationFrame(loop);
+    };
+
+    rafId = requestAnimationFrame(loop);
+
+    return () => {
+      cancelled = true;
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [currentStep, showPresenceInquiryModal, showPinModal, isSlideUpAnimating, isCameraActive, triggerSlideUp]);
+
+  // Confetti helper
   const triggerMiniGameConfetti = (originX = 0.5) => {
     if (seniorSimpleMode) return;
     try {
@@ -858,7 +1007,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       setBiometricPhase(3);
       setBiometricProgress(100);
       setActivePatient(targetPatient);
-      setMatchedProfile(targetPatient);
       setScanStep('done');
       setScanStatusMessage(`⭐ ผ่านการตรวจสอบชีวมิติ 100%! ยินดีต้อนรับ: ${targetPatient.name}`);
 
@@ -992,16 +1140,14 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     cursorProgressCircleRef,
     cursorLabelRef,
     enabled: currentStep === 2 || currentStep === 3,
-    onTargetTrigger: handleKioskTarget,
+    onTargetTrigger: executeKioskTarget,
     onArmPoseConfirm: useCallback((pose: 'right_yes' | 'left_no') => {
       if (pose === 'right_yes') {
-        if (currentStep === 2) handleStep2Yes();
-        else if (currentStep === 3) handleStep3Yes();
+        handleStep3Yes();
       } else if (pose === 'left_no') {
-        if (currentStep === 2) handleStep2No();
-        else if (currentStep === 3) handleStep3No();
+        handleStep3No();
       }
-    }, [currentStep, handleStep2Yes, handleStep3Yes, handleStep2No, handleStep3No]),
+    }, [handleStep3Yes, handleStep3No]),
     onArmPoseChange: useCallback((pose: 'none' | 'right_yes' | 'left_no', prog: number) => {
       setDetectedArmPose(pose);
       setArmHoldProgress(prog);
@@ -1029,164 +1175,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         const video = videoRef.current;
         if (video && video.readyState >= 2 && !video.paused) {
           try {
-            const res = poseService.detectHolistic(video, now, { enableFace: true });
-            const lm = res?.poseLandmarks;
-            if (lm) {
-              const nose = lm[0];
-              const leftEye = lm[2];
-              const rightEye = lm[5];
-
-              if (nose && leftEye && rightEye) {
-                const eyeMidX = (leftEye.x + rightEye.x) / 2;
-                const eyeDist = Math.max(0.04, Math.abs(leftEye.x - rightEye.x));
-                const yawOffset = (nose.x - eyeMidX) / eyeDist;
-
-                if (scanStep === 'front') {
-                  const isFacingFront = Math.abs(yawOffset) < 0.28;
-                  if (isFacingFront) {
-                    faceHoldCounter++;
-                    const prog = Math.min(100, Math.round((faceHoldCounter / REQUIRED_FACE_HOLD_FRAMES) * 100));
-                    setFaceHoldProgress(prog);
-                    if (faceHoldCounter % 8 === 0) audioFeedback.playHoldTick();
-
-                    if (faceHoldCounter >= REQUIRED_FACE_HOLD_FRAMES) {
-                      faceHoldCounter = 0;
-                      challengeProgressRef.current.front = true;
-                      setScanStep('left');
-                      setScanStatusMessage('✓ 1. หน้าตรง สำเร็จ! ต่อไปค่อยๆ หันศีรษะไปทางซ้าย (ค้างไว้ 1.5 วินาที)');
-                      audioFeedback.playRepSuccess();
-                    }
-                  } else {
-                    faceHoldCounter = Math.max(0, faceHoldCounter - 1);
-                    setFaceHoldProgress(Math.round((faceHoldCounter / REQUIRED_FACE_HOLD_FRAMES) * 100));
-                  }
-                } else if (scanStep === 'left') {
-                  const isTurningLeft = yawOffset > 0.22;
-                  if (isTurningLeft) {
-                    faceHoldCounter++;
-                    const prog = Math.min(100, Math.round((faceHoldCounter / REQUIRED_FACE_HOLD_FRAMES) * 100));
-                    setFaceHoldProgress(prog);
-                    if (faceHoldCounter % 8 === 0) audioFeedback.playHoldTick();
-
-                    if (faceHoldCounter >= REQUIRED_FACE_HOLD_FRAMES) {
-                      faceHoldCounter = 0;
-                      challengeProgressRef.current.left = true;
-                      setScanStep('right');
-                      setScanStatusMessage('✓ 2. หันซ้าย สำเร็จ! ต่อไปค่อยๆ หันศีรษะไปทางขวา (ค้างไว้ 1.5 วินาที)');
-                      audioFeedback.playRepSuccess();
-                    }
-                  } else {
-                    faceHoldCounter = Math.max(0, faceHoldCounter - 1);
-                    setFaceHoldProgress(Math.round((faceHoldCounter / REQUIRED_FACE_HOLD_FRAMES) * 100));
-                  }
-                } else if (scanStep === 'right') {
-                  const isTurningRight = yawOffset < -0.22;
-                  if (isTurningRight) {
-                    faceHoldCounter++;
-                    const prog = Math.min(100, Math.round((faceHoldCounter / REQUIRED_FACE_HOLD_FRAMES) * 100));
-                    setFaceHoldProgress(prog);
-                    if (faceHoldCounter % 8 === 0) audioFeedback.playHoldTick();
-
-                    if (faceHoldCounter >= REQUIRED_FACE_HOLD_FRAMES) {
-                      faceHoldCounter = 0;
-                      challengeProgressRef.current = { front: true, left: true, right: true };
-                      setScanStep('done');
-                      setScanStatusMessage('✓ ครบทุกท่าแล้ว! กำลังตรวจสอบข้อมูลชีวมิติ...');
-                      audioFeedback.playRepSuccess();
-                      handlePerformFaceScan(true);
-                    }
-                  } else {
-                    faceHoldCounter = Math.max(0, faceHoldCounter - 1);
-                    setFaceHoldProgress(Math.round((faceHoldCounter / REQUIRED_FACE_HOLD_FRAMES) * 100));
-                  }
-                }
-              }
-            }
-          } else {
-            setHandCursor((prev) => (prev?.visible ? { ...prev, visible: false } : null));
-            if (hoveredTargetRef.current) {
-              hoveredTargetRef.current = null;
-              hoverStartTimeRef.current = null;
-              lastTickElapsedRef.current = 0;
-              setHoverProgress(0);
-              setHoveredButton(null);
-            }
-          }
-
-          // ==========================================================
-          // Step 3: Gamified Arm Pose Confirmation (ขวา=ใช่, ซ้าย=ไม่)
-          // ==========================================================
-          if (currentStep === 3 && lm) {
-            const leftShoulder = lm[11];
-            const leftWrist = lm[15];
-            const rightShoulder = lm[12];
-            const rightWrist = lm[16];
-
-            if (rightWrist && leftWrist) {
-              setHandWristCoords({
-                right: { x: rightWrist.x * 100, y: rightWrist.y * 100 },
-                left: { x: leftWrist.x * 100, y: leftWrist.y * 100 },
-              });
-            }
-
-            const isRightRaised = rightWrist && rightShoulder && rightWrist.y < (rightShoulder.y - 0.05);
-            const isLeftRaised = leftWrist && leftShoulder && leftWrist.y < (leftShoulder.y - 0.05);
-
-            if (isRightRaised && !isLeftRaised) {
-              if (lastPoseDetectedRef.current === 'right_yes') {
-                armHoldCounter++;
-              } else {
-                armHoldCounter = 1;
-                lastPoseDetectedRef.current = 'right_yes';
-                setDetectedArmPose('right_yes');
-              }
-
-              if (armHoldCounter % 12 === 0) audioFeedback.playHoldTick();
-
-              const prog = Math.min(100, Math.round((armHoldCounter / REQUIRED_ARM_HOLD_FRAMES) * 100));
-              setArmHoldProgress(prog);
-
-              if (armHoldCounter >= REQUIRED_ARM_HOLD_FRAMES) {
-                armHoldCounter = 0;
-                handleConfirmYes();
-                return;
-              }
-            } else if (isLeftRaised && !isRightRaised) {
-              if (lastPoseDetectedRef.current === 'left_no') {
-                armHoldCounter++;
-              } else {
-                armHoldCounter = 1;
-                lastPoseDetectedRef.current = 'left_no';
-                setDetectedArmPose('left_no');
-              }
-
-              if (armHoldCounter % 12 === 0) audioFeedback.playHoldTick();
-
-              const prog = Math.min(100, Math.round((armHoldCounter / REQUIRED_ARM_HOLD_FRAMES) * 100));
-              setArmHoldProgress(prog);
-
-              if (armHoldCounter >= REQUIRED_ARM_HOLD_FRAMES) {
-                armHoldCounter = 0;
-                handleConfirmNo();
-                return;
-              }
-            } else {
-              if (armHoldCounter > 0) {
-                armHoldCounter = Math.max(0, armHoldCounter - 2);
-                setArmHoldProgress(Math.round((armHoldCounter / REQUIRED_ARM_HOLD_FRAMES) * 100));
-              } else {
-                lastPoseDetectedRef.current = 'none';
-                setDetectedArmPose('none');
-                setArmHoldProgress(0);
-              }
-            }
-          }
-
-          // ==========================================================
-          // Step 4: Real MediaPipe FaceLandmarker 3D Liveness Loop
-          // ==========================================================
-          if (currentStep === 4 && !isScanning && scanStep !== 'done' && videoRef.current) {
-            const frameData = livenessEngine.processVideoFrame(videoRef.current, performance.now(), 120);
+            const frameData = livenessEngine.processVideoFrame(video, now, 120);
             if (frameData) {
               setCurrentLivenessFrame(frameData);
 
@@ -1198,7 +1187,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 faceHoldCounter += 2;
                 const prog = Math.min(100, Math.round((faceHoldCounter / REQUIRED_FACE_HOLD_FRAMES) * 100));
                 setFaceHoldProgress(prog);
-                if (faceHoldCounter % 15 === 0) audioFeedback.playHoldTick();
+                if (faceHoldCounter % 12 === 0) audioFeedback.playHoldTick();
 
                 if (faceHoldCounter >= REQUIRED_FACE_HOLD_FRAMES) {
                   faceHoldCounter = 0;
@@ -1229,12 +1218,69 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 faceHoldCounter = Math.max(0, faceHoldCounter - 1);
                 setFaceHoldProgress(Math.round((faceHoldCounter / REQUIRED_FACE_HOLD_FRAMES) * 100));
               }
+            } else {
+              // Fallback to Holistic pose head yaw if face landmarker is loading
+              const res = poseService.detectHolistic(video, now, { enableFace: true });
+              const lm = res?.poseLandmarks;
+              if (lm && lm[0] && lm[2] && lm[5]) {
+                const nose = lm[0];
+                const leftEye = lm[2];
+                const rightEye = lm[5];
+                const eyeMidX = (leftEye.x + rightEye.x) / 2;
+                const eyeDist = Math.max(0.04, Math.abs(leftEye.x - rightEye.x));
+                const yawOffset = (nose.x - eyeMidX) / eyeDist;
+
+                const isFacingFront = Math.abs(yawOffset) < 0.28;
+                const isTurningLeft = yawOffset > 0.22;
+                const isTurningRight = yawOffset < -0.22;
+
+                const satisfied =
+                  (scanStep === 'front' && isFacingFront) ||
+                  (scanStep === 'left' && isTurningLeft) ||
+                  (scanStep === 'right' && isTurningRight);
+
+                if (satisfied) {
+                  faceHoldCounter++;
+                  const prog = Math.min(100, Math.round((faceHoldCounter / REQUIRED_FACE_HOLD_FRAMES) * 100));
+                  setFaceHoldProgress(prog);
+                  if (faceHoldCounter % 8 === 0) audioFeedback.playHoldTick();
+
+                  if (faceHoldCounter >= REQUIRED_FACE_HOLD_FRAMES) {
+                    faceHoldCounter = 0;
+                    setFaceHoldProgress(0);
+                    if (scanStep === 'front') {
+                      challengeProgressRef.current.front = true;
+                      setChallengeProgress((prev) => ({ ...prev, front: true }));
+                      setScanStep('left');
+                      setScanStatusMessage('✓ 1. หน้าตรง สำเร็จ! ต่อไปค่อยๆ หันศีรษะไปทางซ้าย (ค้างไว้ 1.5 วินาที)');
+                      audioFeedback.playRepSuccess();
+                    } else if (scanStep === 'left') {
+                      challengeProgressRef.current.left = true;
+                      setChallengeProgress((prev) => ({ ...prev, left: true }));
+                      setScanStep('right');
+                      setScanStatusMessage('✓ 2. หันซ้าย สำเร็จ! ต่อไปค่อยๆ หันศีรษะไปทางขวา (ค้างไว้ 1.5 วินาที)');
+                      audioFeedback.playRepSuccess();
+                    } else if (scanStep === 'right') {
+                      challengeProgressRef.current.right = true;
+                      setChallengeProgress({ front: true, left: true, right: true });
+                      setScanStep('done');
+                      setScanStatusMessage('✓ ครบทุกท่าแล้ว! กำลังตรวจสอบข้อมูลชีวมิติ...');
+                      audioFeedback.playRepSuccess();
+                      handlePerformFaceScan(true);
+                    }
+                  }
+                } else {
+                  faceHoldCounter = Math.max(0, faceHoldCounter - 1);
+                  setFaceHoldProgress(Math.round((faceHoldCounter / REQUIRED_FACE_HOLD_FRAMES) * 100));
+                }
+              }
             }
+          } catch (e) {
+            // ignore detection glitch
           }
-        } catch (e) {
-          // ignore detection glitch
         }
       }
+
       rafId = requestAnimationFrame(loop);
     };
 
@@ -1245,92 +1291,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       if (rafId) cancelAnimationFrame(rafId);
     };
   }, [currentStep, scanStep, isScanning]);
-
-  // Proceed to Exercise
-  const handleProceedToExercise = useCallback((
-    mode: 'physio' | 'minigame' = selectedTherapyType,
-    customQueue?: StretchExerciseItem[]
-  ) => {
-    audioFeedback.playRepSuccess();
-    selectPatient(activePatient);
-    onStartExerciseDirectly(activePatient, activePlan || undefined, mode, customQueue, customHoldTimes);
-  }, [activePatient, activePlan, selectedTherapyType, customHoldTimes, selectPatient, onStartExerciseDirectly]);
-
-  // Step 4 Verification Sequence
-  const handlePerformFaceScan = (bypass = false) => {
-    biometricTimersRef.current.forEach((t) => clearTimeout(t));
-    biometricTimersRef.current = [];
-
-    setIsScanning(true);
-    setBiometricPhase(1);
-    setBiometricProgress(25);
-    setScanStatusMessage('🛡️ [1/3] ตรวจสอบ Liveness & 3D Anti-Spoofing...');
-    audioFeedback.playHoldTick();
-
-    const t1 = setTimeout(() => {
-      setBiometricPhase(2);
-      setBiometricProgress(60);
-      setScanStatusMessage('🧬 [2/3] วิเคราะห์โครงสร้างใบหน้า 468 จุด และสกัด 128-D Biometric Embedding...');
-      audioFeedback.playHoldTick();
-    }, 800);
-
-    const t2 = setTimeout(() => {
-      setBiometricPhase(3);
-      setBiometricProgress(90);
-      setScanStatusMessage('📋 [3/3] เปรียบเทียบอัตลักษณ์บุคคล (Dual-Metric: Cosine ≥ 0.90)...');
-      audioFeedback.playHoldTick();
-    }, 1600);
-
-    const t3 = setTimeout(() => {
-      // ตรวจสอบโหมดสาธิต (Demo Bypass): อนุญาตเฉพาะเมื่อเปิดโหมดสาธิตเพื่อการทดสอบ Flow
-      if (bypass && (isDemoMode || isExplicitDemo)) {
-        setBiometricPhase(4);
-        setBiometricProgress(100);
-        setScanStep('done');
-        setScanStatusMessage(`⭐ โหมดสาธิต: ผ่านการตรวจสอบ ยินดีต้อนรับ: ${activePatient.name}`);
-        audioFeedback.playRepSuccess();
-
-        try {
-          voiceAssistant.speak(`ยินดีต้อนรับ ${activePatient.name} เข้าสู่ระบบสำเร็จ`, { level: 'system' });
-        } catch {}
-
-        const t4 = setTimeout(() => {
-          setIsScanning(false);
-          setBiometricPhase(0);
-          changeStep(5);
-        }, 1000);
-
-        biometricTimersRef.current.push(t4);
-        return;
-      }
-
-      // ในโหมดจริง: ตัด mock vector [new Array(128).fill(0.08)] และตัด profiles[0] ออก ไม่สร้างบัญชีปลอม
-      setIsScanning(false);
-      setBiometricPhase(0);
-      setScanStatusMessage('ยังไม่เชื่อมต่อการจดจำใบหน้าจริง');
-      audioFeedback.playHoldTick();
-    }, 2400);
-
-    biometricTimersRef.current.push(t1, t2, t3);
-  };
-
-  const handleManualChallenge = (step: 'front' | 'left' | 'right') => {
-    challengeProgressRef.current[step] = true;
-    audioFeedback.playRepSuccess();
-
-    if (step === 'front') {
-      setScanStep('left');
-      setScanStatusMessage('✓ 1. หน้าตรง สำเร็จ! ต่อไปค่อยๆ หันศีรษะไปทางซ้าย (ค้างไว้ 1.5 วินาที)');
-    } else if (step === 'left') {
-      setScanStep('right');
-      setScanStatusMessage('✓ 2. หันซ้าย สำเร็จ! ต่อไปค่อยๆ หันศีรษะไปทางขวา (ค้างไว้ 1.5 วินาที)');
-    } else if (step === 'right') {
-      challengeProgressRef.current = { front: true, left: true, right: true };
-      setScanStep('done');
-      setScanStatusMessage('✓ ครบทุกท่าแล้ว! กำลังตรวจสอบข้อมูลชีวมิติ...');
-      setTimeout(() => handlePerformFaceScan(true), 300);
-    }
-  };
 
   // Event listener สำหรับการทดสอบความปลอดภัยและ E2E Testing ในสภาพแวดล้อม Headless/CI
   useEffect(() => {
@@ -1638,28 +1598,53 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         {/* ---------------------------------------------------- */}
         {currentStep === 1 && (
           <div className="w-full flex-1 flex flex-col items-center justify-center text-center animate-fadeIn relative">
-            {isPersonDetected && (
+            
+            {/* กล่องแจ้งเตือนการตรวจพบใบหน้า พร้อมแถบความคืบหน้า 3 วินาที */}
+            {isPersonDetected ? (
               <div className="absolute top-0 inset-x-2 z-30 bg-emerald-950/95 backdrop-blur-md border-2 border-emerald-400 text-white rounded-2xl p-3 shadow-2xl flex flex-col items-center animate-fadeIn">
                 <div className="flex items-center justify-between w-full text-xs font-black mb-1">
                   <span className="flex items-center gap-1.5 text-emerald-300">
                     <User className="w-4 h-4 text-emerald-400 animate-pulse" />
-                    <span>ตรวจพบคนไข้นั่งหน้ากล้อง</span>
+                    <span>พบผู้ใช้แล้ว กรุณารอสักครู่</span>
                   </span>
-                  <span className="font-mono text-yellow-300 font-black text-sm">{presenceProgress}%</span>
+                  <span className="font-mono text-yellow-300 font-black text-sm">
+                    {faceCountdownSeconds} วินาที ({presenceProgress}%)
+                  </span>
                 </div>
-                <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden mb-1 border border-emerald-500/30">
+                <div className="w-full h-3 bg-slate-800 rounded-full overflow-hidden mb-1 border border-emerald-500/30">
                   <div
                     className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-yellow-400 transition-all duration-75 rounded-full"
                     style={{ width: `${presenceProgress}%` }}
                   />
                 </div>
                 <p className="text-[11px] text-emerald-200 font-semibold">
-                  ⏳ กรุณานั่งนิ่งๆ สักครู่ ระบบกำลังเปิดหน้าต่างใน 1.8 วินาที...
+                  ⏳ กรุณามองกล้องต่อเนื่อง 3 วินาที ระบบจะไปหน้าถัดไปอัตโนมัติ...
+                </p>
+              </div>
+            ) : (
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-300 text-[#1E8A4C] text-xs font-bold shadow-xs mb-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span>กำลังตรวจจับใบหน้า... (กรุณานั่งหรือยืนหน้ากล้อง)</span>
+              </div>
+            )}
+
+            {/* แสดงข้อความชัดเจนเมื่อกล้องมีปัญหา หรือไม่พบกล้อง */}
+            {cameraError && (
+              <div className="w-full bg-amber-50 border-2 border-amber-400 rounded-2xl p-3 mb-2 text-amber-950 text-xs shadow-md animate-fadeIn flex flex-col gap-1.5 text-left">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="font-black text-amber-900">⚠️ ไม่สามารถเปิดกล้องเว็บแคมได้</p>
+                    <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">{cameraError}</p>
+                  </div>
+                </div>
+                <p className="text-[11px] text-amber-900 font-bold bg-amber-100/80 px-2 py-1 rounded-lg">
+                  👉 ท่านยังสามารถแตะปุ่มขนาดใหญ่ด้านล่าง หรือใช้รหัส PIN เพื่อเข้าใช้งานได้ตามปกติ
                 </p>
               </div>
             )}
 
-            {/* โลโก้ Dr.Tech.Care ทรงกลมพร้อมวงแหวนชาร์จ */}
+            {/* โลโก้ Dr.Tech.Care ทรงกลมพร้อมวงแหวนชาร์จรอบนอก 3 วินาที */}
             <div className="relative group cursor-pointer my-2" onClick={triggerSlideUp}>
               <div className="w-48 h-48 sm:w-56 sm:h-56 rounded-full border-4 border-emerald-400 shadow-2xl overflow-hidden flex flex-col items-center justify-center bg-gradient-to-b from-[#E8FAF3] via-[#DCF6EB] to-[#B8EDD7] relative transform group-hover:scale-105 transition duration-300">
                 {/* SVG Medical & Health Tech Emblem */}
@@ -1679,6 +1664,24 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
                 <div className="absolute inset-0 rounded-full border-4 border-white/50 pointer-events-none animate-pulse" />
               </div>
+
+              {/* วงแหวนชาร์จรอบนอกเมื่อตรวจพบใบหน้า (0 ถึง 100% ใน 3 วินาที) */}
+              {presenceProgress > 0 && (
+                <svg className="absolute -inset-2 w-[calc(100%+16px)] h-[calc(100%+16px)] -rotate-90 pointer-events-none z-20">
+                  <circle
+                    cx="50%"
+                    cy="50%"
+                    r="47%"
+                    fill="none"
+                    stroke="#10b981"
+                    strokeWidth="6"
+                    strokeDasharray="600"
+                    strokeDashoffset={600 - (600 * presenceProgress) / 100}
+                    strokeLinecap="round"
+                    className="filter drop-shadow-[0_0_10px_rgba(16,185,129,0.9)] transition-all duration-100"
+                  />
+                </svg>
+              )}
             </div>
 
             {/* ข้อความต้อนรับและชื่อระบบ Dr.Tech.Care */}
@@ -1692,15 +1695,10 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               <p className="text-xs sm:text-sm text-slate-500 font-semibold mt-1 max-w-xs">
                 ยินดีต้อนรับสู่ระบบฟื้นฟูสมรรถภาพร่างกายสำหรับผู้สูงอายุ
               </p>
-
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-300 text-[#1E8A4C] text-xs font-bold shadow-xs mt-3">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>กล้อง AI พร้อมสแกนใบหน้าอัตโนมัติ</span>
-              </div>
             </div>
 
             {/* ปุ่มกดขนาดใหญ่ สำหรับผู้สูงอายุ */}
-            <div className="mt-6 w-full max-w-xs space-y-3">
+            <div className="mt-5 w-full max-w-xs space-y-3">
               <button
                 data-kiosk-target="step1-start"
                 onClick={triggerSlideUp}
@@ -2402,6 +2400,172 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           </div>
         </div>
       </div>
+
+      {/* ================================================================= */}
+      {/* โมดอลสอบถามเมื่อตรวจไม่พบใบหน้าเป็นเวลานาน: "คุณอยู่หน้าเครื่องหรือไม่?" */}
+      {/* ใช้ MediaPipe Pose ตรวจจับยกแขนขวา=ใช่ (3 วินาที) / ยกแขนซ้าย=ไม่       */}
+      {/* และมีปุ่มสัมผัสขนาดใหญ่ >= 64px รองรับผู้สูงอายุ                         */}
+      {/* ================================================================= */}
+      {showPresenceInquiryModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 animate-fadeIn"
+          role="dialog"
+          aria-modal="true"
+          id="modalPresenceInquiry"
+        >
+          <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border-4 border-emerald-400 p-5 sm:p-6 flex flex-col items-center text-center relative overflow-hidden">
+            {/* ปุ่มปิด X มุมบนขวา */}
+            <button
+              onClick={() => setShowPresenceInquiryModal(false)}
+              className="absolute top-4 right-4 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 transition cursor-pointer"
+              aria-label="ปิดหน้าต่าง"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* ไอคอนและหัวข้อหลัก */}
+            <div className="w-14 h-14 rounded-full bg-emerald-100 border-2 border-emerald-400 flex items-center justify-center text-[#1E8A4C] mb-2 shadow-sm">
+              <UserCheck className="w-7 h-7" />
+            </div>
+
+            <h2 className="text-2xl sm:text-3xl font-black text-[#0B2B2B] tracking-tight">
+              คุณอยู่หน้าเครื่องหรือไม่?
+            </h2>
+            <p className="text-xs sm:text-sm text-slate-600 font-bold mt-1">
+              ระบบตรวจไม่พบใบหน้าชั่วคราว กรุณายืนยันว่าท่านอยู่หน้าตู้ Kiosk หรือไม่
+            </p>
+
+            {/* หน้าต่างกระจกเงาสะท้อนจากกล้อง พร้อมตัวตรวจจับการยกแขน */}
+            <div className="w-full relative rounded-2xl overflow-hidden border-2 border-slate-300 bg-slate-900 shadow-inner mt-3">
+              <canvas
+                ref={modalCanvasRef}
+                width={480}
+                height={360}
+                className="w-full h-auto aspect-video object-cover"
+              />
+
+              {/* ป้ายแขนซ้าย = ไม่ (มุมบนซ้ายของกระจกเงา) */}
+              <div className="absolute top-2 left-2 bg-rose-950/90 border border-rose-400 text-white px-2.5 py-1.5 rounded-xl shadow-lg flex flex-col items-start text-left pointer-events-none">
+                <span className="font-black text-xs text-rose-300 flex items-center gap-1">
+                  <span>🔴 ยกแขนซ้าย</span>
+                </span>
+                <span className="text-[10px] font-bold text-rose-100">ตอบ &quot;ไม่&quot; (กลับหน้าแรก)</span>
+                {modalArmPose === 'left_no' && (
+                  <div className="w-24 bg-slate-800 h-1.5 rounded-full overflow-hidden mt-1 border border-rose-400/50">
+                    <div
+                      className="h-full bg-rose-500 transition-all duration-75"
+                      style={{ width: `${modalLeftArmProgress}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* ป้ายแขนขวา = ใช่ (มุมบนขวาของกระจกเงา) */}
+              <div className="absolute top-2 right-2 bg-emerald-950/90 border border-emerald-400 text-white px-2.5 py-1.5 rounded-xl shadow-lg flex flex-col items-end text-right pointer-events-none">
+                <span className="font-black text-xs text-emerald-300 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-yellow-300" />
+                  <span>🟢 ยกแขนขวา</span>
+                </span>
+                <span className="text-[10px] font-bold text-emerald-100">ตอบ &quot;ใช่&quot; (ไปหน้าถัดไป)</span>
+                {modalArmPose === 'right_yes' && (
+                  <div className="w-24 bg-slate-800 h-1.5 rounded-full overflow-hidden mt-1 border border-emerald-400/50">
+                    <div
+                      className="h-full bg-emerald-500 transition-all duration-75"
+                      style={{ width: `${modalRightArmProgress}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* แถบสถานะข้อความล่างกล้อง */}
+              <div className="absolute bottom-1.5 inset-x-2 bg-black/85 backdrop-blur-sm border border-emerald-400/40 text-white rounded-xl py-1.5 px-2.5 text-center pointer-events-none">
+                {modalArmPose === 'right_yes' ? (
+                  <p className="text-xs text-emerald-300 font-black animate-pulse">
+                    ✓ กำลังยืนยัน &quot;ใช่&quot;: ยกค้างไว้ {modalRightArmSec} วินาที ({modalRightArmProgress}%)
+                  </p>
+                ) : modalArmPose === 'left_no' ? (
+                  <p className="text-xs text-rose-300 font-black animate-pulse">
+                    ✕ กำลังยกเลิก &quot;ไม่&quot;: ยกค้างไว้ {modalLeftArmSec} วินาที ({modalLeftArmProgress}%)
+                  </p>
+                ) : (
+                  <p className="text-[11px] sm:text-xs text-emerald-200 font-bold">
+                    ยกแขนขวาค้างไว้ 3 วินาทีเพื่อยืนยัน หรือยกแขนซ้ายเพื่อกลับหน้าแรก
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* แถบคำแนะนำท่าทาง (ข้อความใหญ่ ชัดเจน เหมาะสำหรับผู้สูงอายุ) */}
+            <div className="grid grid-cols-2 gap-2.5 w-full mt-3 text-xs sm:text-sm font-bold">
+              <div
+                className={`p-2.5 rounded-2xl border-2 flex items-center gap-2 transition ${
+                  modalArmPose === 'left_no'
+                    ? 'bg-rose-50 border-rose-500 text-rose-900 shadow-sm'
+                    : 'bg-slate-50 border-slate-200 text-slate-700'
+                }`}
+              >
+                <span className="text-2xl">🙋‍♂️</span>
+                <div className="text-left">
+                  <p className="font-black text-rose-700 leading-tight">ยกแขนซ้าย</p>
+                  <p className="text-[11px] text-slate-500">เพื่อกลับหน้าแรก</p>
+                </div>
+              </div>
+
+              <div
+                className={`p-2.5 rounded-2xl border-2 flex items-center gap-2 transition ${
+                  modalArmPose === 'right_yes'
+                    ? 'bg-emerald-50 border-emerald-500 text-emerald-900 shadow-sm'
+                    : 'bg-slate-50 border-slate-200 text-slate-700'
+                }`}
+              >
+                <span className="text-2xl">🙋‍♀️</span>
+                <div className="text-left">
+                  <p className="font-black text-emerald-700 leading-tight">ยกแขนขวา 3 วินาที</p>
+                  <p className="text-[11px] text-slate-500">เพื่อยืนยัน &quot;ใช่&quot;</p>
+                </div>
+              </div>
+            </div>
+
+            {/* ปุ่มกดขนาดใหญ่ >= 64px ทางเลือกสำรองสำหรับการสัมผัสหน้าจอ */}
+            <div className="grid grid-cols-2 gap-3 w-full mt-3.5">
+              {/* ปุ่มซ้าย = ไม่ */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPresenceInquiryModal(false);
+                  audioFeedback.playHoldTick();
+                  try {
+                    voiceAssistant.speak('กลับสู่หน้าแรกเรียบร้อยค่ะ', { level: 'system' });
+                  } catch {}
+                }}
+                className="min-h-[64px] py-3.5 px-4 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-800 border-2 border-rose-300 font-black text-base sm:text-lg flex items-center justify-center gap-2 shadow-md active:scale-95 transition cursor-pointer"
+                id="btnPresenceModalNo"
+              >
+                <X className="w-6 h-6 text-rose-600 shrink-0" />
+                <span>ไม่</span>
+              </button>
+
+              {/* ปุ่มขวา = ใช่ */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPresenceInquiryModal(false);
+                  audioFeedback.playRepSuccess();
+                  try {
+                    voiceAssistant.speak('ยืนยันเข้าสู่ระบบเรียบร้อยค่ะ', { level: 'system' });
+                  } catch {}
+                  triggerSlideUp();
+                }}
+                className="min-h-[64px] py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#2FB39A] to-[#1E8A4C] hover:from-[#259b84] hover:to-[#166534] text-white border-2 border-emerald-300 font-black text-base sm:text-lg flex items-center justify-center gap-2 shadow-xl active:scale-95 transition cursor-pointer"
+                id="btnPresenceModalYes"
+              >
+                <CheckCircle2 className="w-6 h-6 text-white shrink-0" />
+                <span>ใช่</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* PDPA Biometric Consent Modal */}
       <PDPAConsentModal
