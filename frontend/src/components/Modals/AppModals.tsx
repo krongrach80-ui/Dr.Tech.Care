@@ -746,20 +746,20 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
             <div className="p-3 rounded-xl bg-white border border-emerald-100 shadow-sm space-y-1">
               <div className="font-bold text-[#0B2B2B] flex items-center gap-1.5">
                 <span>🔐</span>
-                <span>3-Tier Auth & Real RBAC</span>
+                <span>3-Tier Auth & Clinical RBAC</span>
               </div>
               <p className="text-slate-600 text-[11px] leading-relaxed">
-                แยก 3 ระบบเด็ดขาด: แอดมินใหญ่ (6 หน้า), นักกายภาพ (4 หน้า), ตู้ Kiosk คนไข้ พร้อม Username+Password จริง ปลดปุ่มสลับสิทธิ์ demo
+                แยก 3 ระบบเด็ดขาด: ผู้อำนวยการ/Admin (7 เมนู), นักกายภาพบำบัด (5 เมนู), และตู้ Kiosk คนไข้ พร้อมรหัสผ่านความปลอดภัยสูงและระบบ Audit Logs
               </p>
             </div>
 
             <div className="p-3 rounded-xl bg-white border border-emerald-100 shadow-sm space-y-1">
               <div className="font-bold text-[#0B2B2B] flex items-center gap-1.5">
                 <span>🤖</span>
-                <span>Zero-Touch & Pose Inquiry</span>
+                <span>Auto-Face & Pose Inquiry</span>
               </div>
               <p className="text-slate-600 text-[11px] leading-relaxed">
-                ตรวจจับใบหน้าอัตโนมัติ 3 วินาทีเข้าสู่ระบบทันที และมี Popup ตรวจจับยกแขนขวา=ใช่ (3s) / ซ้าย=ไม่ แทนการสัมผัสหน้าจอ
+                ตรวจจับใบหน้าอัตโนมัติ 3 วินาทีเข้าสู่ระบบทันที กรอบ Viewfinder ชัดเจน พร้อม Popup ตรวจจับยกแขนขวา=ใช่ (3s) / ซ้าย=ไม่ แทนการแตะหน้าจอ
               </p>
             </div>
 
@@ -820,6 +820,16 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
               </div>
               <p className="text-slate-600 text-[11px] leading-relaxed">
                 มินิเกมตอบคำถาม ใช่ / ไม่ โดยใช้ท่าทางมือ (ยกมือขวา = ใช่, ยกมือซ้าย = ไม่) ตรวจจับด้วย MediaPipe AI เรียลไทม์ คลังคำถาม 99 ข้อ พร้อมระบบเสียง และส่งผลรายงานให้นักกายภาพ
+              </p>
+            </div>
+
+            <div className="p-3 rounded-xl bg-gradient-to-r from-teal-50 to-emerald-50 border border-teal-200 shadow-sm space-y-1 sm:col-span-2">
+              <div className="font-bold text-[#0B2B2B] flex items-center gap-1.5">
+                <span>🎨</span>
+                <span>Elderly-Friendly Kiosk Design (9:16 Portrait)</span>
+              </div>
+              <p className="text-slate-600 text-[11px] leading-relaxed">
+                ดีไซน์เฉพาะสำหรับผู้สูงอายุ: พื้นหลังไล่เฉดสีมิ้นท์-ขาว-ฟ้าอ่อน (#E8F8F1 → #FFFFFF → #E4F0FC) สบายตา นุ่มนวล คอนทราสต์สูงระดับ WCAG AAA ตัวอักษรและปุ่มสัมผัสขนาดใหญ่พิเศษ (≥ 64px) พร้อมกรอบตรวจจับใบหน้ากระชับ
               </p>
             </div>
 
