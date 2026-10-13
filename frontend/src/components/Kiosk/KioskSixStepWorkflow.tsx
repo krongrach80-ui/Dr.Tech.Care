@@ -885,6 +885,33 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
     try {
       const fullPatientName = `${kioskFormTitle}${kioskFormFirstName.trim()} ${kioskFormLastName.trim()}`.trim();
+
+      // [ISOLATED PATIENT STORAGE]: Update patient_record.json
+      patientFaceStorageService.savePatientRecord(pendingEnrolledUser.code, {
+        patient_profile: {
+          patient_id: pendingEnrolledUser.code,
+          id: pendingEnrolledUser.id,
+          first_name: kioskFormFirstName.trim(),
+          last_name: kioskFormLastName.trim(),
+          full_name: fullPatientName,
+          age: Number(kioskFormAge) || 65,
+          gender: kioskFormGender,
+          contact: kioskFormPhone.trim() || undefined,
+          phone: kioskFormPhone.trim() || undefined,
+          status: 'active',
+          created_at: new Date().toISOString().split('T')[0],
+        },
+        medical_records: {
+          diagnosis: kioskFormComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด',
+          chief_complaint: kioskFormComplaint.trim(),
+          assigned_exercises: [
+            { id: 'shoulder_raise', name: 'กางแขนด้านข้าง (Shoulder Abduction)', target_angle: 90, hold_seconds: 3, reps: 10 },
+            { id: 'overhead_reach', name: 'ยกแขนขึ้นเหนือศีรษะ (Overhead Reach)', target_angle: 120, hold_seconds: 3, reps: 10 },
+            { id: 'elbow_flexion', name: 'งอและเหยียดข้อศอก (Elbow Flexion)', target_angle: 140, hold_seconds: 2, reps: 12 },
+          ],
+        },
+      });
+
       const updated = completePendingPatientInfo(pendingEnrolledUser.id, {
         name: fullPatientName,
         age: Number(kioskFormAge) || 65,
@@ -1373,12 +1400,20 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             matchedCandidate.diagnosis ||
             'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)';
 
+          // [ISOLATED PATIENT STORAGE]: Retrieve complete dossier from patient_record.json
+          const patientDossier = patientFaceStorageService.getPatientRecord(realHN);
+
+          // [LOGIN HISTORY]: Save snapshot image taken during login verification into login_history/
+          if (liveJpg) {
+            patientFaceStorageService.saveLoginSnapshot(realHN, liveJpg, evaluation.bestScore);
+          }
+
           const faceImg =
+            patientFaceStorageService.getProfileFaceImage(realHN) ||
             matchedCandidate.face_image_url ||
             matchedUser?.face_image_url ||
             matchedPatientRecord?.face_image_url ||
-            patientFaceStorageService.getPatientFaceImage(realHN) ||
-            patientFaceStorageService.getPatientFaceImage(matchedCandidate.patientId);
+            `/uploads/patients/${realHN}/profile_face.jpg`;
 
           const targetPatient: Patient = {
             id: matchedUser ? Number(matchedUser.id) : (matchedPatientRecord ? Number(matchedPatientRecord.id) : Number(matchedCandidate.patientId)),
@@ -1391,13 +1426,39 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             photo: faceImg || undefined,
           };
 
-          // Fetch EXACT treatment plan associated with this patient
-          const exactPlan = treatmentPlans.find(
+          // Fetch treatment plan or load assigned_exercises directly from isolated patient_record.json
+          let exactPlan = treatmentPlans.find(
             (plan) =>
               (plan.patientCode && plan.patientCode.toLowerCase() === realHN.toLowerCase()) ||
               (plan.patientId && String(plan.patientId) === String(targetPatient.id)) ||
               (plan.patientName && realName.includes(plan.patientName))
           );
+
+          if (patientDossier?.medical_records?.assigned_exercises && patientDossier.medical_records.assigned_exercises.length > 0) {
+            if (!exactPlan) {
+              exactPlan = {
+                id: targetPatient.id,
+                patientId: targetPatient.id,
+                patientCode: targetPatient.patient_code,
+                patientName: targetPatient.name,
+                therapistName: patientDossier.medical_records.responsible_therapist || 'กภ. ธนากร วงศ์สวัสดิ์',
+                diagnosis: patientDossier.medical_records.diagnosis || targetPatient.notes,
+                clinicalNotes: patientDossier.medical_records.treatment_plan || 'ปฏิบัติตามแผนฟื้นฟูกายภาพประจำวัน',
+                targetJoint: 'ข้อต่อและกล้ามเนื้อ',
+                exercises: patientDossier.medical_records.assigned_exercises.map((ex, idx) => ({
+                  id: idx + 1,
+                  name: ex.name,
+                  targetAngle: ex.target_angle,
+                  holdSeconds: ex.hold_seconds,
+                  targetReps: ex.reps,
+                  description: `ทำท่า ${ex.name} ค้างไว้ ${ex.hold_seconds} วินาที จำนวน ${ex.reps} ครั้ง`,
+                })),
+                startDate: '2026-02-01',
+                endDate: '2026-12-31',
+                status: 'active',
+              } as any;
+            }
+          }
 
           const matchPercent = evaluation.bestScorePercent;
           setBiometricPhase(3);
@@ -1451,11 +1512,39 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         const autoName = `ผู้รับบริการใหม่ (${autoCode})`;
         const newTime = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 
-        // Save captured frame & vector distinctly to persistent storage
-        const savedFace = patientFaceStorageService.savePatientFaceData(
+        // 1. Create dedicated isolated directory: /public/uploads/patients/{patient_id}/
+        patientFaceStorageService.createPatientDirectory(autoCode);
+
+        // 2. Save profile_face.jpg and patient_record.json
+        const savedRecord = patientFaceStorageService.savePatientRecord(
           autoCode,
-          autoCode,
-          vector128,
+          {
+            patient_profile: {
+              patient_id: autoCode,
+              id: autoCode,
+              first_name: 'ผู้รับบริการใหม่',
+              last_name: `(${autoCode})`,
+              full_name: autoName,
+              age: 65,
+              gender: 'male',
+              created_at: new Date().toISOString().split('T')[0],
+              status: 'pending_info',
+            },
+            biometric_data: {
+              face_vector: vector128,
+              registered_face_url: `/uploads/patients/${autoCode}/profile_face.jpg`,
+              enrolled_at: new Date().toISOString(),
+              model_version: 'face-resnet34-v2',
+            },
+            medical_records: {
+              diagnosis: 'รอตรวจประเมินกายภาพบำบัด',
+              assigned_exercises: [
+                { id: 'shoulder_raise', name: 'กางแขนด้านข้าง (Shoulder Abduction)', target_angle: 90, hold_seconds: 3, reps: 10 },
+                { id: 'overhead_reach', name: 'ยกแขนขึ้นเหนือศีรษะ (Overhead Reach)', target_angle: 120, hold_seconds: 3, reps: 10 },
+                { id: 'elbow_flexion', name: 'งอและเหยียดข้อศอก (Elbow Flexion)', target_angle: 140, hold_seconds: 2, reps: 12 },
+              ],
+            },
+          },
           liveJpg
         );
 
@@ -1470,15 +1559,19 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           pendingInfoNote: 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว',
           biometricVector: vector128,
           face_vector: vector128,
-          face_image_url: savedFace.face_image_url,
+          face_image_url: liveJpg || savedRecord.biometric_data.registered_face_url,
           faceRegisteredAt: newTime,
         });
 
         // Re-save with assigned numeric ID for complete dual indexing
-        patientFaceStorageService.savePatientFaceData(
-          createdUser.id,
+        patientFaceStorageService.savePatientRecord(
           createdUser.code,
-          vector128,
+          {
+            patient_profile: {
+              ...savedRecord.patient_profile,
+              id: createdUser.id,
+            },
+          },
           liveJpg
         );
 
@@ -1489,7 +1582,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           age: 65,
           gender: 'male',
           embeddings: [vector128],
-          face_image_url: savedFace.face_image_url,
+          face_image_url: liveJpg || savedRecord.biometric_data.registered_face_url,
           enrolledAt: new Date().toISOString(),
         });
 
