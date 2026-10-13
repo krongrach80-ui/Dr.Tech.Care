@@ -929,7 +929,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     // Sub-view A: Mandatory First-time Password Change Screen
     if (mustChangePasswordUser) {
       return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#072420]/90 backdrop-blur-md p-4 animate-fadeIn overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-b from-[#E8F8F1] via-[#FFFFFF] to-[#E4F0FC] p-4 animate-fadeIn overflow-y-auto">
           <div className="bg-white rounded-[32px] sm:rounded-[36px] border-2 border-amber-400 p-6 sm:p-8 max-w-lg w-full shadow-2xl space-y-6 text-center my-auto">
             {/* Header Banner */}
             <div className="space-y-3">
@@ -1067,7 +1067,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
     // Sub-view B: Standard Staff Login Form
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#072420]/90 backdrop-blur-md p-4 animate-fadeIn overflow-y-auto">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-b from-[#E8F8F1] via-[#FFFFFF] to-[#E4F0FC] p-4 animate-fadeIn overflow-y-auto">
         <div className="bg-white rounded-[32px] sm:rounded-[36px] border-2 border-emerald-300 p-6 sm:p-8 max-w-lg w-full shadow-2xl space-y-6 text-center my-auto">
           {/* Header Banner */}
           <div className="space-y-3">
@@ -1161,7 +1161,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               <button
                 type="submit"
                 disabled={isLoggingIn}
-                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#10B981] to-[#059669] text-white font-extrabold text-sm shadow-md shadow-emerald-600/20 hover:brightness-105 transition active:scale-95 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#2FB39A] via-[#1E8A4C] to-[#166534] text-white font-extrabold text-sm shadow-md shadow-emerald-700/25 hover:brightness-105 transition active:scale-95 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
                 id="btnStaffLoginSubmit"
               >
                 {isLoggingIn ? (
@@ -1257,7 +1257,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex bg-[#F4FBF7] text-[#0F2F2B] font-sans overflow-hidden animate-fadeIn select-none">
+    <div className="fixed inset-0 z-50 flex bg-gradient-to-b from-[#E8F8F1] via-[#FFFFFF] to-[#E4F0FC] text-[#0F2F2B] font-sans overflow-hidden animate-fadeIn select-none">
       {/* ==================================================================== */}
       {/* 1. LEFT SIDEBAR (Medical Emerald Theme)                              */}
       {/* ==================================================================== */}
@@ -1368,7 +1368,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       {/* ==================================================================== */}
       {/* 2. MAIN CONTENT AREA                                                 */}
       {/* ==================================================================== */}
-      <main className="flex-1 flex flex-col h-full overflow-hidden bg-[#F4FBF7]">
+      <main className="flex-1 flex flex-col h-full overflow-hidden bg-gradient-to-b from-[#E8F8F1] via-[#FFFFFF] to-[#E4F0FC]">
         {/* Top Header Bar */}
         <header className="h-16 px-3.5 sm:px-6 border-b border-emerald-100 bg-white/90 backdrop-blur-md flex items-center justify-between flex-shrink-0 gap-2">
           {/* Header Title with Mobile Collapse Toggle */}

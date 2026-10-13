@@ -716,7 +716,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
         </div>
 
         {/* Mission Statement Banner */}
-        <div className="p-4 rounded-2xl bg-gradient-to-br from-[#E9FCEB] to-emerald-50 border border-emerald-200/80 text-center space-y-1">
+        <div className="p-4 rounded-2xl bg-gradient-to-br from-[#E8F8F1] to-emerald-50 border border-emerald-200/80 text-center space-y-1">
           <div className="text-sm font-bold text-[#1E8A4C]">
             แพลตฟอร์มช่วยติดตามและวิเคราะห์การฝึกกายภาพบำบัดด้วย AI อัจฉริยะ
           </div>

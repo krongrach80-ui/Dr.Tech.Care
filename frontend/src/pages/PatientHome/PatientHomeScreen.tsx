@@ -127,7 +127,7 @@ export const PatientHomeScreen: React.FC<PatientHomeScreenProps> = ({
     : defaultExercises;
 
   return (
-    <div className="w-full h-full max-w-xl mx-auto flex flex-col justify-between p-4 sm:p-6 bg-gradient-to-b from-[#F4FBF7] via-white to-[#EAF7EE] text-[#0B2B2B] relative select-none">
+    <div className="w-full h-full max-w-xl mx-auto flex flex-col justify-between p-4 sm:p-6 bg-gradient-to-b from-[#E8F8F1] via-white to-[#E4F0FC] text-[#0B2B2B] relative select-none rounded-[32px] sm:rounded-[36px] shadow-2xl border border-emerald-100">
       {/* 1. Header Bar: Date & Logout */}
       <div className="w-full flex items-center justify-between pb-3 border-b border-emerald-200">
         <div className="flex items-center gap-2">

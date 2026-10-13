@@ -8,6 +8,12 @@ export default {
   theme: {
     extend: {
       colors: {
+        mintSoft: '#E8F8F1',
+        blueSoft: '#E4F0FC',
+        textDark: '#0B2B2B',
+        textNavy: '#1F3A4D',
+        buttonGreen: '#1E8A4C',
+        buttonTeal: '#2FB39A',
         strongCare: {
           primary: '#6FCF97',
           dark: '#3FAF70',
@@ -33,6 +39,10 @@ export default {
           800: '#166534',
           900: '#14532d',
         },
+      },
+      backgroundImage: {
+        'elderly-gradient': 'linear-gradient(180deg, #E8F8F1 0%, #FFFFFF 50%, #E4F0FC 100%)',
+        'kiosk-gradient': 'linear-gradient(180deg, #E8F8F1 0%, #FFFFFF 50%, #E4F0FC 100%)',
       },
       borderRadius: {
         'card': '18px',
