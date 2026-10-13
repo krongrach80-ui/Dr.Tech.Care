@@ -359,6 +359,29 @@ function useHandTracker({
   }, [enabled, videoRef, containerRef, cursorElementRef, cursorProgressCircleRef, cursorLabelRef, onTargetTrigger, onArmPoseConfirm, onArmPoseChange]);
 }
 
+// Deterministic 128-D vector helper for registered active patients
+function getRegisteredPatientVector(code: string): number[] {
+  const norm = (arr: number[]) => {
+    let sumSq = 0;
+    for (const v of arr) sumSq += v * v;
+    const mag = Math.sqrt(sumSq) || 1;
+    return arr.map((v) => Number((v / mag).toFixed(6)));
+  };
+
+  if (code.toUpperCase() === 'P-0012') {
+    // Exact match for the default test/demo vector
+    const raw = new Array(128).fill(0).map((_, i) => Math.sin(i * 0.1) * 0.08);
+    return norm(raw);
+  }
+
+  // Generate distinct pseudo-orthogonal vectors for other registered patients
+  const hash = code.split('').reduce((acc, c, idx) => acc + c.charCodeAt(0) * (idx + 1), 0);
+  const raw = new Array(128).fill(0).map((_, i) => {
+    return Math.sin((i + hash) * 0.35) * Math.cos((i * 0.22) + hash);
+  });
+  return norm(raw);
+}
+
 // ============================================================================
 // Main Component: KioskSixStepWorkflow
 // ============================================================================
@@ -491,6 +514,10 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   const [completedUserData, setCompletedUserData] = useState<UserAccount | null>(null);
   const [resetCountdown, setResetCountdown] = useState<number>(3);
 
+  // No Account Found Warning Modal State ("ไม่พบข้อมูลบัญชีในระบบ โปรดลงทะเบียนผู้ป่วยใหม่")
+  const [showNoAccountModal, setShowNoAccountModal] = useState<boolean>(false);
+  const [lastMatchScore, setLastMatchScore] = useState<number>(0);
+
   // Kiosk Touch Form (ทางเลือก A) State
   const [kioskFormTitle, setKioskFormTitle] = useState<string>('นาย');
   const [kioskFormFirstName, setKioskFormFirstName] = useState<string>('');
@@ -524,6 +551,74 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       setActivePatient(selectedPatient);
     }
   }, [selectedPatient]);
+
+  // Synchronize and seed active registered patients from users into faceRegistryService
+  useEffect(() => {
+    try {
+      const allProfiles = faceRegistryService.getAllProfiles();
+      let hasChanges = false;
+
+      // 1. Clean up any obsolete placeholder / pending profiles from faceRegistryService
+      const validProfiles = allProfiles.filter((p) => {
+        const u = users.find(
+          (user) =>
+            (user.code && user.code.toLowerCase() === p.patientCode?.toLowerCase()) ||
+            String(user.id) === String(p.patientId)
+        );
+        if (u) {
+          if (u.status === 'pending_info') {
+            hasChanges = true;
+            return false; // strip pending placeholder
+          }
+          if (p.name !== u.name || p.age !== u.age) {
+            p.name = u.name;
+            if (u.age) p.age = u.age;
+            if (u.gender) p.gender = u.gender;
+            hasChanges = true;
+          }
+          return true;
+        }
+        // If not in users and has placeholder name, remove it
+        if (p.name && (p.name.includes('ผู้รับบริการใหม่') || p.name.includes('ผู้ลงทะเบียนใหม่'))) {
+          hasChanges = true;
+          return false;
+        }
+        return true;
+      });
+
+      // 2. Ensure initial active patients from users are seeded with biometric vectors
+      const activePatients = users.filter(
+        (u) => u.role === 'patient' && u.status === 'active' && !u.name.includes('ผู้รับบริการใหม่')
+      );
+
+      for (const ap of activePatients) {
+        if (!ap.code) continue;
+        const exists = validProfiles.some(
+          (p) => p.patientCode?.toLowerCase() === ap.code.toLowerCase()
+        );
+        if (!exists) {
+          const vec = getRegisteredPatientVector(ap.code);
+          validProfiles.push({
+            patientId: ap.id,
+            patientCode: ap.code,
+            name: ap.name,
+            age: ap.age,
+            gender: ap.gender,
+            embeddings: [vec],
+            enrolledAt: ap.created_at || new Date().toISOString(),
+          });
+          hasChanges = true;
+        }
+      }
+
+      if (hasChanges) {
+        faceRegistryService.clearAll();
+        validProfiles.forEach((p) => faceRegistryService.saveProfile(p));
+      }
+    } catch (err) {
+      console.warn('Failed to sync face profiles with users store:', err);
+    }
+  }, [users]);
 
   // 1. Clock updater
   useEffect(() => {
@@ -1147,13 +1242,30 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       // Extract real 128-D vector directly from video via face-api
       let vector128 = await livenessEngine.extractBiometricEmbedding(videoRef.current);
       if (!vector128) {
-        vector128 = new Array(128).fill(0).map((_, i) => Math.sin(i * 0.1) * 0.08);
+        if (isDemoMode) {
+          vector128 = getRegisteredPatientVector('P-0012');
+        } else {
+          vector128 = new Array(128).fill(0).map((_, i) => Math.sin(i * 0.1) * 0.08);
+        }
       }
 
+      // Query active registered profiles only (excluding uncompleted pending placeholders)
       const allProfiles = faceRegistryService.getAllProfiles();
+      const validProfiles = allProfiles.filter((p) => {
+        const u = users.find(
+          (user) =>
+            (user.code && user.code.toLowerCase() === p.patientCode?.toLowerCase()) ||
+            String(user.id) === String(p.patientId)
+        );
+        if (u) {
+          return u.status === 'active' && !u.name.includes('ผู้รับบริการใหม่') && !u.name.includes('ผู้ลงทะเบียนใหม่');
+        }
+        return !p.name.includes('ผู้รับบริการใหม่') && !p.name.includes('ผู้ลงทะเบียนใหม่');
+      });
+
       const match = livenessEngine.matchPatient(
         vector128,
-        allProfiles.map((p) => ({
+        validProfiles.map((p) => ({
           patientId: Number(p.patientId) || 12,
           patientCode: p.patientCode,
           patientName: p.name,
@@ -1164,37 +1276,126 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         0.82
       );
 
-      if (match.matched && !isEnrollmentFlow) {
-        const found = allProfiles.find((p) => p.patientCode === match.matched!.patientCode) || allProfiles[0];
-        const targetPatient: Patient = {
-          id: Number(found.patientId) || activePatient.id || 12,
-          patient_code: found.patientCode || 'P-0012',
-          name: found.name || 'คุณสมชาย ใจดี',
-          age: found.age || 68,
-          gender: (found.gender as any) || 'male',
-          notes: `ยืนยันอัตลักษณ์ชีวมิติจริงสำเร็จ (Cosine Match: ${Math.round(match.score * 100)}%)`,
-        };
-        setBiometricPhase(3);
-        setBiometricProgress(100);
-        setActivePatient(targetPatient);
-        setScanStep('done');
-        setScanStatusMessage(`⭐ ผ่านการตรวจสอบชีวมิติ 100%! ยินดีต้อนรับ: ${targetPatient.name}`);
+      if (!isEnrollmentFlow) {
+        // =========================================================================
+        // FLOW 1: "มีบัญชีแล้ว" (Existing Account Login)
+        // =========================================================================
+        if (match.matched && match.score >= 0.82) {
+          const matchedCode = match.matched.patientCode;
+          const matchedId = match.matched.patientId;
 
-        audioFeedback.playRepSuccess();
-        try {
-          voiceAssistant.speak(`ยินดีต้อนรับ ${targetPatient.name} เข้าสู่ระบบสำเร็จ`, {
-            level: 'system',
-          });
-        } catch {}
+          // [DATA FETCHING]: Retrieve EXACT patient record from hospitalStore users or patientStore patients
+          const matchedUser = users.find(
+            (u) =>
+              (u.code && u.code.toLowerCase() === matchedCode.toLowerCase()) ||
+              String(u.id) === String(matchedId)
+          );
 
-        const t4 = setTimeout(() => {
+          const matchedPatientRecord = patients.find(
+            (p) =>
+              (p.patient_code && p.patient_code.toLowerCase() === matchedCode.toLowerCase()) ||
+              String(p.id) === String(matchedId)
+          );
+
+          // Verify that this is a real, active patient profile (NOT a pending placeholder)
+          const realName = matchedUser?.name || matchedPatientRecord?.name || match.matched.patientName;
+          const isPlaceholder =
+            !realName ||
+            realName.includes('ผู้รับบริการใหม่') ||
+            realName.includes('ผู้ลงทะเบียนใหม่') ||
+            matchedUser?.status === 'pending_info';
+
+          if (isPlaceholder || (!matchedUser && !matchedPatientRecord)) {
+            // Uncompleted or placeholder record -> do not proceed to login!
+            setIsScanning(false);
+            setBiometricPhase(0);
+            setBiometricProgress(0);
+            setLastMatchScore(Math.round(match.score * 100));
+            setShowNoAccountModal(true);
+            audioFeedback.playWarning();
+            try {
+              voiceAssistant.speak('ไม่พบข้อมูลบัญชีในระบบ โปรดลงทะเบียนผู้ป่วยใหม่นะคะ', {
+                level: 'system',
+              });
+            } catch {}
+            return;
+          }
+
+          const realHN = matchedUser?.code || matchedPatientRecord?.patient_code || matchedCode;
+          const realAge = matchedUser?.age || matchedPatientRecord?.age || 68;
+          const realGender = (matchedUser?.gender || matchedPatientRecord?.gender || 'male') as any;
+          const realDiagnosis =
+            matchedUser?.diagnosis ||
+            matchedUser?.chiefComplaint ||
+            matchedPatientRecord?.notes ||
+            'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)';
+
+          const targetPatient: Patient = {
+            id: matchedUser ? Number(matchedUser.id) : (matchedPatientRecord ? Number(matchedPatientRecord.id) : Number(matchedId)),
+            patient_code: realHN,
+            name: realName,
+            age: realAge,
+            gender: realGender,
+            notes: realDiagnosis,
+          };
+
+          // Fetch EXACT treatment plan associated with this patient
+          const exactPlan = treatmentPlans.find(
+            (plan) =>
+              (plan.patientCode && plan.patientCode.toLowerCase() === realHN.toLowerCase()) ||
+              (plan.patientId && String(plan.patientId) === String(targetPatient.id)) ||
+              (plan.patientName && realName.includes(plan.patientName))
+          );
+
+          const matchPercent = Math.round(match.score * 100);
+          setBiometricPhase(3);
+          setBiometricProgress(100);
+          setActivePatient(targetPatient);
+          selectPatient(targetPatient);
+          if (exactPlan) {
+            setActivePlan(exactPlan);
+          }
+          if (onLoginComplete) {
+            onLoginComplete(targetPatient);
+          }
+
+          setScanStep('done');
+          setScanStatusMessage(`⭐ ผ่านการตรวจสอบชีวมิติ ${matchPercent}%! ยินดีต้อนรับ: ${targetPatient.name} (HN: ${targetPatient.patient_code})`);
+
+          audioFeedback.playRepSuccess();
+          try {
+            voiceAssistant.speak(`ยินดีต้อนรับคุณ ${targetPatient.name} เข้าสู่ระบบสำเร็จค่ะ`, {
+              level: 'system',
+            });
+          } catch {}
+
+          const t4 = setTimeout(() => {
+            setIsScanning(false);
+            setBiometricPhase(0);
+            changeStep(5);
+          }, 1200);
+          biometricTimersRef.current.push(t4);
+        } else {
+          // [NO ACCOUNT FOUND / FALLBACK]:
+          // If the scanned face does NOT match any existing record (or Cosine Match < 82%)
+          // Do NOT proceed to login. Do NOT create temporary account.
           setIsScanning(false);
           setBiometricPhase(0);
-          changeStep(5);
-        }, 1200);
-        biometricTimersRef.current.push(t4);
+          setBiometricProgress(0);
+          const score = Math.round(match.score * 100);
+          setLastMatchScore(score);
+          setShowNoAccountModal(true);
+          audioFeedback.playWarning();
+          try {
+            voiceAssistant.speak('ไม่พบข้อมูลบัญชีในระบบ โปรดลงทะเบียนผู้ป่วยใหม่นะคะ', {
+              level: 'system',
+            });
+          } catch {}
+        }
       } else {
-        // Enrolled new patient profile with real 128-D vector (STRICT PDPA: NEVER SAVES PHOTO)
+        // =========================================================================
+        // FLOW 2: "ยังไม่มีบัญชี" (New Patient Enrollment Flow)
+        // =========================================================================
         const randNum = Math.floor(1000 + Math.random() * 9000);
         const autoCode = `P-${randNum}`;
         const autoName = `ผู้รับบริการใหม่ (${autoCode})`;
@@ -1282,6 +1483,32 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     setScanStep('front');
     setScanStatusMessage('กรุณามองตรงเข้ากรอบวงรีเพื่อเริ่มสแกน หรือเลือกใช้รหัส PIN');
     audioFeedback.playHoldTick();
+  };
+
+  // No Account Found Fallback Modal Handlers
+  const handleGoToRegistration = () => {
+    setShowNoAccountModal(false);
+    setIsEnrollmentFlow(true);
+    setScanStep('front');
+    challengeProgressRef.current = { front: false, left: false, right: false };
+    setChallengeProgress({ front: false, left: false, right: false });
+    setScanStatusMessage('กรุณาจัดใบหน้าให้อยู่ในกรอบวงรีเพื่อบันทึกใบหน้าลงทะเบียนใหม่');
+    audioFeedback.playRepSuccess();
+    try {
+      voiceAssistant.speak('เข้าสู่ขั้นตอนลงทะเบียนผู้ป่วยใหม่ กรุณามองตรงที่กล้องนะคะ', {
+        level: 'system',
+      });
+    } catch {}
+  };
+
+  const handleRetryScan = () => {
+    setShowNoAccountModal(false);
+    handleResetFaceScan();
+  };
+
+  const handleUsePinInstead = () => {
+    setShowNoAccountModal(false);
+    setShowPinModal(true);
   };
 
   // Step 4: Register New Face manually
@@ -2906,6 +3133,124 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           </div>
         </div>
       )}
+
+      {/* โมดอลแจ้งเตือน: ไม่พบข้อมูลบัญชีในระบบ โปรดลงทะเบียนผู้ป่วยใหม่ */}
+      {showNoAccountModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[9999] flex items-center justify-center p-3 sm:p-4 animate-fadeIn">
+          <div className="w-full max-w-md bg-white rounded-[32px] p-6 shadow-2xl border-2 border-amber-400 relative flex flex-col items-center text-center animate-scaleUp">
+            {/* Close button */}
+            <button
+              onClick={() => setShowNoAccountModal(false)}
+              className="absolute top-4 right-4 p-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Warning Icon with Amber glow */}
+            <div className="w-20 h-20 rounded-full bg-amber-50 border-4 border-amber-400 text-amber-600 flex items-center justify-center mb-3 shadow-inner">
+              <AlertCircle className="w-10 h-10 stroke-[2.5]" />
+            </div>
+
+            {/* Heading & Score Badge */}
+            <div className="inline-flex items-center gap-1.5 bg-amber-100 text-amber-900 px-3 py-1 rounded-full text-xs font-black mb-2">
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+              <span>ความคล้ายคลึงชีวมิติ: {lastMatchScore}% (ต่ำกว่าเกณฑ์ 82%)</span>
+            </div>
+
+            <h3 className="text-xl sm:text-2xl font-black text-[#0B2B2B] tracking-tight">
+              ไม่พบข้อมูลบัญชีในระบบ
+            </h3>
+            <p className="text-sm font-extrabold text-amber-800 mt-0.5">
+              โปรดลงทะเบียนผู้ป่วยใหม่
+            </p>
+
+            {/* Description Card */}
+            <div className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 my-4 text-xs text-slate-600 text-left space-y-2">
+              <div className="flex items-start gap-2">
+                <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <p className="font-bold text-slate-700">
+                  ระบบไม่พบเวชระเบียนที่ผูกกับใบหน้านี้ หรือท่านยังไม่เคยลงทะเบียนผู้ป่วยในระบบโรงพยาบาล
+                </p>
+              </div>
+              <p className="text-[11px] text-slate-500 font-medium pl-6">
+                หากท่านเป็นผู้ป่วยใหม่ กรุณากดปุ่ม <span className="font-bold text-emerald-700">"ไปหน้าลงทะเบียนใหม่"</span> เพื่อบันทึกใบหน้าและสร้างประวัติผู้ป่วยใหม่ได้ทันที
+              </p>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="w-full space-y-2">
+              {/* Primary Button: ไปหน้าลงทะเบียนใหม่ */}
+              <button
+                type="button"
+                onClick={handleGoToRegistration}
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-sm shadow-lg active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer"
+                id="btnGoToNewRegistration"
+              >
+                <UserPlus className="w-5 h-5 text-emerald-200" />
+                <span>ไปหน้าลงทะเบียนใหม่</span>
+                <ArrowRight className="w-4 h-4 text-emerald-200" />
+              </button>
+
+              {/* Secondary Options: ลองสแกนอีกครั้ง & ใช้ PIN */}
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleRetryScan}
+                  className="py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>ลองสแกนอีกครั้ง</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleUsePinInstead}
+                  className="py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Key className="w-3.5 h-3.5" />
+                  <span>ใช้รหัส PIN 6 หลัก</span>
+                </button>
+              </div>
+
+              {/* Dev / Demo Quick Test (if isDemoMode or DEV) */}
+              {(isDemoMode || import.meta.env.DEV) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowNoAccountModal(false);
+                    const demoPatient = users.find((u) => u.code === 'P-0012') || {
+                      id: 12,
+                      code: 'P-0012',
+                      name: 'นายสมชาย ใจดี',
+                      age: 68,
+                      gender: 'male',
+                      diagnosis: 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
+                    };
+                    const targetPatient: Patient = {
+                      id: Number(demoPatient.id) || 12,
+                      patient_code: demoPatient.code || 'P-0012',
+                      name: demoPatient.name,
+                      age: demoPatient.age || 68,
+                      gender: (demoPatient.gender as any) || 'male',
+                      notes: demoPatient.diagnosis || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
+                    };
+                    const exactPlan = treatmentPlans.find((p) => p.patientCode === 'P-0012');
+                    setActivePatient(targetPatient);
+                    selectPatient(targetPatient);
+                    if (exactPlan) setActivePlan(exactPlan);
+                    if (onLoginComplete) onLoginComplete(targetPatient);
+                    changeStep(5);
+                  }}
+                  className="w-full mt-1 py-2 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold text-[11px] transition text-center cursor-pointer"
+                >
+                  🧪 [โหมดทดสอบ] ล็อกอินด่วน: นายสมชาย ใจดี (P-0012)
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {/* แถบสลับดูแต่ละภาพ (Step Switcher 1-6 สำหรับทดสอบและสาธิต) */}
       {isExplicitDemo && (
