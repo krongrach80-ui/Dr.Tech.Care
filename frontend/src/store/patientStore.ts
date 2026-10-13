@@ -13,6 +13,7 @@ interface PatientState {
   fetchPatients: () => Promise<void>;
   selectPatient: (patient: Patient) => void;
   addPatient: (patient: Partial<Patient>) => Promise<Patient>;
+  deletePatient: (idOrCode: string | number) => void;
   openFaceAuth: (mode?: 'login' | 'enroll') => void;
   closeFaceAuth: () => void;
 }
@@ -143,5 +144,24 @@ export const usePatientStore = create<PatientState>((set, get) => ({
       set({ isLoading: false });
       throw e;
     }
+  },
+
+  deletePatient: (idOrCode) => {
+    const idStr = String(idOrCode).trim().toUpperCase();
+    set((state) => {
+      const filtered = state.patients.filter((p) => {
+        const matchesId = String(p.id).trim().toUpperCase() === idStr;
+        const matchesCode = p.patient_code && p.patient_code.trim().toUpperCase() === idStr;
+        return !matchesId && !matchesCode;
+      });
+      const selectedMatches =
+        state.selectedPatient &&
+        (String(state.selectedPatient.id).trim().toUpperCase() === idStr ||
+          (state.selectedPatient.patient_code && state.selectedPatient.patient_code.trim().toUpperCase() === idStr));
+      return {
+        patients: filtered,
+        selectedPatient: selectedMatches ? null : state.selectedPatient,
+      };
+    });
   },
 }));

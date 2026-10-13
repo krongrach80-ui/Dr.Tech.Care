@@ -11,6 +11,8 @@
  * Strict Single Source of Truth - No global collision variables.
  */
 
+import { FaceRegistryService } from './faceRegistryService';
+
 export interface PatientProfileData {
   patient_id: string; // e.g. P-6022, P-0012
   id: number | string;
@@ -1014,11 +1016,80 @@ class PatientFaceStorageService {
   }
 
   /**
-   * Hydrate existing patient records from localStorage
+   * Delete isolated directory & all records for a patient permanently
+   * [FIX DELETE USER PERSISTENCE]:
+   * - Physically delete directory: /public/uploads/patients/{patient_id}/
+   * - Delete profile_face.jpg, login_history/*, patient_record.json
+   * - Clean localStorage fs: keys, legacy keys, memory records, and biometric registry
+   */
+  public deletePatientDirectoryAndData(patientIdOrCode: string | number): boolean {
+    const code = this.normalizePatientId(patientIdOrCode);
+    const dirPrefix = `/public/uploads/patients/${code}/`;
+    
+    // 1. Remove from in-memory cache
+    this.memoryRecords.delete(code);
+    if (this.memoryRecords.has(String(patientIdOrCode))) {
+      this.memoryRecords.delete(String(patientIdOrCode));
+    }
+
+    // 2. Remove all localStorage files and folders associated with this patient
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (!key) continue;
+          if (
+            key.startsWith(`fs:${dirPrefix}`) ||
+            key === `fs:${dirPrefix}` ||
+            key === `fs:/public/uploads/patients/${code}` ||
+            key === `patient_record_${code}` ||
+            key === `patient_record_${patientIdOrCode}` ||
+            key === `face_image_${code}` ||
+            key === `face_image_${patientIdOrCode}`
+          ) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach((k) => localStorage.removeItem(k));
+      } catch (e) {
+        console.warn('Error purging patient directory keys:', e);
+      }
+    }
+
+    // 3. Purge from Biometric Face Registry
+    try {
+      FaceRegistryService.getInstance().removeProfile(code);
+      FaceRegistryService.getInstance().removeProfile(patientIdOrCode);
+    } catch {}
+
+    console.log(`[STORAGE] Physically deleted patient directory ${dirPrefix} and purged all records.`);
+    return true;
+  }
+
+  /**
+   * Alias for backwards compatibility
+   */
+  public purgePatientFaceData(patientIdOrCode: string | number): boolean {
+    return this.deletePatientDirectoryAndData(patientIdOrCode);
+  }
+
+  /**
+   * Hydrate existing patient records from localStorage (excluding deleted users)
    */
   private hydrateFromStorage(): void {
     if (typeof window === 'undefined' || !window.localStorage) return;
     try {
+      let deletedCodes: string[] = [];
+      try {
+        const rawDel = localStorage.getItem('strongcare_deleted_users');
+        if (rawDel) {
+          deletedCodes = JSON.parse(rawDel);
+        }
+      } catch {}
+
+      const deletedSet = new Set(deletedCodes.map((c) => String(c).toUpperCase()));
+
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
         if (key && (key.startsWith('patient_record_') || key.endsWith('patient_record.json'))) {
@@ -1026,8 +1097,15 @@ class PatientFaceStorageService {
           if (raw) {
             try {
               const record: CompletePatientRecord = JSON.parse(raw);
-              if (record?.patient_profile?.patient_id) {
-                this.memoryRecords.set(record.patient_profile.patient_id, record);
+              const pId = record?.patient_profile?.patient_id;
+              if (pId) {
+                const norm = this.normalizePatientId(pId);
+                if (deletedSet.has(norm) || deletedSet.has(String(pId).toUpperCase()) || (record.patient_profile.id && deletedSet.has(String(record.patient_profile.id)))) {
+                  // Skip and purge deleted records lingering in storage
+                  localStorage.removeItem(key);
+                  continue;
+                }
+                this.memoryRecords.set(norm, record);
               }
             } catch {}
           }

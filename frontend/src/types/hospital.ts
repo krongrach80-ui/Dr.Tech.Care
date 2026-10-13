@@ -56,14 +56,19 @@ export interface HospitalExercise {
   category: string;
   targetJoint: string;
   targetAngle: number;
+  minAngle?: number;
+  maxAngle?: number;
   holdSeconds: number;
   description: string;
   cautions: string;
+  warnings?: string;
   svgType?: string;
   difficulty?: 'easy' | 'medium' | 'hard';
   repsPerSet?: number;
   sets?: number;
   contraindications?: string;
+  imageUrl?: string;
+  demoImageUrl?: string;
 }
 
 export interface PrescribedExercise {
@@ -73,6 +78,19 @@ export interface PrescribedExercise {
   reps: number;
   holdSeconds: number;
   difficulty: 'beginner' | 'intermediate' | 'advanced';
+}
+
+export interface ExerciseModpack {
+  id: string | number;
+  name: string;
+  description?: string;
+  category?: string;
+  targetJoint?: string;
+  icon?: string;
+  exercises: PrescribedExercise[];
+  createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string;
 }
 
 export interface TreatmentPlan {

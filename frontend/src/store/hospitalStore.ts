@@ -5,6 +5,7 @@ import {
   UserStatus,
   PhysicalTherapist,
   HospitalExercise,
+  ExerciseModpack,
   TreatmentPlan,
   ActivityLog,
   PatientSymptomReport,
@@ -14,6 +15,11 @@ import { faceService } from '../services/faceService';
 import { supabaseService } from '../services/supabaseService';
 import { faceRegistryService } from '../services/faceRegistryService';
 import { patientSyncService } from '../services/patientSyncService';
+import { patientFaceStorageService } from '../services/patientFaceStorageService';
+import { usePatientStore } from './patientStore';
+import initialExercisesData from '../data/exercises.json';
+import initialModpacksData from '../data/modpacks.json';
+import initialPatientsData from '../data/patients.json';
 import {
   verifyStaffPassword,
   hashPassword,
@@ -593,33 +599,119 @@ const getStoredTreatmentPlans = (): TreatmentPlan[] => {
   return INITIAL_TREATMENT_PLANS;
 };
 
+const getDeletedUserCodes = (): Set<string> => {
+  try {
+    const raw = localStorage.getItem('strongcare_deleted_users');
+    if (raw) {
+      const arr: string[] = JSON.parse(raw);
+      return new Set(arr.map((c) => String(c).trim().toUpperCase()));
+    }
+  } catch {}
+  return new Set();
+};
+
+const addDeletedUserToBlacklist = (...identifiers: (string | number | undefined)[]) => {
+  try {
+    const deletedSet = getDeletedUserCodes();
+    identifiers.forEach((id) => {
+      if (id !== undefined && id !== null && String(id).trim() !== '') {
+        deletedSet.add(String(id).trim().toUpperCase());
+      }
+    });
+    localStorage.setItem('strongcare_deleted_users', JSON.stringify(Array.from(deletedSet)));
+  } catch {}
+};
+
+const removePatientFromPatientsJson = (id: string | number, code?: string) => {
+  try {
+    const raw = localStorage.getItem('strongcare_patients_json');
+    let patients = raw ? JSON.parse(raw) : (initialPatientsData as any[]);
+    if (Array.isArray(patients)) {
+      patients = patients.filter((p: any) => {
+        const matchId = String(p.id) === String(id);
+        const matchCode = code && String(p.code).toUpperCase() === String(code).toUpperCase();
+        return !matchId && !matchCode;
+      });
+      localStorage.setItem('strongcare_patients_json', JSON.stringify(patients));
+    }
+  } catch {}
+};
+
 const getStoredUsers = (): UserAccount[] => {
+  const deletedSet = getDeletedUserCodes();
+  let baseUsers: UserAccount[] = INITIAL_USERS;
   try {
     const raw = localStorage.getItem('strongcare_hospital_users');
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed.map((u: UserAccount) => {
-          if (!u.face_image_url && typeof window !== 'undefined' && window.localStorage) {
-            const saved = localStorage.getItem(`face_image_${u.code}`) || localStorage.getItem(`face_image_${u.id}`);
-            if (saved) u.face_image_url = saved;
-          }
-          if (u.code === 'P-0012' && !u.face_image_url) {
-            u.face_image_url = 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&auto=format&fit=crop&q=80';
-          } else if (u.code === 'P-0013' && !u.face_image_url) {
-            u.face_image_url = 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400&auto=format&fit=crop&q=80';
-          }
-          return u;
-        });
+        baseUsers = parsed;
       }
     }
   } catch (e) {}
-  return INITIAL_USERS;
+
+  return baseUsers
+    .filter((u: UserAccount) => {
+      const idStr = String(u.id).trim().toUpperCase();
+      const codeStr = String(u.code || '').trim().toUpperCase();
+      const userStr = String(u.username || '').trim().toUpperCase();
+      return !deletedSet.has(idStr) && !deletedSet.has(codeStr) && !deletedSet.has(userStr);
+    })
+    .map((u: UserAccount) => {
+      if (!u.face_image_url && typeof window !== 'undefined' && window.localStorage) {
+        const saved = localStorage.getItem(`face_image_${u.code}`) || localStorage.getItem(`face_image_${u.id}`);
+        if (saved) u.face_image_url = saved;
+      }
+      if (u.code === 'P-0012' && !u.face_image_url) {
+        u.face_image_url = 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&auto=format&fit=crop&q=80';
+      } else if (u.code === 'P-0013' && !u.face_image_url) {
+        u.face_image_url = 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400&auto=format&fit=crop&q=80';
+      }
+      return u;
+    });
 };
 
 const persistUsers = (users: UserAccount[]) => {
   try {
     localStorage.setItem('strongcare_hospital_users', JSON.stringify(users));
+  } catch {}
+};
+
+const getStoredExercises = (): HospitalExercise[] => {
+  try {
+    const raw = localStorage.getItem('strongcare_hospital_exercises');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch {}
+  return initialExercisesData as HospitalExercise[];
+};
+
+const persistExercises = (exercises: HospitalExercise[]) => {
+  try {
+    localStorage.setItem('strongcare_hospital_exercises', JSON.stringify(exercises));
+  } catch {}
+};
+
+const getStoredModpacks = (): ExerciseModpack[] => {
+  try {
+    const raw = localStorage.getItem('strongcare_hospital_modpacks');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch {}
+  return initialModpacksData as ExerciseModpack[];
+};
+
+const persistModpacks = (modpacks: ExerciseModpack[]) => {
+  try {
+    localStorage.setItem('strongcare_hospital_modpacks', JSON.stringify(modpacks));
   } catch {}
 };
 
@@ -773,6 +865,12 @@ interface HospitalState {
   updateExercise: (id: number | string, data: Partial<HospitalExercise>) => void;
   deleteExercise: (id: number | string) => void;
 
+  // Exercise Modpacks Management
+  modpacks: ExerciseModpack[];
+  addModpack: (modpack: Omit<ExerciseModpack, 'id' | 'createdAt'>) => ExerciseModpack;
+  updateModpack: (id: string | number, data: Partial<ExerciseModpack>) => void;
+  deleteModpack: (id: string | number) => void;
+
   // Treatment Plans
   saveTreatmentPlan: (plan: Omit<TreatmentPlan, 'id' | 'createdAt'> & { id?: number | string }) => void;
   deleteTreatmentPlan: (id: number | string) => void;
@@ -796,7 +894,8 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   currentUserId: 1,
   users: getStoredUsers(),
   therapists: INITIAL_THERAPISTS,
-  exercises: INITIAL_EXERCISES,
+  exercises: getStoredExercises(),
+  modpacks: getStoredModpacks(),
   treatmentPlans: getStoredTreatmentPlans(),
   activityLogs: INITIAL_LOGS,
   bannedDevices: ['Linux / Curl Automation Client', 'Unknown Android Emulator #99'],
@@ -1109,10 +1208,39 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
 
   deleteUser: (id) => {
     const user = get().users.find((u) => u.id === id);
-    set((state) => ({
-      users: state.users.filter((u) => u.id !== id),
-    }));
-    get().addActivityLog('ลบผู้ใช้งาน', 'AUTH', `ลบผู้ใช้งาน ${user?.name || id}`);
+    const updatedUsers = get().users.filter((u) => u.id !== id);
+    set({ users: updatedUsers });
+    persistUsers(updatedUsers);
+
+    // Add to persistent blacklist so it NEVER restores on page reload
+    if (user) {
+      addDeletedUserToBlacklist(user.id, user.code, user.username);
+    } else {
+      addDeletedUserToBlacklist(id);
+    }
+
+    // Permanently purge patient physical folder public/uploads/patients/{code}/ and all records
+    if (user?.code) {
+      patientFaceStorageService.deletePatientDirectoryAndData(user.code);
+      usePatientStore.getState().deletePatient(user.code);
+    }
+    patientFaceStorageService.deletePatientDirectoryAndData(id);
+    usePatientStore.getState().deletePatient(id);
+
+    // Remove any associated treatment plans
+    const remainingPlans = get().treatmentPlans.filter(
+      (p) => p.patientId !== id && (!user?.code || p.patientCode !== user.code)
+    );
+    set({ treatmentPlans: remainingPlans });
+    try {
+      localStorage.setItem('strongcare_hospital_treatment_plans', JSON.stringify(remainingPlans));
+    } catch {}
+
+    // Remove from mock patients.json persistent storage
+    removePatientFromPatientsJson(id, user?.code);
+
+    get().addActivityLog('ลบผู้ใช้งาน', 'AUTH', `ลบผู้ใช้งาน ${user?.name || id} และลบโฟลเดอร์เวชระเบียนถาวร`);
+    console.log(`[DELETE USER] Permanently deleted user ${user?.name || id} (${user?.code || id}), purged directory /public/uploads/patients/${user?.code || id}/ and updated patients.json`);
 
     if (supabaseService.isConfigured()) {
       supabaseService.deleteProfile(id).catch((e) => console.warn('Supabase deleteProfile error:', e));
@@ -1248,15 +1376,17 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   addExercise: (exerciseData) => {
     const newId = Math.max(0, ...get().exercises.map((e) => typeof e.id === 'number' ? e.id : 0)) + 1;
     const newExercise: HospitalExercise = { ...exerciseData, id: newId };
-    set((state) => ({ exercises: [newExercise, ...state.exercises] }));
+    const updated = [newExercise, ...get().exercises];
+    set({ exercises: updated });
+    persistExercises(updated);
     get().addActivityLog('เพิ่มท่าทางกายภาพบำบัด', 'TREATMENT', `เพิ่มท่าใหม่: ${newExercise.name} (${newExercise.englishName})`);
 
     if (supabaseService.isConfigured()) {
       supabaseService.createExercise(exerciseData).then((created) => {
         if (created?.id) {
-          set((state) => ({
-            exercises: state.exercises.map((e) => (e.id === newId ? { ...e, id: created.id } : e)),
-          }));
+          const synced = get().exercises.map((e) => (e.id === newId ? { ...e, id: created.id } : e));
+          set({ exercises: synced });
+          persistExercises(synced);
         }
       }).catch((e) => console.warn('Supabase createExercise error:', e));
     }
@@ -1265,11 +1395,9 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   },
 
   updateExercise: (id, data) => {
-    set((state) => ({
-      exercises: state.exercises.map((e) =>
-        e.id === id ? { ...e, ...data } : e
-      ),
-    }));
+    const updated = get().exercises.map((e) => (e.id === id ? { ...e, ...data } : e));
+    set({ exercises: updated });
+    persistExercises(updated);
     const exercise = get().exercises.find((e) => e.id === id);
     get().addActivityLog('แก้ไขท่าทางกายภาพบำบัด', 'TREATMENT', `แก้ไขข้อมูลท่า: ${exercise?.name || id}`);
 
@@ -1280,14 +1408,46 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
 
   deleteExercise: (id) => {
     const exercise = get().exercises.find((e) => e.id === id);
-    set((state) => ({
-      exercises: state.exercises.filter((e) => e.id !== id),
-    }));
+    const updated = get().exercises.filter((e) => e.id !== id);
+    set({ exercises: updated });
+    persistExercises(updated);
     get().addActivityLog('ลบท่าทางกายภาพบำบัด', 'TREATMENT', `ลบท่า: ${exercise?.name || id}`);
 
     if (supabaseService.isConfigured()) {
       supabaseService.deleteExercise(id).catch((e) => console.warn('Supabase deleteExercise error:', e));
     }
+  },
+
+  addModpack: (modpackData) => {
+    const newId = `modpack-${Date.now()}`;
+    const newModpack: ExerciseModpack = {
+      ...modpackData,
+      id: newId,
+      createdAt: new Date().toISOString().split('T')[0],
+    };
+    const updated = [newModpack, ...get().modpacks];
+    set({ modpacks: updated });
+    persistModpacks(updated);
+    get().addActivityLog('สร้างชุดท่าฝึกกายภาพ (Modpack)', 'TREATMENT', `สร้างชุดท่าใหม่: ${newModpack.name} (${newModpack.exercises.length} ท่า)`);
+    return newModpack;
+  },
+
+  updateModpack: (id, data) => {
+    const updated = get().modpacks.map((m) =>
+      m.id === id ? { ...m, ...data, updatedAt: new Date().toISOString().split('T')[0] } : m
+    );
+    set({ modpacks: updated });
+    persistModpacks(updated);
+    const mp = get().modpacks.find((m) => m.id === id);
+    get().addActivityLog('แก้ไขชุดท่าฝึกกายภาพ', 'TREATMENT', `อัปเดตชุดท่า: ${mp?.name || id}`);
+  },
+
+  deleteModpack: (id) => {
+    const mp = get().modpacks.find((m) => m.id === id);
+    const updated = get().modpacks.filter((m) => m.id !== id);
+    set({ modpacks: updated });
+    persistModpacks(updated);
+    get().addActivityLog('ลบชุดท่าฝึกกายภาพ', 'TREATMENT', `ลบชุดท่า: ${mp?.name || id}`);
   },
 
   saveTreatmentPlan: (planData) => {

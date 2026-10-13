@@ -47,6 +47,7 @@ import {
   List,
   ShieldCheck,
   Copy,
+  PackagePlus,
 } from 'lucide-react';
 import { useHospitalStore } from '../../store/hospitalStore';
 import { validatePasswordStrength } from '../../services/authSecurityService';
@@ -59,6 +60,7 @@ import { DeleteUserModal } from '../../components/Hospital/DeleteUserModal';
 import { AddExerciseModal } from '../../components/Hospital/AddExerciseModal';
 import { EditExerciseModal } from '../../components/Hospital/EditExerciseModal';
 import { DeleteExerciseModal } from '../../components/Hospital/DeleteExerciseModal';
+import { CreateModpackModal } from '../../components/Hospital/CreateModpackModal';
 import { EditPatientModal } from '../../components/Hospital/EditPatientModal';
 import { EditTherapistModal } from '../../components/Hospital/EditTherapistModal';
 import { ConfirmActionModal } from '../../components/Hospital/ConfirmActionModal';
@@ -113,6 +115,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     users,
     therapists,
     exercises,
+    modpacks,
     treatmentPlans,
     activityLogs,
     bannedDevices,
@@ -129,6 +132,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     addExercise,
     updateExercise,
     deleteExercise,
+    addModpack,
+    deleteModpack,
     saveTreatmentPlan,
     deleteTreatmentPlan,
     kickSession,
@@ -824,9 +829,11 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   // =========================================================================
   // 4. STATE FOR EXERCISE LIBRARY (Tab 4: exercises)
   // =========================================================================
+  const [exerciseSubTab, setExerciseSubTab] = useState<'exercises' | 'modpacks'>('exercises');
   const [exerciseSearch, setExerciseSearch] = useState<string>('');
   const [exerciseCategoryFilter, setExerciseCategoryFilter] = useState<string>('all');
   const [isAddExerciseOpen, setIsAddExerciseOpen] = useState<boolean>(false);
+  const [isCreateModpackOpen, setIsCreateModpackOpen] = useState<boolean>(false);
   const [editingExercise, setEditingExercise] = useState<HospitalExercise | null>(null);
   const [deletingExercise, setDeletingExercise] = useState<HospitalExercise | null>(null);
 
@@ -3742,205 +3749,410 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
           {/* ================================================================== */}
           {activeTab === 'exercises' && (
             <div className="space-y-6 animate-fadeIn">
+              {/* Header Title */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                  <h3 className="font-bold text-lg text-[#0F2F2B]">คลังท่าทางกายภาพบำบัดชีวกลศาสตร์</h3>
-                  <p className="text-xs text-slate-500">
-                    แสดงท่าทางกายภาพทั้งหมด • แอดมินและนักกายภาพสามารถ เพิ่มท่าใหม่ และ ลบท่า ได้
+                  <h3 className="font-extrabold text-lg text-[#0F2F2B] flex items-center gap-2">
+                    <Dumbbell className="w-5 h-5 text-emerald-600" />
+                    <span>คลังท่าทางกายภาพบำบัดชีวกลศาสตร์ (Exercise & Modpack Library)</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    ฐานข้อมูลท่ากายภาพกลาง (Central DB) และชุดท่าฝึกสำเร็จรูป (Modpacks) ซิงค์เรียลไทม์กับตู้ Kiosk และระบบจัดตารางนัด
                   </p>
+                </div>
+              </div>
+
+              {/* Sub-navigation: Individual Exercises vs Exercise Modpacks */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-emerald-100 pb-3">
+                <div className="flex items-center gap-2 p-1 bg-white border border-emerald-200 rounded-full shadow-2xs">
+                  <button
+                    onClick={() => setExerciseSubTab('exercises')}
+                    className={`px-4 py-2 rounded-full text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                      exerciseSubTab === 'exercises'
+                        ? 'bg-[#10B981] text-white font-extrabold shadow-xs'
+                        : 'text-slate-600 hover:text-emerald-800'
+                    }`}
+                  >
+                    <Dumbbell className="w-3.5 h-3.5" />
+                    <span>ท่ากายภาพเดี่ยว ({filteredExercises.length})</span>
+                  </button>
+                  <button
+                    onClick={() => setExerciseSubTab('modpacks')}
+                    className={`px-4 py-2 rounded-full text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                      exerciseSubTab === 'modpacks'
+                        ? 'bg-[#10B981] text-white font-extrabold shadow-xs'
+                        : 'text-slate-600 hover:text-emerald-800'
+                    }`}
+                  >
+                    <PackagePlus className="w-3.5 h-3.5" />
+                    <span>ชุดท่าฝึกสำเร็จรูป (Modpacks) ({modpacks.length})</span>
+                  </button>
                 </div>
 
                 <div className="flex items-center gap-3">
-                  <div className="w-56 relative">
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={exerciseSearch}
-                      onChange={(e) => setExerciseSearch(e.target.value)}
-                      placeholder="ค้นหาชื่อท่า, ข้อต่อ..."
-                      className="w-full pl-9 pr-3 py-2 rounded-full bg-white border border-emerald-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#10B981]"
-                    />
-                  </div>
-
-                  <button
-                    onClick={() => setIsAddExerciseOpen(true)}
-                    className="px-4 py-2 rounded-full bg-[#10B981] text-white text-xs font-bold shadow-md hover:bg-emerald-600 transition flex items-center gap-2 cursor-pointer whitespace-nowrap"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>+ เพิ่มท่าทางใหม่</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Category Filter Pills */}
-              <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-                {['all', 'ฟื้นฟูข้อไหล่และแขน', 'ฟื้นฟูข้อเข่าและขา', 'ฟื้นฟูข้อสะโพกและหลัง', 'ฟื้นฟูข้อเท้าและขา'].map(
-                  (cat) => (
-                    <button
-                      key={cat}
-                      onClick={() => setExerciseCategoryFilter(cat)}
-                      className={`px-3.5 py-1.5 rounded-full font-bold transition whitespace-nowrap cursor-pointer ${
-                        exerciseCategoryFilter === cat
-                          ? 'bg-[#10B981] text-white shadow-sm'
-                          : 'bg-white border border-emerald-200 text-slate-600 hover:text-emerald-800'
-                      }`}
-                    >
-                      {cat === 'all' ? 'ทุกหมวดหมู่' : cat}
-                    </button>
-                  )
-                )}
-              </div>
-
-              {/* Exercises Grid */}
-              {filteredExercises.length === 0 ? (
-                <div className="bg-white rounded-3xl p-12 text-center border border-emerald-100 shadow-sm space-y-4">
-                  <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center">
-                    <Dumbbell className="w-8 h-8" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-base text-[#0F2F2B]">ไม่พบท่าทางกายภาพที่ตรงกับเงื่อนไข</h4>
-                    <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                      ลองเปลี่ยนคำค้นหา หรือเลือกหมวดหมู่อื่น หรือกดปุ่มเพิ่มท่าทางกายภาพใหม่ลงในคลัง
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-center gap-2 pt-2">
-                    {(exerciseSearch || exerciseCategoryFilter !== 'all') && (
-                      <button
-                        onClick={() => {
-                          setExerciseSearch('');
-                          setExerciseCategoryFilter('all');
-                        }}
-                        className="px-4 py-2 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs font-bold hover:bg-emerald-100 transition cursor-pointer"
-                      >
-                        ล้างตัวกรองทั้งหมด
-                      </button>
-                    )}
-                    <button
-                      onClick={() => setIsAddExerciseOpen(true)}
-                      className="px-4 py-2 rounded-full bg-[#10B981] text-white text-xs font-bold hover:bg-emerald-600 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>+ เพิ่มท่าทางใหม่</span>
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                  {filteredExercises.map((exercise) => (
-                    <div
-                      key={exercise.id}
-                      className="bg-white rounded-3xl p-6 border border-emerald-100 shadow-sm space-y-4 hover:border-emerald-300 transition flex flex-col justify-between"
-                    >
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 font-mono text-[11px] font-bold border border-emerald-200">
-                              {exercise.category}
-                            </span>
-                            {exercise.difficulty && (
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                                  exercise.difficulty === 'easy'
-                                    ? 'bg-emerald-100/70 text-emerald-800 border-emerald-200'
-                                    : exercise.difficulty === 'medium'
-                                    ? 'bg-amber-100/70 text-amber-800 border-amber-200'
-                                    : 'bg-rose-100/70 text-rose-800 border-rose-200'
-                                }`}
-                              >
-                                {exercise.difficulty === 'easy'
-                                  ? 'ง่าย'
-                                  : exercise.difficulty === 'medium'
-                                  ? 'ปานกลาง'
-                                  : 'ยาก'}
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-right">
-                            <span className="font-extrabold text-sm text-emerald-700">
-                              เป้าหมาย {exercise.targetAngle}°
-                            </span>
-                            <span className="text-[11px] text-slate-400 block font-medium">
-                              ค้าง {exercise.holdSeconds} วิ
-                              {exercise.sets && exercise.repsPerSet
-                                ? ` • ${exercise.sets}×${exercise.repsPerSet}`
-                                : ''}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="font-extrabold text-base text-[#0F2F2B]">{exercise.name}</div>
-                          <div className="text-xs text-slate-400 font-medium">{exercise.englishName}</div>
-                        </div>
-
-                        <div className="text-xs text-slate-600 bg-emerald-50/50 p-3 rounded-2xl border border-emerald-100 space-y-1">
-                          <div>
-                            <strong>ข้อต่อเป้าหมาย:</strong>{' '}
-                            <span className="text-emerald-900 font-bold">{exercise.targetJoint}</span>
-                          </div>
-                          <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
-                            {exercise.description}
-                          </p>
-                        </div>
-
-                        {exercise.cautions && (
-                          <div className="text-xs text-rose-700 bg-rose-50/60 p-2.5 rounded-2xl border border-rose-100 flex items-start gap-1.5">
-                            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-rose-500" />
-                            <span className="text-[11px] leading-tight">
-                              <strong>ข้อควรระวัง:</strong> {exercise.cautions}
-                            </span>
-                          </div>
-                        )}
-
-                        {exercise.contraindications && (
-                          <div className="text-xs text-amber-800 bg-amber-50/70 p-2.5 rounded-2xl border border-amber-200/80 flex items-start gap-1.5">
-                            <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-600" />
-                            <span className="text-[11px] leading-tight">
-                              <strong>ข้อห้าม:</strong> {exercise.contraindications}
-                            </span>
-                          </div>
-                        )}
+                  {exerciseSubTab === 'exercises' ? (
+                    <>
+                      <div className="w-52 relative">
+                        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={exerciseSearch}
+                          onChange={(e) => setExerciseSearch(e.target.value)}
+                          placeholder="ค้นหาชื่อท่า, ข้อต่อ..."
+                          className="w-full pl-9 pr-3 py-2 rounded-full bg-white border border-emerald-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#10B981]"
+                        />
                       </div>
+                      <button
+                        onClick={() => setIsAddExerciseOpen(true)}
+                        className="px-4 py-2 rounded-full bg-[#10B981] hover:bg-emerald-600 text-white text-xs font-bold shadow-md transition flex items-center gap-2 cursor-pointer whitespace-nowrap"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>+ เพิ่มท่าทางใหม่</span>
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => setIsCreateModpackOpen(true)}
+                      className="px-4 py-2 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md transition flex items-center gap-2 cursor-pointer whitespace-nowrap"
+                    >
+                      <PackagePlus className="w-4 h-4" />
+                      <span>+ สร้างชุดท่าฝึกใหม่ (Create Modpack)</span>
+                    </button>
+                  )}
+                </div>
+              </div>
 
-                      {/* Card Action Buttons */}
-                      <div className="pt-3 border-t border-emerald-50 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => setEditingExercise(exercise)}
-                            className="px-2.5 py-1.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition flex items-center gap-1 cursor-pointer border border-emerald-200"
-                            title="แก้ไขข้อมูลท่าทางกายภาพนี้"
-                          >
-                            <Pencil className="w-3.5 h-3.5 text-emerald-600" />
-                            <span>แก้ไข</span>
-                          </button>
+              {/* VIEW 1: INDIVIDUAL EXERCISES */}
+              {exerciseSubTab === 'exercises' && (
+                <div className="space-y-6">
+                  {/* Category Filter Pills */}
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+                    {['all', 'ฟื้นฟูข้อไหล่และแขน', 'ฟื้นฟูข้อเข่าและขา', 'ฟื้นฟูข้อสะโพกและหลัง', 'ฟื้นฟูข้อเท้าและขา', 'ฟื้นฟูระบบประสาท'].map(
+                      (cat) => (
+                        <button
+                          key={cat}
+                          onClick={() => setExerciseCategoryFilter(cat)}
+                          className={`px-3.5 py-1.5 rounded-full font-bold transition whitespace-nowrap cursor-pointer ${
+                            exerciseCategoryFilter === cat
+                              ? 'bg-[#10B981] text-white shadow-sm'
+                              : 'bg-white border border-emerald-200 text-slate-600 hover:text-emerald-800'
+                          }`}
+                        >
+                          {cat === 'all' ? 'ทุกหมวดหมู่' : cat}
+                        </button>
+                      )
+                    )}
+                  </div>
 
-                          <button
-                            onClick={() => setDeletingExercise(exercise)}
-                            className="px-2.5 py-1.5 rounded-full hover:bg-rose-50 text-rose-600 hover:text-rose-800 text-xs font-bold transition flex items-center gap-1 cursor-pointer border border-transparent hover:border-rose-200"
-                            title="ลบท่านี้ออกจากคลัง"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>ลบท่านี้</span>
-                          </button>
-                        </div>
-
-                        {onLaunchKioskExercise && (
+                  {/* Exercises Grid */}
+                  {filteredExercises.length === 0 ? (
+                    <div className="bg-white rounded-3xl p-12 text-center border border-emerald-100 shadow-sm space-y-4">
+                      <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center">
+                        <Dumbbell className="w-8 h-8" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-base text-[#0F2F2B]">ไม่พบท่าทางกายภาพที่ตรงกับเงื่อนไข</h4>
+                        <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                          ลองเปลี่ยนคำค้นหา หรือเลือกหมวดหมู่อื่น หรือกดปุ่มเพิ่มท่าทางกายภาพใหม่ลงในคลัง
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-center gap-2 pt-2">
+                        {(exerciseSearch || exerciseCategoryFilter !== 'all') && (
                           <button
                             onClick={() => {
-                              onLaunchKioskExercise(exercise.id);
-                              showToast(`เริ่มท่าฝึก ${exercise.name} บนหน้าจอจำลอง`);
-                              onClose();
+                              setExerciseSearch('');
+                              setExerciseCategoryFilter('all');
                             }}
-                            className="px-3.5 py-1.5 rounded-full bg-emerald-100 text-emerald-800 hover:bg-emerald-200 text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-sm"
-                            title="เปิดทดสอบเซสชันฝึกบนตู้จำลอง Kiosk"
+                            className="px-4 py-2 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs font-bold hover:bg-emerald-100 transition cursor-pointer"
                           >
-                            <Play className="w-3 h-3" />
-                            <span>ทดสอบที่ตู้</span>
+                            ล้างตัวกรองทั้งหมด
                           </button>
                         )}
+                        <button
+                          onClick={() => setIsAddExerciseOpen(true)}
+                          className="px-4 py-2 rounded-full bg-[#10B981] text-white text-xs font-bold hover:bg-emerald-600 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>+ เพิ่มท่าทางใหม่</span>
+                        </button>
                       </div>
                     </div>
-                  ))}
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                      {filteredExercises.map((exercise) => (
+                        <div
+                          key={exercise.id}
+                          className="bg-white rounded-3xl p-6 border border-emerald-100 shadow-sm space-y-4 hover:border-emerald-300 transition flex flex-col justify-between"
+                        >
+                          <div className="space-y-3">
+                            {/* Demo Image Preview if available */}
+                            {exercise.imageUrl && (
+                              <div className="w-full h-36 rounded-2xl overflow-hidden bg-stone-100 border border-slate-100 mb-2 relative group">
+                                <img
+                                  src={exercise.imageUrl}
+                                  alt={exercise.name}
+                                  className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                                  onError={(e) => {
+                                    (e.target as HTMLElement).style.display = 'none';
+                                  }}
+                                />
+                                <span className="absolute bottom-2 left-2 bg-[#0F2F2B]/80 backdrop-blur-xs text-white text-[10px] px-2 py-0.5 rounded-md font-mono">
+                                  {exercise.svgType || 'exercise_demo'}
+                                </span>
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 font-mono text-[11px] font-bold border border-emerald-200">
+                                  {exercise.category}
+                                </span>
+                                {exercise.difficulty && (
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                      exercise.difficulty === 'easy'
+                                        ? 'bg-emerald-100/70 text-emerald-800 border-emerald-200'
+                                        : exercise.difficulty === 'medium'
+                                        ? 'bg-amber-100/70 text-amber-800 border-amber-200'
+                                        : 'bg-rose-100/70 text-rose-800 border-rose-200'
+                                    }`}
+                                  >
+                                    {exercise.difficulty === 'easy'
+                                      ? 'ง่าย'
+                                      : exercise.difficulty === 'medium'
+                                      ? 'ปานกลาง'
+                                      : 'ยาก'}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-right">
+                                <span className="font-extrabold text-sm text-emerald-700">
+                                  เป้าหมาย {exercise.targetAngle}°
+                                </span>
+                                {exercise.minAngle !== undefined && exercise.maxAngle !== undefined ? (
+                                  <span className="text-[10px] text-slate-500 block font-semibold">
+                                    ปลอดภัย: {exercise.minAngle}° - {exercise.maxAngle}°
+                                  </span>
+                                ) : (
+                                  <span className="text-[11px] text-slate-400 block font-medium">
+                                    ค้าง {exercise.holdSeconds} วิ
+                                    {exercise.sets && exercise.repsPerSet
+                                      ? ` • ${exercise.sets}×${exercise.repsPerSet}`
+                                      : ''}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div>
+                              <div className="font-extrabold text-base text-[#0F2F2B]">{exercise.name}</div>
+                              <div className="text-xs text-slate-400 font-medium">{exercise.englishName}</div>
+                            </div>
+
+                            <div className="text-xs text-slate-600 bg-emerald-50/50 p-3 rounded-2xl border border-emerald-100 space-y-1">
+                              <div>
+                                <strong>ข้อต่อเป้าหมาย:</strong>{' '}
+                                <span className="text-emerald-900 font-bold">{exercise.targetJoint}</span>
+                              </div>
+                              <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                                {exercise.description}
+                              </p>
+                            </div>
+
+                            {exercise.warnings && (
+                              <div className="text-xs text-amber-900 bg-amber-50 p-2.5 rounded-2xl border border-amber-200 flex items-start gap-1.5">
+                                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-600" />
+                                <span className="text-[11px] leading-tight">
+                                  <strong>คำเตือน:</strong> {exercise.warnings}
+                                </span>
+                              </div>
+                            )}
+
+                            {exercise.cautions && (
+                              <div className="text-xs text-rose-700 bg-rose-50/60 p-2.5 rounded-2xl border border-rose-100 flex items-start gap-1.5">
+                                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-rose-500" />
+                                <span className="text-[11px] leading-tight">
+                                  <strong>ข้อควรระวัง:</strong> {exercise.cautions}
+                                </span>
+                              </div>
+                            )}
+
+                            {exercise.contraindications && (
+                              <div className="text-xs text-amber-800 bg-amber-50/70 p-2.5 rounded-2xl border border-amber-200/80 flex items-start gap-1.5">
+                                <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-600" />
+                                <span className="text-[11px] leading-tight">
+                                  <strong>ข้อห้าม:</strong> {exercise.contraindications}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Card Action Buttons */}
+                          <div className="pt-3 border-t border-emerald-50 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setEditingExercise(exercise)}
+                                className="px-2.5 py-1.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition flex items-center gap-1 cursor-pointer border border-emerald-200"
+                                title="แก้ไขข้อมูลท่าทางกายภาพนี้"
+                              >
+                                <Pencil className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>แก้ไข</span>
+                              </button>
+
+                              <button
+                                onClick={() => setDeletingExercise(exercise)}
+                                className="px-2.5 py-1.5 rounded-full hover:bg-rose-50 text-rose-600 hover:text-rose-800 text-xs font-bold transition flex items-center gap-1 cursor-pointer border border-transparent hover:border-rose-200"
+                                title="ลบท่านี้ออกจากคลัง"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>ลบท่านี้</span>
+                              </button>
+                            </div>
+
+                            {onLaunchKioskExercise && (
+                              <button
+                                onClick={() => {
+                                  onLaunchKioskExercise(exercise.id);
+                                  showToast(`เริ่มท่าฝึก ${exercise.name} บนหน้าจอจำลอง`);
+                                  onClose();
+                                }}
+                                className="px-3.5 py-1.5 rounded-full bg-emerald-100 text-emerald-800 hover:bg-emerald-200 text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-sm"
+                                title="เปิดทดสอบเซสชันฝึกบนตู้จำลอง Kiosk"
+                              >
+                                <Play className="w-3 h-3" />
+                                <span>ทดสอบที่ตู้</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* VIEW 2: EXERCISE MODPACKS / PRESETS */}
+              {exerciseSubTab === 'modpacks' && (
+                <div className="space-y-4">
+                  {modpacks.length === 0 ? (
+                    <div className="bg-white rounded-3xl p-12 text-center border border-emerald-100 shadow-sm space-y-4">
+                      <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center">
+                        <PackagePlus className="w-8 h-8" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-base text-[#0F2F2B]">ยังไม่มีชุดท่าฝึกกายภาพ (Modpacks)</h4>
+                        <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                          สร้างชุดท่าฝึกที่รวมหลายท่าทางเข้าด้วยกัน เพื่อให้นักกายภาพสามารถนำไปจัดตารางฝึกให้คนไข้ได้ทันที
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setIsCreateModpackOpen(true)}
+                        className="px-5 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-2 mx-auto cursor-pointer shadow-sm"
+                      >
+                        <PackagePlus className="w-4 h-4" />
+                        <span>+ สร้างชุดท่าฝึกใหม่</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                      {modpacks.map((mp) => (
+                        <div
+                          key={mp.id}
+                          className="bg-white rounded-3xl p-6 border border-emerald-100 shadow-sm hover:border-emerald-300 transition flex flex-col justify-between space-y-4 group"
+                        >
+                          <div className="space-y-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-2.5">
+                                <span className="text-2xl p-2 rounded-2xl bg-emerald-50 border border-emerald-200">
+                                  {mp.icon || '📦'}
+                                </span>
+                                <div>
+                                  <h4 className="font-extrabold text-base text-[#0F2F2B] leading-tight">
+                                    {mp.name}
+                                  </h4>
+                                  <span className="text-[11px] text-emerald-700 font-bold block mt-0.5">
+                                    {mp.category || 'ฟื้นฟูชีวกลศาสตร์'}
+                                  </span>
+                                </div>
+                              </div>
+                              <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900 font-black text-[11px] border border-emerald-200 flex-shrink-0">
+                                {mp.exercises.length} ท่า
+                              </span>
+                            </div>
+
+                            <p className="text-xs text-slate-600 leading-relaxed bg-stone-50/80 p-3 rounded-2xl border border-stone-200/60">
+                              {mp.description}
+                            </p>
+
+                            <div className="text-[11px] text-slate-500">
+                              <span className="font-bold text-slate-700">เป้าหมาย: </span>
+                              <span>{mp.targetJoint}</span>
+                            </div>
+
+                            {/* Exercises List inside Modpack */}
+                            <div className="space-y-1.5 pt-1">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                                ท่าทางในชุด ({mp.exercises.length} ท่า):
+                              </span>
+                              <div className="flex flex-wrap gap-1.5 max-h-[110px] overflow-y-auto">
+                                {mp.exercises.map((item, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-50 text-emerald-900 text-[11px] font-bold border border-emerald-200"
+                                  >
+                                    <span>{item.exerciseName}</span>
+                                    <span className="text-emerald-600 text-[10px]">
+                                      ({item.sets}×{item.reps})
+                                    </span>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Card Footer Actions */}
+                          <div className="pt-3 border-t border-emerald-50 flex items-center justify-between">
+                            <button
+                              onClick={() => {
+                                deleteModpack(mp.id);
+                                showToast(`ลบชุดท่าฝึก ${mp.name} เรียบร้อยแล้ว`);
+                              }}
+                              className="px-2.5 py-1.5 rounded-full hover:bg-rose-50 text-rose-600 hover:text-rose-800 text-xs font-bold transition flex items-center gap-1 cursor-pointer border border-transparent hover:border-rose-200"
+                              title="ลบชุดท่าฝึกนี้"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>ลบชุดนี้</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                const defaultPatient = users.find((u) => u.role === 'patient');
+                                setSelectedPlanForEdit({
+                                  id: '',
+                                  patientId: defaultPatient?.id || '',
+                                  patientName: defaultPatient?.name || '',
+                                  patientCode: defaultPatient?.code || '',
+                                  therapistId: currentUserId,
+                                  therapistName: currentUser?.name || 'นักกายภาพ',
+                                  diagnosis: mp.description || mp.name,
+                                  targetJoint: mp.targetJoint || 'ข้อต่อและกล้ามเนื้อ',
+                                  assignedExercises: mp.exercises,
+                                  clinicalNotes: 'ฝึกอย่างสม่ำเสมอ พักระหว่างเซ็ต',
+                                  createdAt: new Date().toISOString().split('T')[0],
+                                  status: 'active',
+                                } as TreatmentPlan);
+                                setIsTreatmentPlanModalOpen(true);
+                              }}
+                              className="px-3.5 py-1.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                              title="นำชุดท่านี้ไปจัดตารางฝึกให้คนไข้"
+                            >
+                              <span>⚡ นำไปจัดตารางฝึก</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -4718,6 +4930,17 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       />
 
       {/* ==================================================================== */}
+      {/* 13B. CREATE MODPACK MODAL (Tab 4: exercises)                         */}
+      {/* ==================================================================== */}
+      <CreateModpackModal
+        isOpen={isCreateModpackOpen}
+        onClose={() => setIsCreateModpackOpen(false)}
+        availableExercises={exercises}
+        onSaveModpack={addModpack}
+        onSuccessToast={showToast}
+      />
+
+      {/* ==================================================================== */}
       {/* 14. BANNED MANAGEMENT MODAL (Tab 5: logs)                            */}
       {/* ==================================================================== */}
       <BannedManagementModal
@@ -4844,6 +5067,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         patients={users}
         therapists={therapists}
         exercises={exercises}
+        modpacks={modpacks}
         currentRole={currentRole}
         currentUserId={currentUserId}
         currentUserName={currentUser?.name || 'เจ้าหน้าที่'}

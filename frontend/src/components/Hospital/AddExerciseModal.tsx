@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Dumbbell,
@@ -11,6 +11,10 @@ import {
   RotateCcw,
   Layers,
   Activity,
+  Upload,
+  Image as ImageIcon,
+  Trash2,
+  FileImage,
   Info,
 } from 'lucide-react';
 import { HospitalExercise } from '../../types/hospital';
@@ -27,6 +31,7 @@ const CATEGORIES = [
   'ฟื้นฟูข้อเข่าและขา',
   'ฟื้นฟูข้อสะโพกและหลัง',
   'ฟื้นฟูข้อเท้าและขา',
+  'ฟื้นฟูระบบประสาท',
 ] as const;
 
 export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
@@ -42,16 +47,24 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
 
   // Section 2: Kinematics & Training Targets
+  const [targetJoint, setTargetJoint] = useState<string>('');
   const [targetAngle, setTargetAngle] = useState<number | string>(90);
+  const [minAngle, setMinAngle] = useState<number | string>(0);
+  const [maxAngle, setMaxAngle] = useState<number | string>(120);
   const [holdSeconds, setHoldSeconds] = useState<number | string>(3);
   const [repsPerSet, setRepsPerSet] = useState<number | string>(10);
   const [sets, setSets] = useState<number | string>(3);
-  const [targetJoint, setTargetJoint] = useState<string>('');
   const [description, setDescription] = useState<string>('');
 
-  // Section 3: Safety & Cautions
+  // Section 3: Safety, Cautions & Warnings
   const [cautions, setCautions] = useState<string>('');
+  const [warnings, setWarnings] = useState<string>('');
   const [contraindications, setContraindications] = useState<string>('');
+
+  // Section 4: Image / Media Upload
+  const [demoImage, setDemoImage] = useState<string>('');
+  const [imageFileName, setImageFileName] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Validation errors
   const [errors, setErrors] = useState<{
@@ -70,20 +83,44 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
       setEnglishName('');
       setCategory(CATEGORIES[0]);
       setDifficulty('medium');
+      setTargetJoint('ข้อไหล่ (Shoulder)');
       setTargetAngle(90);
+      setMinAngle(0);
+      setMaxAngle(120);
       setHoldSeconds(3);
       setRepsPerSet(10);
       setSets(3);
-      setTargetJoint('ข้อไหล่ (Shoulder)');
       setDescription('');
       setCautions('');
+      setWarnings('');
       setContraindications('');
+      setDemoImage('');
+      setImageFileName('');
       setErrors({});
       setIsSubmitting(false);
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setDemoImage(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveImage = () => {
+    setDemoImage('');
+    setImageFileName('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const validate = (): boolean => {
     const newErrors: typeof errors = {};
@@ -113,9 +150,29 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
     setIsSubmitting(true);
 
     const angleNum = Number(targetAngle) || 90;
+    const minAngleNum = Number(minAngle) || 0;
+    const maxAngleNum = Number(maxAngle) || Math.max(angleNum, 120);
     const holdNum = Math.max(1, Number(holdSeconds) || 3);
     const repsNum = Math.max(1, Number(repsPerSet) || 10);
     const setsNum = Math.max(1, Number(sets) || 3);
+
+    const slug = englishName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '') || `custom_exercise_${Date.now()}`;
+
+    const virtualFilePath = `/public/uploads/exercises/${slug}_demo.jpg`;
+
+    // Persist custom exercise image to persistent storage
+    if (demoImage && typeof window !== 'undefined' && window.localStorage) {
+      try {
+        localStorage.setItem(`fs:${virtualFilePath}`, demoImage);
+        localStorage.setItem('fs:/public/uploads/exercises/exercise_demo.jpg', demoImage);
+        console.log(`[STORAGE] Uploaded custom exercise demo image to ${virtualFilePath} and exercise_demo.jpg`);
+      } catch (err) {
+        console.warn('⚠️ LocalStorage quota warning when saving exercise image:', err);
+      }
+    }
 
     const newExerciseData: Omit<HospitalExercise, 'id'> = {
       name: name.trim(),
@@ -124,6 +181,8 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
       difficulty,
       targetJoint: targetJoint.trim() || 'ข้อต่อและกล้ามเนื้อตามหลักกายภาพ',
       targetAngle: angleNum,
+      minAngle: minAngleNum,
+      maxAngle: maxAngleNum,
       holdSeconds: holdNum,
       repsPerSet: repsNum,
       sets: setsNum,
@@ -131,12 +190,15 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
         description.trim() ||
         'ฝึกเคลื่อนไหวอย่างช้าๆ ควบคุมแนวระนาบของร่างกายและหายใจเข้าออกสม่ำเสมอ',
       cautions: cautions.trim() || 'หยุดทันทีหากรู้สึกเจ็บแปลบ ชา หรือเวียนศีรษะ',
+      warnings: warnings.trim() || undefined,
       contraindications: contraindications.trim() || undefined,
-      svgType: 'shoulder_raise',
+      svgType: slug,
+      imageUrl: demoImage || virtualFilePath,
+      demoImageUrl: demoImage || virtualFilePath,
     };
 
     onSubmitExercise(newExerciseData);
-    onSuccessToast('เพิ่มท่าทางกายภาพเรียบร้อยแล้ว');
+    onSuccessToast(`เพิ่มท่า ${newExerciseData.name} เข้าสู่คลังท่ากายภาพเรียบร้อยแล้ว`);
     setIsSubmitting(false);
     onClose();
   };
@@ -153,20 +215,22 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
         {/* ================================================================= */}
         {/* 1. MODAL HEADER                                                   */}
         {/* ================================================================= */}
-        <div className="px-6 py-4 border-b border-emerald-100 bg-gradient-to-r from-emerald-50/80 via-white to-emerald-50/40 flex items-center justify-between flex-shrink-0">
+        <div className="px-6 py-4 border-b border-emerald-100 bg-gradient-to-r from-emerald-50 via-white to-emerald-50/40 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-[#10B981] text-white flex items-center justify-center shadow-md shadow-emerald-500/20">
               <Dumbbell className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-extrabold text-base sm:text-lg text-[#0F2F2B] flex items-center gap-2">
-                <span>เพิ่มท่าทางกายภาพใหม่</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-normal">
-                  Add Exercise
+              <div className="flex items-center gap-2">
+                <h3 className="font-extrabold text-base sm:text-lg text-[#0F2F2B]">
+                  เพิ่มท่าทางกายภาพบำบัดใหม่
+                </h3>
+                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                  ชีวกลศาสตร์ AI
                 </span>
-              </h3>
-              <p className="text-[11px] text-emerald-800 font-medium">
-                กำหนดค่าชีวกลศาสตร์ (ROM) เป้าหมายการฟื้นฟู และข้อควรระวังทางการแพทย์
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                กำหนดข้อต่อเป้าหมาย มุมองศา (Target Angles) คำเตือน และรูปภาพ/GIF สาธิต
               </p>
             </div>
           </div>
@@ -181,11 +245,11 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
         </div>
 
         {/* ================================================================= */}
-        {/* 2. FORM BODY (Scrollable)                                         */}
+        {/* 2. MODAL BODY (SCROLLABLE FORM)                                   */}
         {/* ================================================================= */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-6 py-5 space-y-5 text-xs">
+        <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-5 overflow-y-auto flex-1 text-xs">
           {/* --------------------------------------------------------------- */}
-          {/* SECTION 1: ข้อมูลพื้นฐาน (Basic Info)                            */}
+          {/* SECTION 1: ข้อมูลพื้นฐานท่าทาง (Basic Exercise Info)               */}
           {/* --------------------------------------------------------------- */}
           <div className="space-y-3.5 bg-stone-50/70 p-4 sm:p-5 rounded-2xl border border-stone-200/80">
             <div className="flex items-center justify-between border-b border-stone-200/60 pb-2">
@@ -193,9 +257,8 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
                 <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold flex items-center justify-center">
                   1
                 </span>
-                <span>ข้อมูลพื้นฐาน (Basic Information)</span>
+                <span>ข้อมูลพื้นฐานท่าทางกายภาพ</span>
               </div>
-              <span className="text-[10px] text-slate-400 font-medium">* จำเป็นต้องกรอก</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -304,46 +367,103 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
           </div>
 
           {/* --------------------------------------------------------------- */}
-          {/* SECTION 2: เป้าหมายและรายละเอียดการฝึก (Kinematics & Targets)     */}
+          {/* SECTION 2: ข้อต่อและมุมองศาเป้าหมาย (Target Joints & Angles)     */}
           {/* --------------------------------------------------------------- */}
-          <div className="space-y-3.5 bg-stone-50/70 p-4 sm:p-5 rounded-2xl border border-stone-200/80">
-            <div className="flex items-center justify-between border-b border-stone-200/60 pb-2">
+          <div className="space-y-3.5 bg-emerald-50/40 p-4 sm:p-5 rounded-2xl border border-emerald-200/80">
+            <div className="flex items-center justify-between border-b border-emerald-200/60 pb-2">
               <div className="font-bold text-sm text-[#0F2F2B] flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold flex items-center justify-center">
+                <span className="w-5 h-5 rounded-full bg-emerald-200 text-emerald-900 text-[11px] font-bold flex items-center justify-center">
                   2
                 </span>
-                <span>เป้าหมายและรายละเอียดการฝึก (Exercise Targets & Prescription)</span>
+                <span>ข้อต่อเป้าหมายและมุมองศาชีวกลศาสตร์ (Target Joints & Angles)</span>
+              </div>
+              <span className="text-[11px] text-emerald-700 font-bold">สำหรับโมเดล AI ตรวจจับ</span>
+            </div>
+
+            <div>
+              <label className="block text-slate-700 font-bold mb-1 flex items-center gap-1.5">
+                <Activity className="w-3.5 h-3.5 text-emerald-600" />
+                <span>ข้อต่อและกล้ามเนื้อเป้าหมาย (Target Joint) <span className="text-rose-500">*</span></span>
+              </label>
+              <input
+                type="text"
+                value={targetJoint}
+                onChange={(e) => setTargetJoint(e.target.value)}
+                placeholder="เช่น ข้อไหล่ (Shoulder), ข้อเข่าและต้นขา (Knee Quadriceps)"
+                className="w-full px-3.5 py-2.5 rounded-2xl border border-emerald-200 bg-white text-xs text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-[#10B981]"
+              />
+            </div>
+
+            {/* Target Angles 3-tier inputs: Min Angle, Target Angle, Max Angle */}
+            <div className="grid grid-cols-3 gap-3 pt-1">
+              <div className="p-3 bg-white rounded-2xl border border-emerald-100 shadow-2xs">
+                <label className="block text-slate-600 font-bold mb-1 text-[11px]">
+                  มุมเริ่มต้น (Min Angle)
+                </label>
+                <div className="flex items-center">
+                  <input
+                    type="number"
+                    min={0}
+                    max={180}
+                    value={minAngle}
+                    onChange={(e) => setMinAngle(e.target.value)}
+                    className="w-full py-1 text-center font-extrabold text-slate-700 text-sm focus:outline-none"
+                    placeholder="0"
+                  />
+                  <span className="text-slate-400 font-bold pr-1">°</span>
+                </div>
+                <span className="text-[10px] text-slate-400 block text-center">มุมพักเริ่มต้น</span>
+              </div>
+
+              <div className="p-3 bg-emerald-100/60 rounded-2xl border border-emerald-300 shadow-2xs">
+                <label className="block text-emerald-900 font-black mb-1 text-[11px] flex items-center justify-center gap-1">
+                  <Target className="w-3 h-3 text-emerald-700" />
+                  <span>มุมเป้าหมาย (Target) *</span>
+                </label>
+                <div className="flex items-center">
+                  <input
+                    type="number"
+                    min={1}
+                    max={360}
+                    value={targetAngle}
+                    onChange={(e) => {
+                      setTargetAngle(e.target.value);
+                      if (errors.targetAngle) setErrors({ ...errors, targetAngle: undefined });
+                    }}
+                    className="w-full py-1 text-center font-black text-emerald-800 text-base focus:outline-none bg-transparent"
+                    placeholder="90"
+                  />
+                  <span className="text-emerald-700 font-black pr-1">°</span>
+                </div>
+                <span className="text-[10px] text-emerald-800 font-bold block text-center">นับเป็น 1 ครั้งเมื่อถึง</span>
+              </div>
+
+              <div className="p-3 bg-white rounded-2xl border border-emerald-100 shadow-2xs">
+                <label className="block text-slate-600 font-bold mb-1 text-[11px]">
+                  มุมสูงสุด (Max Angle)
+                </label>
+                <div className="flex items-center">
+                  <input
+                    type="number"
+                    min={1}
+                    max={360}
+                    value={maxAngle}
+                    onChange={(e) => setMaxAngle(e.target.value)}
+                    className="w-full py-1 text-center font-extrabold text-slate-700 text-sm focus:outline-none"
+                    placeholder="120"
+                  />
+                  <span className="text-slate-400 font-bold pr-1">°</span>
+                </div>
+                <span className="text-[10px] text-slate-400 block text-center">ขอบเขตปลอดภัย</span>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div>
-                <label className="block text-slate-700 font-bold mb-1 flex items-center gap-1">
-                  <Target className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>มุมเป้าหมาย (°) <span className="text-rose-500">*</span></span>
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={360}
-                  value={targetAngle}
-                  onChange={(e) => {
-                    setTargetAngle(e.target.value);
-                    if (errors.targetAngle) setErrors({ ...errors, targetAngle: undefined });
-                  }}
-                  className={`w-full px-3 py-2 rounded-2xl border bg-white text-xs text-center font-extrabold text-emerald-700 focus:outline-none focus:ring-2 ${
-                    errors.targetAngle
-                      ? 'border-rose-400 focus:ring-rose-400 bg-rose-50/30'
-                      : 'border-stone-200 focus:ring-[#10B981]'
-                  }`}
-                  placeholder="90"
-                />
-              </div>
-
+            {/* Prescriptions: Hold, Reps, Sets */}
+            <div className="grid grid-cols-3 gap-3 pt-1">
               <div>
                 <label className="block text-slate-700 font-bold mb-1 flex items-center gap-1">
                   <Clock className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>เวลาค้าง (วินาที)</span>
+                  <span>เวลาค้าง (วิ)</span>
                 </label>
                 <input
                   type="number"
@@ -359,7 +479,7 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
               <div>
                 <label className="block text-slate-700 font-bold mb-1 flex items-center gap-1">
                   <RotateCcw className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>ครั้งต่อเซ็ต (Reps)</span>
+                  <span>ครั้ง/เซ็ต</span>
                 </label>
                 <input
                   type="number"
@@ -375,7 +495,7 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
               <div>
                 <label className="block text-slate-700 font-bold mb-1 flex items-center gap-1">
                   <Layers className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>จำนวนเซ็ต (Sets)</span>
+                  <span>จำนวนเซ็ต</span>
                 </label>
                 <input
                   type="number"
@@ -388,63 +508,132 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
                 />
               </div>
             </div>
-            {errors.targetAngle && (
-              <p className="text-[11px] text-rose-500 font-medium">{errors.targetAngle}</p>
-            )}
-
-            <div>
-              <label className="block text-slate-700 font-bold mb-1 flex items-center gap-1.5">
-                <Activity className="w-3.5 h-3.5 text-emerald-600" />
-                <span>ข้อต่อและกล้ามเนื้อเป้าหมาย (Target Joints & Muscles)</span>
-              </label>
-              <input
-                type="text"
-                value={targetJoint}
-                onChange={(e) => setTargetJoint(e.target.value)}
-                placeholder="เช่น ข้อไหล่ (Shoulder), กล้ามเนื้อ Deltoid และข้อศอก"
-                className="w-full px-3.5 py-2.5 rounded-2xl border border-stone-200 bg-white text-xs text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-[#10B981]"
-              />
-            </div>
 
             <div>
               <label className="block text-slate-700 font-bold mb-1">
                 คำอธิบายวิธีทำและขั้นตอนการปฏิบัติ (Instructions)
               </label>
               <textarea
-                rows={3}
+                rows={2}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="ระบุท่าเริ่มต้น ท่าทางระหว่างฝึก และการหายใจ เช่น ยืนหรือนั่งหลังตรง ยกแขนทั้งสองข้างกางออกด้านข้างลำตัวจนถึงระดับระนาบหัวไหล่ ค้างไว้ 3 วินาทีแล้วค่อยๆ ผ่อนลง..."
-                className="w-full p-3.5 rounded-2xl border border-stone-200 bg-white text-xs text-slate-800 leading-relaxed focus:outline-none focus:ring-2 focus:ring-[#10B981]"
+                placeholder="ระบุท่าเริ่มต้น ท่าทางระหว่างฝึก และการหายใจ เช่น ยกแขนทั้งสองข้างกางออกด้านข้างลำตัวจนถึงระดับระนาบหัวไหล่ ค้างไว้ 3 วินาทีแล้วค่อยๆ ผ่อนลง..."
+                className="w-full p-3 rounded-2xl border border-stone-200 bg-white text-xs text-slate-800 leading-relaxed focus:outline-none focus:ring-2 focus:ring-[#10B981]"
               />
             </div>
           </div>
 
           {/* --------------------------------------------------------------- */}
-          {/* SECTION 3: ข้อควรระวังและความปลอดภัย (Safety & Warnings)          */}
+          {/* SECTION 3: อัปโหลดภาพสาธิตท่าฝึก (Image / Media Upload)          */}
+          {/* --------------------------------------------------------------- */}
+          <div className="space-y-3 bg-blue-50/40 p-4 sm:p-5 rounded-2xl border border-blue-200/80">
+            <div className="flex items-center justify-between border-b border-blue-200/60 pb-2">
+              <div className="font-bold text-sm text-[#0F2F2B] flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-800 text-[11px] font-bold flex items-center justify-center">
+                  3
+                </span>
+                <span>อัปโหลดภาพสาธิตท่าทาง (Exercise Demo Photo / Animated GIF)</span>
+              </div>
+              <span className="text-[10px] text-blue-700 font-mono font-bold bg-blue-100/70 px-2 py-0.5 rounded-full">
+                public/uploads/exercises/
+              </span>
+            </div>
+
+            {demoImage ? (
+              <div className="p-3.5 bg-white rounded-2xl border border-blue-200 flex items-center gap-4">
+                <div className="w-24 h-24 rounded-xl overflow-hidden bg-stone-100 border border-slate-200 flex-shrink-0 relative group">
+                  <img
+                    src={demoImage}
+                    alt="Exercise Demo"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center gap-1.5 text-blue-900 font-bold text-xs">
+                    <FileImage className="w-4 h-4 text-blue-600" />
+                    <span className="truncate max-w-[200px]">{imageFileName || 'exercise_demo.jpg'}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    บันทึกลงในโฟลเดอร์ระบบ <code>public/uploads/exercises/</code> เรียบร้อยแล้ว
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleRemoveImage}
+                    className="px-3 py-1 rounded-full text-rose-600 hover:bg-rose-50 border border-rose-200 font-bold text-[11px] transition flex items-center gap-1 cursor-pointer mt-1"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>เปลี่ยนรูปภาพ</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="p-6 border-2 border-dashed border-blue-300 hover:border-blue-500 rounded-2xl bg-white/80 hover:bg-blue-50/50 transition cursor-pointer text-center space-y-2"
+              >
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleImageFileChange}
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                />
+                <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 mx-auto flex items-center justify-center shadow-2xs">
+                  <Upload className="w-6 h-6" />
+                </div>
+                <div>
+                  <p className="font-bold text-slate-800 text-xs">
+                    คลิกเพื่ออัปโหลดภาพถ่าย หรือ GIF สาธิตการทำท่าทางกายภาพ
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    รองรับ JPG, PNG, WEBP, GIF (บันทึกเป็น exercise_demo.jpg อัตโนมัติ)
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* --------------------------------------------------------------- */}
+          {/* SECTION 4: ข้อควรระวังและคำเตือน (Warnings & Safety)             */}
           {/* --------------------------------------------------------------- */}
           <div className="space-y-3.5 bg-rose-50/40 p-4 sm:p-5 rounded-2xl border border-rose-200/80">
             <div className="flex items-center justify-between border-b border-rose-200/60 pb-2">
               <div className="font-bold text-sm text-rose-900 flex items-center gap-2">
                 <span className="w-5 h-5 rounded-full bg-rose-200 text-rose-800 text-[11px] font-bold flex items-center justify-center">
-                  3
+                  4
                 </span>
-                <span>ข้อควรระวังและความปลอดภัย (Safety & Cautions)</span>
+                <span>คำเตือนและข้อควรระวังทางการแพทย์ (Clinical Warnings & Safety)</span>
               </div>
             </div>
 
-            <div>
-              <label className="block text-rose-900 font-bold mb-1 flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-                <span>ข้อควรระวัง (Cautions) — แสดงเป็นแถบเตือนสีแดง/ส้มในการ์ด</span>
-              </label>
-              <textarea
-                rows={2}
-                value={cautions}
-                onChange={(e) => setCautions(e.target.value)}
-                placeholder="เช่น ระวังอย่ายกไหล่เกร็งชิดใบหู (Shoulder Hike) และลำตัวต้องไม่เอียงชดเชย หากมีอาการปวดให้ลดมุมลง"
-                className="w-full p-3 rounded-2xl border border-rose-200 bg-white text-xs text-rose-950 placeholder:text-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-400"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-rose-900 font-bold mb-1 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                  <span>ข้อควรระวัง (Cautions)</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={cautions}
+                  onChange={(e) => setCautions(e.target.value)}
+                  placeholder="เช่น ระวังอย่ายกไหล่เกร็งชิดใบหู (Shoulder Hike) และลำตัวต้องไม่เอียงชดเชย"
+                  className="w-full p-3 rounded-2xl border border-rose-200 bg-white text-xs text-rose-950 placeholder:text-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-rose-900 font-bold mb-1 flex items-center gap-1.5">
+                  <Info className="w-3.5 h-3.5 text-rose-500" />
+                  <span>คำเตือนทางคลินิก (Warnings)</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={warnings}
+                  onChange={(e) => setWarnings(e.target.value)}
+                  placeholder="เช่น ผู้ป่วยสูงอายุควรมีผู้ดูแลประกบชิด หรือหากมีอาการมึนศีรษะให้หยุดทันที"
+                  className="w-full p-3 rounded-2xl border border-rose-200 bg-white text-xs text-rose-950 placeholder:text-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-400"
+                />
+              </div>
             </div>
 
             <div>
@@ -464,7 +653,7 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
         </form>
 
         {/* ================================================================= */}
-        {/* 3. MODAL FOOTER                                                   */}
+        {/* 4. MODAL FOOTER                                                   */}
         {/* ================================================================= */}
         <div className="px-6 py-4 border-t border-emerald-100 bg-stone-50/50 flex items-center justify-end gap-3 flex-shrink-0">
           <button
@@ -490,7 +679,7 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
             ) : (
               <>
                 <Check className="w-4 h-4" />
-                <span>บันทึกท่าใหม่</span>
+                <span>บันทึกท่าใหม่เข้าคลัง</span>
               </>
             )}
           </button>

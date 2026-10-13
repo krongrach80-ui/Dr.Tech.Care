@@ -29,6 +29,7 @@ import {
   UserAccount,
   PhysicalTherapist,
   HospitalExercise,
+  ExerciseModpack,
   UserRole,
 } from '../../types/hospital';
 import { patientFaceStorageService } from '../../services/patientFaceStorageService';
@@ -40,6 +41,7 @@ interface EditTreatmentPlanModalProps {
   patients: UserAccount[];
   therapists: PhysicalTherapist[];
   exercises: HospitalExercise[];
+  modpacks?: ExerciseModpack[];
   currentRole: UserRole;
   currentUserId: number | string;
   currentUserName: string;
@@ -199,6 +201,7 @@ export const EditTreatmentPlanModal: React.FC<EditTreatmentPlanModalProps> = ({
   patients,
   therapists,
   exercises,
+  modpacks = [],
   currentRole,
   currentUserId,
   currentUserName,
@@ -207,6 +210,11 @@ export const EditTreatmentPlanModal: React.FC<EditTreatmentPlanModalProps> = ({
 }) => {
   // Only patient role accounts can be assigned
   const patientUsers = useMemo(() => patients.filter((u) => u.role === 'patient'), [patients]);
+
+  const availableModpacks = useMemo(() => {
+    if (modpacks && modpacks.length > 0) return modpacks;
+    return PRESET_TEMPLATES as unknown as ExerciseModpack[];
+  }, [modpacks]);
 
   // Step state: 1 = เลือกคนไข้, 2 = จัดท่าฝึก & เกม, 3 = กำหนดเวลา
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -386,10 +394,14 @@ export const EditTreatmentPlanModal: React.FC<EditTreatmentPlanModalProps> = ({
     }
   };
 
-  // Apply Preset Template
-  const handleApplyPreset = (tpl: PresetTemplate) => {
-    setDiagnosis(tpl.diagnosis);
-    setTargetJoint(tpl.targetJoint);
+  // Apply Preset Template / Modpack
+  const handleApplyPreset = (tpl: ExerciseModpack | PresetTemplate) => {
+    if ('diagnosis' in tpl && tpl.diagnosis) {
+      setDiagnosis(tpl.diagnosis);
+    }
+    if (tpl.targetJoint) {
+      setTargetJoint(tpl.targetJoint);
+    }
     setAssignedExercises(tpl.exercises);
     setError(null);
   };
@@ -745,25 +757,26 @@ export const EditTreatmentPlanModal: React.FC<EditTreatmentPlanModalProps> = ({
           {/* ================================================================= */}
           {step === 2 && (
             <div className="space-y-3.5 animate-fadeIn">
-              {/* Preset Templates */}
+              {/* Preset Templates / Modpacks */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-extrabold text-slate-800 flex items-center gap-1">
                     <span>⚡</span>
-                    <span>ดึงชุดท่าฝึกสำเร็จรูป (Preset Template):</span>
+                    <span>ดึงชุดท่าฝึกสำเร็จรูป (Exercise Modpack / Presets):</span>
                   </span>
-                  <span className="text-[10px] text-slate-400">คลิกเพื่อเติมท่าอัตโนมัติ</span>
+                  <span className="text-[10px] text-slate-400">คลิกเพื่อ auto-fill ท่าทั้งหมดทันที</span>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {PRESET_TEMPLATES.map((tpl) => (
+                <div className="flex items-center gap-2 overflow-x-auto pb-1.5">
+                  {availableModpacks.map((tpl) => (
                     <button
                       key={tpl.id}
                       type="button"
                       onClick={() => handleApplyPreset(tpl)}
-                      className="p-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-[#0F2F2B] font-bold text-xs flex flex-col items-center justify-center text-center transition cursor-pointer shadow-2xs hover:scale-102"
+                      className="p-2.5 min-w-[135px] rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-[#0F2F2B] font-bold text-xs flex flex-col items-center justify-center text-center transition cursor-pointer shadow-2xs hover:scale-102 flex-shrink-0"
                     >
-                      <span className="text-base mb-0.5">{tpl.icon}</span>
-                      <span className="truncate w-full">{tpl.name}</span>
+                      <span className="text-lg mb-0.5">{tpl.icon || '📦'}</span>
+                      <span className="truncate w-full font-bold">{tpl.name}</span>
+                      <span className="text-[10px] text-emerald-700 font-semibold mt-0.5">({tpl.exercises.length} ท่าในชุด)</span>
                     </button>
                   ))}
                 </div>

@@ -102,25 +102,31 @@ export const DeleteUserModal: React.FC<DeleteUserModalProps> = ({
 
           <div>
             <h3 className="font-extrabold text-base sm:text-lg text-[#0F2F2B]">
-              ยืนยันการลบบัญชี
+              ยืนยันการลบบัญชีและเวชระเบียนถาวร
             </h3>
             <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-              คุณต้องการลบบัญชีของ <strong className="text-slate-900 font-bold">{user.name}</strong> ใช่หรือไม่?
+              คุณต้องการลบบัญชีของ <strong className="text-slate-900 font-bold">{user.name}</strong> ({user.code}) ใช่หรือไม่?
             </p>
             <p className="text-[11px] text-rose-600 font-semibold mt-1">
-              ⚠️ การกระทำนี้ไม่สามารถย้อนกลับได้ ข้อมูลประวัติการใช้งานจะถูกลบออกจากระบบ
+              ⚠️ การลบนี้มีผลถาวร (Strict Permanent): ลบโฟลเดอร์ไฟล์ภาพ <code>public/uploads/patients/{user.code}/</code> และตัดข้อมูลออกจากฐานข้อมูลหลัก <code>patients.json</code> ทันที การรีเฟรชหน้าเว็บจะไม่กู้คืนข้อมูลกลับมา
             </p>
           </div>
 
           {/* User Details Preview Box */}
           <div className="p-3.5 rounded-2xl bg-stone-50 border border-stone-200/80 text-xs text-left space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-slate-500 font-medium">รหัสบัญชี:</span>
+              <span className="text-slate-500 font-medium">รหัสประจำตัว (HN):</span>
               <span className="font-mono font-bold text-emerald-800">{user.code}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-slate-500 font-medium">ชื่อผู้ใช้งาน:</span>
               <span className="font-mono font-bold text-slate-800">@{user.username}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500 font-medium">ไดเรกทอรีที่ถูกลบ:</span>
+              <span className="font-mono text-[10px] text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 font-semibold truncate max-w-[200px]">
+                /public/uploads/patients/{user.code}/
+              </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-slate-500 font-medium">บทบาทในระบบ:</span>
