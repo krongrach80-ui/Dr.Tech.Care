@@ -446,6 +446,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   // Step 4 Face Liveness & Biometric State
   const [scanStep, setScanStep] = useState<'front' | 'left' | 'right' | 'done'>('front');
   const [faceHoldProgress, setFaceHoldProgress] = useState<number>(0);
+  const [holdElapsedMs, setHoldElapsedMs] = useState<number>(0);
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [scanStatusMessage, setScanStatusMessage] = useState<string>('กรุณาจัดใบหน้าให้อยู่ในกรอบวงรี');
   const [isNewRegistration, setIsNewRegistration] = useState<boolean>(false);
@@ -1068,6 +1069,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     setBiometricPhase(0);
     setBiometricProgress(0);
     setFaceHoldProgress(0);
+    setHoldElapsedMs(0);
     challengeProgressRef.current = { front: false, left: false, right: false };
     setChallengeProgress({ front: false, left: false, right: false });
     setScanStep('front');
@@ -1167,22 +1169,60 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
     let cancelled = false;
     let rafId: number | null = null;
-    let faceHoldCounter = 0;
-    const REQUIRED_FACE_HOLD_FRAMES = 24; // ~1.5 วินาทีที่ 15 FPS
+    let holdStartTime: number | null = null;
+    const HOLD_DURATION_MS = 1200; // 1.2 วินาที (1-1.5 วินาทีตามสเปก)
     let lastTime = 0;
 
-    // ใช้ FaceLandmarker ที่โหลดไว้แล้วจาก Background ใน Step 1 (ไม่สร้างใหม่)
-    poseService.ensureFaceLandmarker().catch(() => {});
+    // เชื่อมต่อ FaceLandmarker
+    poseService.ensureFaceLandmarker().then((lm) => {
+      if (lm) livenessEngine.setFaceLandmarker(lm);
+    }).catch(() => {});
+    livenessEngine.initialize().catch(() => {});
 
     const loop = () => {
       if (cancelled) return;
       const now = performance.now();
-      if (now - lastTime >= 66.6) {
+      if (now - lastTime >= 50) {
         lastTime = now;
         const video = videoRef.current;
         if (video && video.readyState >= 2 && !video.paused) {
           try {
-            const frameData = livenessEngine.processVideoFrame(video, now, 120);
+            let frameData = livenessEngine.processVideoFrame(video, now, 120);
+
+            // Fallback to Holistic pose head yaw if face landmarker is loading
+            if (!frameData) {
+              const res = poseService.detectHolistic(video, now, { enableFace: true });
+              const lm = res?.poseLandmarks;
+              if (lm && lm[0] && lm[2] && lm[5]) {
+                const nose = lm[0];
+                const leftEye = lm[2];
+                const rightEye = lm[5];
+                const eyeMidX = (leftEye.x + rightEye.x) / 2;
+                const eyeDist = Math.max(0.04, Math.abs(leftEye.x - rightEye.x));
+                const yawOffset = (nose.x - eyeMidX) / eyeDist;
+                // Mirrored perspective: Left turn = negative (< -14°), Right turn = positive (> +14°)
+                const fallbackYawDeg = -yawOffset * 50;
+
+                frameData = {
+                  yawDeg: fallbackYawDeg,
+                  pitchDeg: 0,
+                  rollDeg: 0,
+                  ear: 0.28,
+                  qualityGate: {
+                    passed: true,
+                    luminance: 120,
+                    isTooDark: false,
+                    isTooBright: false,
+                    faceCount: 1,
+                    isCentered: true,
+                    sizeRatio: 0.35,
+                    isSizeValid: true,
+                    errorMessageTh: null,
+                  },
+                };
+              }
+            }
+
             if (frameData) {
               setCurrentLivenessFrame(frameData);
 
@@ -1191,14 +1231,23 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               const evalRes = livenessEngine.evaluateChallenge(currentCh, frameData);
 
               if (evalRes.satisfied) {
-                faceHoldCounter += 2;
-                const prog = Math.min(100, Math.round((faceHoldCounter / REQUIRED_FACE_HOLD_FRAMES) * 100));
+                if (holdStartTime === null) {
+                  holdStartTime = now;
+                }
+                const elapsedMs = now - holdStartTime;
+                const prog = Math.min(100, Math.round((elapsedMs / HOLD_DURATION_MS) * 100));
                 setFaceHoldProgress(prog);
-                if (faceHoldCounter % 12 === 0) audioFeedback.playHoldTick();
+                setHoldElapsedMs(elapsedMs);
 
-                if (faceHoldCounter >= REQUIRED_FACE_HOLD_FRAMES) {
-                  faceHoldCounter = 0;
-                  setFaceHoldProgress(0);
+                // ส่งเสียง tick เบา ๆ ทุก 350ms ระหว่างค้างท่า
+                if (Math.floor(elapsedMs / 350) > Math.floor((elapsedMs - 50) / 350)) {
+                  audioFeedback.playHoldTick();
+                }
+
+                if (elapsedMs >= HOLD_DURATION_MS) {
+                  holdStartTime = null;
+                  setFaceHoldProgress(100);
+                  setHoldElapsedMs(0);
 
                   if (scanStep === 'front') {
                     challengeProgressRef.current.front = true;
@@ -1222,64 +1271,10 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   }
                 }
               } else {
-                faceHoldCounter = Math.max(0, faceHoldCounter - 1);
-                setFaceHoldProgress(Math.round((faceHoldCounter / REQUIRED_FACE_HOLD_FRAMES) * 100));
-              }
-            } else {
-              // Fallback to Holistic pose head yaw if face landmarker is loading
-              const res = poseService.detectHolistic(video, now, { enableFace: true });
-              const lm = res?.poseLandmarks;
-              if (lm && lm[0] && lm[2] && lm[5]) {
-                const nose = lm[0];
-                const leftEye = lm[2];
-                const rightEye = lm[5];
-                const eyeMidX = (leftEye.x + rightEye.x) / 2;
-                const eyeDist = Math.max(0.04, Math.abs(leftEye.x - rightEye.x));
-                const yawOffset = (nose.x - eyeMidX) / eyeDist;
-
-                const isFacingFront = Math.abs(yawOffset) < 0.28;
-                const isTurningLeft = yawOffset > 0.22;
-                const isTurningRight = yawOffset < -0.22;
-
-                const satisfied =
-                  (scanStep === 'front' && isFacingFront) ||
-                  (scanStep === 'left' && isTurningLeft) ||
-                  (scanStep === 'right' && isTurningRight);
-
-                if (satisfied) {
-                  faceHoldCounter++;
-                  const prog = Math.min(100, Math.round((faceHoldCounter / REQUIRED_FACE_HOLD_FRAMES) * 100));
-                  setFaceHoldProgress(prog);
-                  if (faceHoldCounter % 8 === 0) audioFeedback.playHoldTick();
-
-                  if (faceHoldCounter >= REQUIRED_FACE_HOLD_FRAMES) {
-                    faceHoldCounter = 0;
-                    setFaceHoldProgress(0);
-                    if (scanStep === 'front') {
-                      challengeProgressRef.current.front = true;
-                      setChallengeProgress((prev) => ({ ...prev, front: true }));
-                      setScanStep('left');
-                      setScanStatusMessage('✓ 1. หน้าตรง สำเร็จ! ต่อไปค่อยๆ หันศีรษะไปทางซ้าย (ค้างไว้ 1.5 วินาที)');
-                      audioFeedback.playRepSuccess();
-                    } else if (scanStep === 'left') {
-                      challengeProgressRef.current.left = true;
-                      setChallengeProgress((prev) => ({ ...prev, left: true }));
-                      setScanStep('right');
-                      setScanStatusMessage('✓ 2. หันซ้าย สำเร็จ! ต่อไปค่อยๆ หันศีรษะไปทางขวา (ค้างไว้ 1.5 วินาที)');
-                      audioFeedback.playRepSuccess();
-                    } else if (scanStep === 'right') {
-                      challengeProgressRef.current.right = true;
-                      setChallengeProgress({ front: true, left: true, right: true });
-                      setScanStep('done');
-                      setScanStatusMessage('✓ ครบทุกท่าแล้ว! กำลังตรวจสอบข้อมูลชีวมิติ...');
-                      audioFeedback.playRepSuccess();
-                      handlePerformFaceScan(true);
-                    }
-                  }
-                } else {
-                  faceHoldCounter = Math.max(0, faceHoldCounter - 1);
-                  setFaceHoldProgress(Math.round((faceHoldCounter / REQUIRED_FACE_HOLD_FRAMES) * 100));
-                }
+                // หลุดเงื่อนไข: รีเซ็ตเฉพาะเวลาค้างของขั้นปัจจุบัน (ขั้นที่ผ่านแล้วยังคงอยู่)
+                holdStartTime = null;
+                setFaceHoldProgress(0);
+                setHoldElapsedMs(0);
               }
             }
           } catch (e) {
@@ -1812,6 +1807,8 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               turn_right: challengeProgress.right,
             }}
             holdProgress={faceHoldProgress}
+            holdElapsedMs={holdElapsedMs}
+            targetHoldMs={1200}
             isProcessingBiometrics={isScanning}
             biometricMatchMessage={scanStatusMessage}
             onRetryCamera={startCamera}

@@ -32,6 +32,8 @@ interface LivenessScanHUDProps {
   currentChallenge: LivenessChallenge;
   completedChallenges: Record<LivenessChallenge, boolean>;
   holdProgress: number; // 0 - 100
+  holdElapsedMs?: number;
+  targetHoldMs?: number;
   isProcessingBiometrics: boolean;
   biometricMatchMessage: string | null;
   onRetryCamera: () => void;
@@ -46,6 +48,8 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
   currentChallenge,
   completedChallenges,
   holdProgress,
+  holdElapsedMs = 0,
+  targetHoldMs = 1200,
   isProcessingBiometrics,
   biometricMatchMessage,
   onRetryCamera,
@@ -97,14 +101,16 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
                   isDone
                     ? 'bg-emerald-600 text-white shadow-sm'
                     : isCurrent
-                    ? 'bg-amber-400 text-slate-900 ring-2 ring-amber-500 scale-102 shadow-md animate-pulse'
+                    ? holdProgress > 0
+                      ? 'bg-emerald-500 text-white ring-2 ring-emerald-400 scale-102 shadow-md animate-pulse'
+                      : 'bg-amber-400 text-slate-900 ring-2 ring-amber-500 scale-102 shadow-md'
                     : 'bg-white/80 text-slate-500 border border-slate-200'
                 }`}
               >
                 {isDone ? (
                   <CheckCircle2 className="w-4 h-4 stroke-[3]" />
                 ) : (
-                  <span>{isCurrent ? '👉' : '⏳'}</span>
+                  <span>{isCurrent ? (holdProgress > 0 ? '⚡' : '👉') : '⏳'}</span>
                 )}
                 <span>{item.label}</span>
               </div>
@@ -165,24 +171,28 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
           </div>
         )}
 
-        {/* 2.2 Oval Target Guide */}
+        {/* 2.2 Oval Target Guide (Yellow = Waiting, Green = Condition Met / Holding) */}
         {cameraState.isActive && !isProcessingBiometrics && (
           <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
             {/* Dark vignette backdrop with centered transparent oval cutout */}
             <div
-              className={`w-44 h-60 sm:w-52 sm:h-72 rounded-[50%] border-4 transition-all duration-200 flex flex-col items-center justify-between p-3 ${
-                qg?.passed
-                  ? 'border-emerald-400 shadow-[0_0_25px_rgba(34,197,94,0.6)] bg-emerald-500/5'
-                  : 'border-amber-400/80 shadow-[0_0_15px_rgba(251,191,36,0.3)] bg-black/20'
+              className={`w-44 h-60 sm:w-52 sm:h-72 rounded-[50%] border-4 transition-all duration-300 flex flex-col items-center justify-between p-3 ${
+                holdProgress > 0
+                  ? 'border-emerald-400 shadow-[0_0_30px_rgba(34,197,94,0.85)] bg-emerald-500/10 ring-4 ring-emerald-400/40'
+                  : 'border-amber-400/90 shadow-[0_0_20px_rgba(251,191,36,0.4)] bg-black/20'
               }`}
             >
               {/* Top Guide Indicator */}
-              <div className="text-[10px] font-black px-2 py-0.5 rounded-full bg-black/70 text-emerald-300 backdrop-blur-sm">
+              <div className={`text-[10px] font-black px-2.5 py-0.5 rounded-full backdrop-blur-sm transition-colors ${
+                holdProgress > 0 ? 'bg-emerald-600 text-white' : 'bg-black/70 text-amber-300'
+              }`}>
                 ศีรษะ
               </div>
 
               {/* Bottom Guide Indicator */}
-              <div className="text-[10px] font-black px-2 py-0.5 rounded-full bg-black/70 text-emerald-300 backdrop-blur-sm">
+              <div className={`text-[10px] font-black px-2.5 py-0.5 rounded-full backdrop-blur-sm transition-colors ${
+                holdProgress > 0 ? 'bg-emerald-600 text-white' : 'bg-black/70 text-amber-300'
+              }`}>
                 คาง
               </div>
             </div>
@@ -191,17 +201,45 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
 
         {/* 2.3 Live Euler Yaw Angle Meter */}
         {cameraState.isActive && !isProcessingBiometrics && (
-          <div className="absolute top-3 left-3 z-20 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/20 text-white flex items-center gap-2">
+          <div className="absolute top-3 left-3 z-20 bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/20 text-white flex items-center gap-2">
             <span className="text-[11px] font-bold text-slate-300">มุมศีรษะ (Yaw):</span>
             <span
-              className={`font-mono font-black text-xs px-1.5 py-0.2 rounded ${
-                Math.abs(yaw) <= 12
+              className={`font-mono font-black text-xs px-2 py-0.5 rounded ${
+                Math.abs(yaw) <= 10.5
                   ? 'bg-emerald-500/30 text-emerald-300'
                   : 'bg-amber-500/30 text-amber-300'
               }`}
             >
-              {yaw > 0 ? `+${yaw}° (ซ้าย)` : yaw < 0 ? `${yaw}° (ขวา)` : '0° ตรง'}
+              {yaw < -5 ? `${yaw}° (ซ้าย)` : yaw > 5 ? `+${yaw}° (ขวา)` : `${yaw}° (หน้าตรง)`}
             </span>
+          </div>
+        )}
+
+        {/* 2.3.1 Dev Debug Overlay (Active in dev or demo mode) */}
+        {import.meta.env.DEV && (
+          <div className="absolute top-12 left-3 z-20 bg-black/85 backdrop-blur-md px-3 py-2 rounded-xl border border-cyan-400/60 text-white font-mono text-[11px] shadow-xl pointer-events-none space-y-1">
+            <div className="text-cyan-300 font-extrabold flex items-center gap-1.5 border-b border-cyan-400/30 pb-0.5">
+              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping inline-block" />
+              <span>[DEV DEBUG] Liveness</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-slate-300">Yaw:</span>
+              <span className={`font-bold ${yaw < -14 ? 'text-cyan-300' : yaw > 14 ? 'text-amber-300' : 'text-emerald-300'}`}>
+                {yaw > 0 ? `+${yaw}` : yaw}° {yaw < -14 ? '(ซ้าย)' : yaw > 14 ? '(ขวา)' : '(ตรง)'}
+              </span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-slate-300">ขั้น:</span>
+              <span className="text-yellow-300 font-bold">
+                {currentChallenge === 'front' ? '1.หน้าตรง' : currentChallenge === 'turn_left' ? '2.หันซ้าย' : '3.หันขวา'}
+              </span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-slate-300">เวลาค้าง:</span>
+              <span className={`font-bold ${holdProgress > 0 ? 'text-emerald-300' : 'text-slate-400'}`}>
+                {((holdElapsedMs || 0) / 1000).toFixed(1)}s / {((targetHoldMs || 1200) / 1000).toFixed(1)}s ({holdProgress}%)
+              </span>
+            </div>
           </div>
         )}
 
@@ -259,9 +297,9 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
 
         {/* Bottom Instruction Bar */}
         <div className="absolute bottom-2 inset-x-2 bg-black/75 backdrop-blur-md rounded-xl py-1 px-3 text-center text-white text-[11px] font-bold z-10">
-          {currentChallenge === 'front' && '👀 1. มองตรงเข้าหากล้อง ค้างไว้จนกรอบเปลี่ยนเป็นสีเขียว'}
-          {currentChallenge === 'turn_left' && '👈 2. ค่อยๆ หันศีรษะไปทางซ้ายช้าๆ'}
-          {currentChallenge === 'turn_right' && '👉 3. ค่อยๆ หันศีรษะไปทางขวาช้าๆ'}
+          {currentChallenge === 'front' && '👀 1. มองตรงเข้าหากล้อง ค้างไว้ 1.2 วินาที'}
+          {currentChallenge === 'turn_left' && '👈 2. ค่อยๆ หันศีรษะไปทางซ้าย (Yaw < -14°) ค้างไว้ 1.2 วินาที'}
+          {currentChallenge === 'turn_right' && '👉 3. ค่อยๆ หันศีรษะไปทางขวา (Yaw > +14°) ค้างไว้ 1.2 วินาที'}
         </div>
       </div>
 

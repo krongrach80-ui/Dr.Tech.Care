@@ -228,13 +228,13 @@ export class LivenessEngine {
     const faceCenterY = (minY + maxY) / 2;
 
     qualityGate.sizeRatio = faceWidth;
-    qualityGate.isSizeValid = faceWidth >= 0.16 && faceWidth <= 0.65;
-    qualityGate.isCentered = faceCenterX >= 0.28 && faceCenterX <= 0.72 && faceCenterY >= 0.18 && faceCenterY <= 0.78;
+    qualityGate.isSizeValid = faceWidth >= 0.12 && faceWidth <= 0.75;
+    qualityGate.isCentered = faceCenterX >= 0.18 && faceCenterX <= 0.82 && faceCenterY >= 0.12 && faceCenterY <= 0.88;
 
     if (!qualityGate.isCentered) {
       qualityGate.errorMessageTh = 'กรุณาขยับใบหน้าให้อยู่กึ่งกลางกรอบวงรี';
     } else if (!qualityGate.isSizeValid) {
-      qualityGate.errorMessageTh = faceWidth < 0.16
+      qualityGate.errorMessageTh = faceWidth < 0.12
         ? 'กรุณาขยับเข้าใกล้กล้องอีกเล็กน้อย'
         : 'กรุณาถอยห่างจากกล้องอีกเล็กน้อย';
     } else {
@@ -242,24 +242,36 @@ export class LivenessEngine {
     }
 
     // Analytical Euler Yaw & Pitch Calculation
-    // Using 3D depth disparity between left and right facial margins
+    // Using MediaPipe 4x4 Transformation Matrix or 3D vector geometry
     let yawDeg = 0;
     let pitchDeg = 0;
     let rollDeg = 0;
 
-    // Try 4x4 facial transformation matrix if available
+    // Try 4x4 facial transformation matrix if available (Column-Major 4x4 float array)
     if (res.facialTransformationMatrixes && res.facialTransformationMatrixes[0]) {
-      const mat = res.facialTransformationMatrixes[0].data;
-      // mat is 4x4 float array
-      // Yaw = asin(-m[0][2]), Pitch = atan2(m[1][2], m[2][2])
-      yawDeg = Math.asin(Math.max(-1, Math.min(1, -mat[2]))) * (180 / Math.PI);
-      pitchDeg = Math.atan2(mat[6], mat[10]) * (180 / Math.PI);
-      rollDeg = Math.atan2(mat[1], mat[0]) * (180 / Math.PI);
+      const rawMatrix = (res.facialTransformationMatrixes[0] as any).data || res.facialTransformationMatrixes[0];
+      if (rawMatrix && rawMatrix.length >= 16) {
+        // Col 0: rawMatrix[0], rawMatrix[1], rawMatrix[2]
+        // Col 1: rawMatrix[4], rawMatrix[5], rawMatrix[6]
+        // Col 2: rawMatrix[8], rawMatrix[9], rawMatrix[10]
+        const r00 = rawMatrix[0], r10 = rawMatrix[1];
+        const r02 = rawMatrix[8], r12 = rawMatrix[9], r22 = rawMatrix[10];
+
+        // Euler Angles: Negative = Turn Left (< -14°), Positive = Turn Right (> +14°)
+        const yawRad = Math.atan2(r02, r22);
+        const pitchRad = Math.atan2(-r12, Math.hypot(r02, r22));
+        const rollRad = Math.atan2(r10, r00);
+
+        yawDeg = (yawRad * 180) / Math.PI;
+        pitchDeg = (pitchRad * 180) / Math.PI;
+        rollDeg = (rollRad * 180) / Math.PI;
+      }
     } else {
       // Analytical 3D vector geometry fallback
-      const dx = rightCheek.x - leftCheek.x;
-      const dz = (rightCheek.z || 0) - (leftCheek.z || 0);
-      yawDeg = Math.atan2(dz, Math.max(0.01, dx)) * (180 / Math.PI);
+      const midCheekX = (rightCheek.x + leftCheek.x) / 2;
+      const cheekSpan = Math.max(0.01, Math.abs(leftCheek.x - rightCheek.x));
+      const geomYawRatio = (noseTip.x - midCheekX) / (cheekSpan * 0.45);
+      yawDeg = -geomYawRatio * 45;
 
       const dy = chin.y - forehead.y;
       const dzy = (chin.z || 0) - (forehead.z || 0);
@@ -289,11 +301,18 @@ export class LivenessEngine {
   }
 
   /**
+   * Set or share an existing FaceLandmarker instance from PoseService
+   */
+  public setFaceLandmarker(landmarker: FaceLandmarker | null): void {
+    this.faceLandmarker = landmarker;
+  }
+
+  /**
    * 4. Check if current frame satisfies active Liveness challenge
    * In mirrored Kiosk video:
-   * - 'front': |Yaw| <= 10 deg
-   * - 'turn_left': Patient turns head to their left -> on screen Yaw > +16 deg
-   * - 'turn_right': Patient turns head to their right -> on screen Yaw < -16 deg
+   * - 'front': |Yaw| <= 10 deg (Tolerance: 10.5°)
+   * - 'turn_left': Patient turns head left -> Yaw < -14° (<= -15°)
+   * - 'turn_right': Patient turns head right -> Yaw > +14° (>= +15°)
    */
   public evaluateChallenge(
     challenge: LivenessChallenge,
@@ -311,38 +330,38 @@ export class LivenessEngine {
 
     switch (challenge) {
       case 'front': {
-        const isFacingFront = Math.abs(yaw) <= 12;
-        const progress = Math.max(0, Math.min(100, Math.round((1 - Math.abs(yaw) / 14) * 100)));
+        const isFacingFront = Math.abs(yaw) <= 10.5;
+        const progress = Math.max(0, Math.min(100, Math.round((1 - Math.abs(yaw) / 12) * 100)));
         return {
           satisfied: isFacingFront,
           progressPercent: isFacingFront ? 100 : progress,
-          hintTh: isFacingFront ? 'มองตรงเข้าหากล้อง ค้างไว้สักครู่' : 'กรุณามองตรงเข้าหากล้อง',
+          hintTh: isFacingFront ? '✓ หน้าตรงถูกต้อง ค้างไว้ 1 วินาที' : 'กรุณามองตรงเข้าหากล้อง (-10° ถึง +10°)',
         };
       }
       case 'turn_left': {
-        // Patient turns head to their left (yaw >= 16 deg)
-        const targetDeg = 16;
+        // Patient turns head to their left: Yaw < -14 deg
+        const targetDeg = -14;
+        const satisfied = yaw <= targetDeg;
+        const progress = Math.max(0, Math.min(100, Math.round((Math.abs(Math.min(0, yaw)) / 15) * 100)));
+        return {
+          satisfied,
+          progressPercent: progress,
+          hintTh: satisfied
+            ? '✓ หันซ้ายถูกต้อง ค้างไว้ 1 วินาที'
+            : `ค่อยๆ หันศีรษะไปทางซ้าย (${Math.round(Math.abs(Math.min(0, yaw)))}° / 15°)`,
+        };
+      }
+      case 'turn_right': {
+        // Patient turns head to their right: Yaw > +14 deg
+        const targetDeg = 14;
         const satisfied = yaw >= targetDeg;
         const progress = Math.max(0, Math.min(100, Math.round((Math.max(0, yaw) / targetDeg) * 100)));
         return {
           satisfied,
           progressPercent: progress,
           hintTh: satisfied
-            ? '✓ หันซ้ายถูกต้อง ค้างไว้ 1 วินาที'
-            : `ค่อยๆ หันศีรษะไปทางซ้าย (${Math.round(Math.max(0, yaw))}° / ${targetDeg}°)`,
-        };
-      }
-      case 'turn_right': {
-        // Patient turns head to their right (yaw <= -16 deg)
-        const targetDeg = -16;
-        const satisfied = yaw <= targetDeg;
-        const progress = Math.max(0, Math.min(100, Math.round((Math.min(0, yaw) / targetDeg) * 100)));
-        return {
-          satisfied,
-          progressPercent: progress,
-          hintTh: satisfied
             ? '✓ หันขวาถูกต้อง ค้างไว้ 1 วินาที'
-            : `ค่อยๆ หันศีรษะไปทางขวา (${Math.round(Math.abs(Math.min(0, yaw)))}° / 16°)`,
+            : `ค่อยๆ หันศีรษะไปทางขวา (${Math.round(Math.max(0, yaw))}° / 15°)`,
         };
       }
     }
