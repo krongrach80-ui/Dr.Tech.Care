@@ -33,6 +33,8 @@ import {
   ShieldCheck,
   ShieldAlert,
   Sliders,
+  Users,
+  UserPlus,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Patient } from '../../types/patient';
@@ -417,12 +419,16 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   const [faceCountdownSeconds, setFaceCountdownSeconds] = useState<number>(3);
   const [isSlideUpAnimating, setIsSlideUpAnimating] = useState<boolean>(false);
 
+  // Step 1: Account Inquiry Modal ("มีบัญชีแล้วหรือยัง? ยกมือขวา = มี, ยกมือซ้าย = ไม่มี")
+  const [showAccountInquiryModal, setShowAccountInquiryModal] = useState<boolean>(false);
+  const [showNewPatientInfoModal, setShowNewPatientInfoModal] = useState<boolean>(false);
+
   // Step 1: Prolonged No-Face Presence Inquiry Modal ("คุณอยู่หน้าเครื่องหรือไม่?")
   const [showPresenceInquiryModal, setShowPresenceInquiryModal] = useState<boolean>(false);
   const [modalArmPose, setModalArmPose] = useState<'none' | 'right_yes' | 'left_no'>('none');
   const [modalRightArmProgress, setModalRightArmProgress] = useState<number>(0);
   const [modalLeftArmProgress, setModalLeftArmProgress] = useState<number>(0);
-  const [modalRightArmSec, setModalRightArmSec] = useState<number>(3);
+  const [modalRightArmSec, setModalRightArmSec] = useState<number>(2);
   const [modalLeftArmSec, setModalLeftArmSec] = useState<number>(2);
   const modalCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -685,8 +691,8 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       const video = videoRef.current;
       if (video && video.readyState >= 2 && !video.paused) {
         try {
-          // กรณีโมดอลสอบถาม "คุณอยู่หน้าเครื่องหรือไม่?" เปิดอยู่: ใช้ MediaPipe Pose ตรวจจับยกแขนซ้าย/ขวา
-          if (showPresenceInquiryModal) {
+          // กรณีโมดอลสอบถาม "คุณมีบัญชีแล้วหรือยัง?" หรือ "คุณอยู่หน้าเครื่องหรือไม่?" เปิดอยู่: ใช้ MediaPipe Pose ตรวจจับยกแขนซ้าย/ขวา
+          if (showAccountInquiryModal || showPresenceInquiryModal) {
             const res = poseService.detectHolistic(video, now, { enableFace: false, enableHands: false });
             const lm = res?.poseLandmarks;
 
@@ -740,13 +746,15 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               const isRightRaised = Boolean(rightWrist && rightShoulder && rightWrist.y < (rightShoulder.y - 0.05));
               const isLeftRaised = Boolean(leftWrist && leftShoulder && leftWrist.y < (leftShoulder.y - 0.05));
 
-              // ถ้าผู้ใช้ยก แขนขวา (ใช่) -> ค้าง 3 วินาทีเพื่อยืนยัน
+              const HOLD_TIME_MS = 2000; // 2 วินาที (เหมาะสมกับผู้สูงอายุ ไม่เมื่อยแขน)
+
+              // ถ้าผู้ใช้ยก แขนขวา (มีบัญชีแล้ว / ใช่) -> ค้าง 2 วินาทีเพื่อยืนยัน
               if (isRightRaised && !isLeftRaised) {
                 modalRightHoldMs += delta;
                 modalLeftHoldMs = Math.max(0, modalLeftHoldMs - delta * 2);
 
-                const prog = Math.min(100, Math.round((modalRightHoldMs / 3000) * 100));
-                const sec = Math.max(1, Math.ceil((3000 - modalRightHoldMs) / 1000));
+                const prog = Math.min(100, Math.round((modalRightHoldMs / HOLD_TIME_MS) * 100));
+                const sec = Math.max(1, Math.ceil((HOLD_TIME_MS - modalRightHoldMs) / 1000));
                 setModalRightArmProgress(prog);
                 setModalRightArmSec(sec);
                 setModalArmPose('right_yes');
@@ -756,44 +764,70 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   audioFeedback.playHoldTick();
                 }
 
-                if (modalRightHoldMs >= 3000) {
+                if (modalRightHoldMs >= HOLD_TIME_MS) {
                   modalRightHoldMs = 0;
-                  setShowPresenceInquiryModal(false);
+                  setModalArmPose('none');
                   audioFeedback.playRepSuccess();
-                  try {
-                    voiceAssistant.speak('ยืนยันเข้าสู่ระบบเรียบร้อยค่ะ', { level: 'system' });
-                  } catch {}
-                  triggerSlideUp();
+
+                  if (showAccountInquiryModal) {
+                    setShowAccountInquiryModal(false);
+                    try {
+                      voiceAssistant.speak('มีบัญชีแล้ว เข้าสู่ขั้นตอนยืนยันตัวตนค่ะ', { level: 'system' });
+                    } catch {}
+                    triggerSlideUp();
+                  } else {
+                    setShowPresenceInquiryModal(false);
+                    try {
+                      voiceAssistant.speak('ยืนยันเข้าสู่ระบบเรียบร้อยค่ะ', { level: 'system' });
+                    } catch {}
+                    triggerSlideUp();
+                  }
                   return;
                 }
               }
-              // ถ้าผู้ใช้ยก แขนซ้าย (ไม่) -> กลับไปหน้าแรก
+              // ถ้าผู้ใช้ยก แขนซ้าย (ยังไม่มีบัญชี / ไม่) -> ค้าง 2 วินาที
               else if (isLeftRaised && !isRightRaised) {
                 modalLeftHoldMs += delta;
                 modalRightHoldMs = Math.max(0, modalRightHoldMs - delta * 2);
 
-                const prog = Math.min(100, Math.round((modalLeftHoldMs / 2000) * 100));
-                const sec = Math.max(1, Math.ceil((2000 - modalLeftHoldMs) / 1000));
+                const prog = Math.min(100, Math.round((modalLeftHoldMs / HOLD_TIME_MS) * 100));
+                const sec = Math.max(1, Math.ceil((HOLD_TIME_MS - modalLeftHoldMs) / 1000));
                 setModalLeftArmProgress(prog);
                 setModalLeftArmSec(sec);
                 setModalArmPose('left_no');
 
-                if (modalLeftHoldMs >= 2000) {
-                  modalLeftHoldMs = 0;
-                  setShowPresenceInquiryModal(false);
+                if (Math.floor(modalLeftHoldMs / 1000) > lastAudioTickSec) {
+                  lastAudioTickSec = Math.floor(modalLeftHoldMs / 1000);
                   audioFeedback.playHoldTick();
-                  try {
-                    voiceAssistant.speak('กลับสู่หน้าแรกเรียบร้อยค่ะ', { level: 'system' });
-                  } catch {}
+                }
+
+                if (modalLeftHoldMs >= HOLD_TIME_MS) {
+                  modalLeftHoldMs = 0;
+                  setModalArmPose('none');
+                  audioFeedback.playHoldTick();
+
+                  if (showAccountInquiryModal) {
+                    setShowAccountInquiryModal(false);
+                    try {
+                      voiceAssistant.speak('สำหรับผู้ป่วยใหม่ กรุณาติดต่อเคาน์เตอร์เวชระเบียนเพื่อเปิดประวัติค่ะ', { level: 'system' });
+                    } catch {}
+                    setShowNewPatientInfoModal(true);
+                  } else {
+                    setShowPresenceInquiryModal(false);
+                    try {
+                      voiceAssistant.speak('กลับสู่หน้าแรกเรียบร้อยค่ะ', { level: 'system' });
+                    } catch {}
+                  }
                   noFaceIdleMs = 0;
                   return;
                 }
               } else {
                 modalRightHoldMs = Math.max(0, modalRightHoldMs - delta * 1.5);
                 modalLeftHoldMs = Math.max(0, modalLeftHoldMs - delta * 1.5);
-                setModalRightArmProgress(Math.round((modalRightHoldMs / 3000) * 100));
-                setModalLeftArmProgress(Math.round((modalLeftHoldMs / 2000) * 100));
+                setModalRightArmProgress(Math.round((modalRightHoldMs / HOLD_TIME_MS) * 100));
+                setModalLeftArmProgress(Math.round((modalLeftHoldMs / HOLD_TIME_MS) * 100));
                 setModalArmPose('none');
+                lastAudioTickSec = -1;
               }
             }
           } else {
@@ -824,16 +858,16 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 audioFeedback.playHoldTick();
               }
 
-              // ถ้าตรวจเจอใบหน้าต่อเนื่องครบ 3 วินาที ให้ไปหน้าถัดไปทันที (ไม่ต้องกดปุ่ม)
+              // ถ้าตรวจเจอใบหน้าต่อเนื่องครบ 3 วินาที (หลอดโหลดเต็ม 100%): ให้เด้ง popup ถามว่ามีบัญชีแล้วหรือยัง
               if (faceHoldMs >= 3000) {
                 faceHoldMs = 0;
-                setIsPersonDetected(false);
+                setIsPersonDetected(true);
                 setPresenceProgress(100);
                 audioFeedback.playRepSuccess();
+                setShowAccountInquiryModal(true);
                 try {
-                  voiceAssistant.speak('ตรวจพบใบหน้าเรียบร้อยแล้วค่ะ กำลังเข้าสู่ระบบ', { level: 'system' });
+                  voiceAssistant.speak('ตรวจพบใบหน้าเรียบร้อยแล้วค่ะ คุณมีบัญชีผู้ป่วยแล้วหรือยังคะ? ถ้ามีแล้วให้ยกแขนขวา ถ้ายังไม่มีให้ยกแขนซ้าย หรือแตะปุ่มบนหน้าจอได้เลยค่ะ', { level: 'system' });
                 } catch {}
-                triggerSlideUp();
                 return;
               }
             } else {
@@ -847,13 +881,13 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               }
 
               // ตรวจสอบกรณีไม่เจอใบหน้าเป็นเวลานาน (>= 10 วินาที)
-              if (!showPinModal && !isSlideUpAnimating && isCameraActive) {
+              if (!showAccountInquiryModal && !showNewPatientInfoModal && !showPinModal && !isSlideUpAnimating && isCameraActive) {
                 noFaceIdleMs += delta;
                 if (noFaceIdleMs >= 10000) {
                   noFaceIdleMs = 0;
                   setShowPresenceInquiryModal(true);
                   try {
-                    voiceAssistant.speak('คุณอยู่หน้าเครื่องหรือไม่คะ? ยกแขนขวาค้างไว้ 3 วินาทีเพื่อยืนยัน หรือยกแขนซ้ายเพื่อกลับหน้าแรกค่ะ', { level: 'system' });
+                    voiceAssistant.speak('คุณอยู่หน้าเครื่องหรือไม่คะ? ยกแขนขวาค้างไว้ 2 วินาทีเพื่อยืนยัน หรือยกแขนซ้ายเพื่อกลับหน้าแรกค่ะ', { level: 'system' });
                   } catch {}
                 }
               }
@@ -873,7 +907,16 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       cancelled = true;
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [currentStep, showPresenceInquiryModal, showPinModal, isSlideUpAnimating, isCameraActive, triggerSlideUp]);
+  }, [
+    currentStep,
+    showAccountInquiryModal,
+    showNewPatientInfoModal,
+    showPresenceInquiryModal,
+    showPinModal,
+    isSlideUpAnimating,
+    isCameraActive,
+    triggerSlideUp,
+  ]);
 
   // Confetti helper
   const triggerMiniGameConfetti = (originX = 0.5) => {
@@ -1741,7 +1784,13 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             <div className="mt-3.5 sm:mt-4 w-full max-w-xs space-y-2">
               <button
                 data-kiosk-target="step1-start"
-                onClick={triggerSlideUp}
+                onClick={() => {
+                  audioFeedback.playRepSuccess();
+                  setShowAccountInquiryModal(true);
+                  try {
+                    voiceAssistant.speak('ยินดีต้อนรับค่ะ คุณมีบัญชีผู้ป่วยแล้วหรือยังคะ? ถ้ามีให้ยกมือขวา ถ้าไม่มีให้ยกมือซ้าย หรือแตะปุ่มบนหน้าจอได้เลยค่ะ', { level: 'system' });
+                  } catch {}
+                }}
                 className="w-full min-h-[64px] sm:min-h-[70px] py-3.5 sm:py-4 px-6 rounded-2xl bg-gradient-to-r from-[#2FB39A] via-[#1E8A4C] to-[#15803D] hover:from-[#259b84] hover:to-[#166534] text-white font-black text-base sm:text-lg shadow-xl hover:shadow-2xl active:scale-95 transition flex items-center justify-center gap-2.5 cursor-pointer border-2 border-emerald-300"
                 id="btnSitInFrontOfCamera"
               >
@@ -2402,8 +2451,272 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       </div>
 
       {/* ================================================================= */}
+      {/* โมดอลสอบถามเมื่อหลอดโหลดเต็ม 100%: "คุณมีบัญชีแล้วหรือยัง?"       */}
+      {/* ถ้ามีให้ยกมือขวา (เข้าสู่ระบบ) / ถ้าไม่มีให้ยกมือซ้าย (ผู้ป่วยใหม่) */}
+      {/* พร้อมปุ่มสัมผัสขนาดใหญ่ >= 64px รองรับผู้สูงอายุ                         */}
+      {/* ================================================================= */}
+      {showAccountInquiryModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 animate-fadeIn"
+          role="dialog"
+          aria-modal="true"
+          id="modalAccountInquiry"
+        >
+          <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border-4 border-emerald-400 p-5 sm:p-6 flex flex-col items-center text-center relative overflow-hidden">
+            {/* ปุ่มปิด X มุมบนขวา */}
+            <button
+              onClick={() => {
+                setShowAccountInquiryModal(false);
+                setModalArmPose('none');
+              }}
+              className="absolute top-4 right-4 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 transition cursor-pointer"
+              aria-label="ปิดหน้าต่าง"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* ไอคอนและหัวข้อหลัก */}
+            <div className="w-14 h-14 rounded-full bg-emerald-100 border-2 border-emerald-400 flex items-center justify-center text-[#1E8A4C] mb-2 shadow-sm">
+              <Users className="w-7 h-7" />
+            </div>
+
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-black mb-1">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+              <span>ตรวจพบใบหน้าเรียบร้อยแล้ว</span>
+            </div>
+
+            <h2 className="text-2xl sm:text-3xl font-black text-[#0B2B2B] tracking-tight">
+              คุณมีบัญชีแล้วหรือยัง?
+            </h2>
+            <p className="text-xs sm:text-sm text-slate-600 font-bold mt-1">
+              ถ้ามีให้ยกมือขวา (เข้าสู่ระบบ) • ถ้าไม่มีให้ยกมือซ้าย (ผู้ป่วยใหม่)
+            </p>
+
+            {/* หน้าต่างกระจกเงาสะท้อนจากกล้อง พร้อมตัวตรวจจับการยกแขน */}
+            <div className="w-full relative rounded-2xl overflow-hidden border-2 border-slate-300 bg-slate-900 shadow-inner mt-3">
+              <canvas
+                ref={modalCanvasRef}
+                width={480}
+                height={360}
+                className="w-full h-auto aspect-video object-cover"
+              />
+
+              {/* ป้ายแขนซ้าย = ไม่มีบัญชี (มุมบนซ้ายของกระจกเงา) */}
+              <div className="absolute top-2 left-2 bg-rose-950/90 border border-rose-400 text-white px-2.5 py-1.5 rounded-xl shadow-lg flex flex-col items-start text-left pointer-events-none">
+                <span className="font-black text-xs text-rose-300 flex items-center gap-1">
+                  <span>🔴 ยกแขนซ้าย</span>
+                </span>
+                <span className="text-[10px] font-bold text-rose-100">ยังไม่มีบัญชี (คนไข้ใหม่)</span>
+                {modalArmPose === 'left_no' && (
+                  <div className="w-28 bg-slate-800 h-1.5 rounded-full overflow-hidden mt-1 border border-rose-400/50">
+                    <div
+                      className="h-full bg-rose-500 transition-all duration-75"
+                      style={{ width: `${modalLeftArmProgress}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* ป้ายแขนขวา = มีบัญชีแล้ว (มุมบนขวาของกระจกเงา) */}
+              <div className="absolute top-2 right-2 bg-emerald-950/90 border border-emerald-400 text-white px-2.5 py-1.5 rounded-xl shadow-lg flex flex-col items-end text-right pointer-events-none">
+                <span className="font-black text-xs text-emerald-300 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-yellow-300" />
+                  <span>🟢 ยกแขนขวา</span>
+                </span>
+                <span className="text-[10px] font-bold text-emerald-100">มีบัญชีแล้ว (เข้าสู่ระบบ)</span>
+                {modalArmPose === 'right_yes' && (
+                  <div className="w-28 bg-slate-800 h-1.5 rounded-full overflow-hidden mt-1 border border-emerald-400/50">
+                    <div
+                      className="h-full bg-emerald-500 transition-all duration-75"
+                      style={{ width: `${modalRightArmProgress}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* แถบสถานะข้อความล่างกล้อง */}
+              <div className="absolute bottom-1.5 inset-x-2 bg-black/85 backdrop-blur-sm border border-emerald-400/40 text-white rounded-xl py-1.5 px-2.5 text-center pointer-events-none">
+                {modalArmPose === 'right_yes' ? (
+                  <p className="text-xs text-emerald-300 font-black animate-pulse">
+                    ✓ กำลังเลือก &quot;มีบัญชีแล้ว&quot;: ยกค้างไว้ {modalRightArmSec} วินาที ({modalRightArmProgress}%)
+                  </p>
+                ) : modalArmPose === 'left_no' ? (
+                  <p className="text-xs text-rose-300 font-black animate-pulse">
+                    ✕ กำลังเลือก &quot;ยังไม่มีบัญชี&quot;: ยกค้างไว้ {modalLeftArmSec} วินาที ({modalLeftArmProgress}%)
+                  </p>
+                ) : (
+                  <p className="text-[11px] sm:text-xs text-emerald-200 font-bold">
+                    ยกแขนขวาค้างไว้ 2 วินาที (มีบัญชีแล้ว) หรือยกแขนซ้าย (ยังไม่มีบัญชี)
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* แถบคำแนะนำท่าทาง (ข้อความใหญ่ ชัดเจน เหมาะสำหรับผู้สูงอายุ) */}
+            <div className="grid grid-cols-2 gap-2.5 w-full mt-3 text-xs sm:text-sm font-bold">
+              <div
+                className={`p-2.5 rounded-2xl border-2 flex items-center gap-2 transition ${
+                  modalArmPose === 'left_no'
+                    ? 'bg-rose-50 border-rose-500 text-rose-900 shadow-sm'
+                    : 'bg-slate-50 border-slate-200 text-slate-700'
+                }`}
+              >
+                <span className="text-2xl">🙋‍♂️</span>
+                <div className="text-left">
+                  <p className="font-black text-rose-700 leading-tight">ยกแขนซ้าย 2 วินาที</p>
+                  <p className="text-[11px] text-slate-500">ยังไม่มีบัญชี (คนไข้ใหม่)</p>
+                </div>
+              </div>
+
+              <div
+                className={`p-2.5 rounded-2xl border-2 flex items-center gap-2 transition ${
+                  modalArmPose === 'right_yes'
+                    ? 'bg-emerald-50 border-emerald-500 text-emerald-900 shadow-sm'
+                    : 'bg-slate-50 border-slate-200 text-slate-700'
+                }`}
+              >
+                <span className="text-2xl">🙋‍♀️</span>
+                <div className="text-left">
+                  <p className="font-black text-emerald-700 leading-tight">ยกแขนขวา 2 วินาที</p>
+                  <p className="text-[11px] text-slate-500">มีบัญชีแล้ว (เข้าสู่ระบบ)</p>
+                </div>
+              </div>
+            </div>
+
+            {/* ปุ่มกดขนาดใหญ่ >= 64px ทางเลือกสัมผัสหน้าจอสำหรับผู้สูงอายุ */}
+            <div className="grid grid-cols-2 gap-3 w-full mt-3.5">
+              {/* ปุ่มซ้าย = ยังไม่มีบัญชี */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAccountInquiryModal(false);
+                  setModalArmPose('none');
+                  audioFeedback.playHoldTick();
+                  try {
+                    voiceAssistant.speak('สำหรับผู้ป่วยใหม่ กรุณาติดต่อเคาน์เตอร์เวชระเบียนเพื่อเปิดประวัติค่ะ', { level: 'system' });
+                  } catch {}
+                  setShowNewPatientInfoModal(true);
+                }}
+                className="min-h-[64px] py-3.5 px-4 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-800 border-2 border-rose-300 font-black text-base sm:text-lg flex items-center justify-center gap-2 shadow-md active:scale-95 transition cursor-pointer"
+                id="btnAccountModalNo"
+              >
+                <UserPlus className="w-6 h-6 text-rose-600 shrink-0" />
+                <span>ยังไม่มีบัญชี</span>
+              </button>
+
+              {/* ปุ่มขวา = มีบัญชีแล้ว */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAccountInquiryModal(false);
+                  setModalArmPose('none');
+                  audioFeedback.playRepSuccess();
+                  try {
+                    voiceAssistant.speak('มีบัญชีแล้ว เข้าสู่ขั้นตอนยืนยันตัวตนค่ะ', { level: 'system' });
+                  } catch {}
+                  triggerSlideUp();
+                }}
+                className="min-h-[64px] py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#2FB39A] to-[#1E8A4C] hover:from-[#259b84] hover:to-[#166534] text-white border-2 border-emerald-300 font-black text-base sm:text-lg flex items-center justify-center gap-2 shadow-xl active:scale-95 transition cursor-pointer"
+                id="btnAccountModalYes"
+              >
+                <CheckCircle2 className="w-6 h-6 text-white shrink-0" />
+                <span>มีบัญชีแล้ว</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* โมดอลคำแนะนำสำหรับผู้ป่วยใหม่ (เมื่อตอบว่ายังไม่มีบัญชี)          */}
+      {/* ================================================================= */}
+      {showNewPatientInfoModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 animate-fadeIn"
+          role="dialog"
+          aria-modal="true"
+          id="modalNewPatientInfo"
+        >
+          <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border-4 border-amber-400 p-6 sm:p-7 flex flex-col items-center text-center relative overflow-hidden">
+            <button
+              onClick={() => setShowNewPatientInfoModal(false)}
+              className="absolute top-4 right-4 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 transition cursor-pointer"
+              aria-label="ปิดหน้าต่าง"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="w-16 h-16 rounded-full bg-amber-100 border-2 border-amber-400 flex items-center justify-center text-amber-700 mb-3 shadow-sm">
+              <UserPlus className="w-8 h-8" />
+            </div>
+
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-900 border border-amber-200 text-xs font-black mb-2">
+              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+              <span>คำแนะนำสำหรับผู้ป่วยใหม่</span>
+            </div>
+
+            <h2 className="text-2xl sm:text-3xl font-black text-[#0B2B2B] tracking-tight">
+              ยังไม่มีประวัติในระบบ Kiosk
+            </h2>
+
+            <div className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 my-4 text-left space-y-3">
+              <div className="flex items-start gap-3">
+                <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                  1
+                </span>
+                <p className="text-xs sm:text-sm font-bold text-slate-700 leading-relaxed">
+                  <strong className="text-emerald-800 font-black">ติดต่อเคาน์เตอร์ต้อนรับ / เวชระเบียน:</strong> เพื่อเปิดประวัติผู้ป่วยใหม่และรับรหัสประจำตัวคนไข้
+                </p>
+              </div>
+
+              <div className="flex items-start gap-3">
+                <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                  2
+                </span>
+                <p className="text-xs sm:text-sm font-bold text-slate-700 leading-relaxed">
+                  <strong className="text-emerald-800 font-black">บันทึกอัตลักษณ์ใบหน้าครั้งแรก:</strong> นักกายภาพจะบันทึกเวกเตอร์ชีวมิติ 128 มิติ (PDPA ปลอดภัย ไร้รูปถ่าย) เข้าสู่ระบบ รพ.
+                </p>
+              </div>
+
+              <div className="flex items-start gap-3">
+                <span className="w-6 h-6 rounded-full bg-teal-600 text-white font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                  3
+                </span>
+                <p className="text-xs sm:text-sm font-bold text-slate-700 leading-relaxed">
+                  <strong className="text-teal-800 font-black">เข้าใช้งานตู้ Kiosk:</strong> ครั้งต่อไปจะสามารถยืนหน้ากล้องเพื่อสแกนใบหน้าเข้าใช้งานได้ทันที
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3 w-full">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNewPatientInfoModal(false);
+                  setShowPinModal(true);
+                }}
+                className="w-full py-3.5 px-4 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 font-extrabold text-sm flex items-center justify-center gap-2 transition cursor-pointer"
+              >
+                <Key className="w-4 h-4 text-emerald-600" />
+                <span>ใช้รหัส PIN 6 หลัก (หากมีรหัสแล้ว)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowNewPatientInfoModal(false)}
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#2FB39A] to-[#1E8A4C] hover:from-[#259b84] hover:to-[#166534] text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg transition cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4 text-white" />
+                <span>เข้าใจแล้ว (กลับหน้าแรก)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
       {/* โมดอลสอบถามเมื่อตรวจไม่พบใบหน้าเป็นเวลานาน: "คุณอยู่หน้าเครื่องหรือไม่?" */}
-      {/* ใช้ MediaPipe Pose ตรวจจับยกแขนขวา=ใช่ (3 วินาที) / ยกแขนซ้าย=ไม่       */}
+      {/* ใช้ MediaPipe Pose ตรวจจับยกแขนขวา=ใช่ (2 วินาที) / ยกแขนซ้าย=ไม่       */}
       {/* และมีปุ่มสัมผัสขนาดใหญ่ >= 64px รองรับผู้สูงอายุ                         */}
       {/* ================================================================= */}
       {showPresenceInquiryModal && (
