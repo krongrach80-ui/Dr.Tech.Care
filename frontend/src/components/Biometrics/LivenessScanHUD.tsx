@@ -58,6 +58,19 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
   const qg = frameData?.qualityGate;
   const yaw = Math.round(frameData?.yawDeg || 0);
 
+  // เชื่อมต่อสัญญาณกล้องทันทีเมื่อ HUD เปิดใน Step 4
+  React.useEffect(() => {
+    const video = videoRef.current;
+    if (video && (window as any).__kioskCameraStream) {
+      if (video.srcObject !== (window as any).__kioskCameraStream) {
+        video.srcObject = (window as any).__kioskCameraStream;
+      }
+      video.muted = true;
+      video.playsInline = true;
+      video.play().catch(() => {});
+    }
+  }, [cameraState.isActive]);
+
   return (
     <div className="w-full flex-1 flex flex-col items-center justify-between relative overflow-hidden select-none">
       {/* 1. Header Information & Security Nonce Badge */}
@@ -224,8 +237,14 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
             </div>
             <div className="flex justify-between gap-3">
               <span className="text-slate-300">Yaw:</span>
-              <span className={`font-bold ${yaw < -14 ? 'text-cyan-300' : yaw > 14 ? 'text-amber-300' : 'text-emerald-300'}`}>
+              <span className={`font-bold ${Math.abs(yaw) <= 10.5 ? 'text-emerald-300' : 'text-amber-300'}`}>
                 {yaw > 0 ? `+${yaw}` : yaw}° {yaw < -14 ? '(ซ้าย)' : yaw > 14 ? '(ขวา)' : '(ตรง)'}
+              </span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-slate-300">QG Passed:</span>
+              <span className={`font-bold ${qg?.passed ? 'text-emerald-300' : 'text-rose-400'}`}>
+                {qg?.passed ? 'TRUE' : 'FALSE'} (face: {qg?.faceCount ?? 0})
               </span>
             </div>
             <div className="flex justify-between gap-3">

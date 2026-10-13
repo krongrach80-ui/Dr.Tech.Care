@@ -574,6 +574,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       if (!stream) throw new Error('ไม่สามารถรับสัญญาณภาพจากกล้องเว็บแคมได้');
 
       streamRef.current = stream;
+      (window as any).__kioskCameraStream = stream;
       setIsCameraActive(true);
       setCameraError(null);
 
@@ -597,6 +598,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     livenessEngine.initialize().catch(() => {});
     return () => {
       stopMediaStream();
+      try { delete (window as any).__kioskCameraStream; } catch {}
       poseService.closeHandLandmarker();
       poseService.closeFaceLandmarker();
       biometricTimersRef.current.forEach((t) => clearTimeout(t));
@@ -604,15 +606,17 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     };
   }, [startCamera, stopMediaStream]);
 
-  // เชื่อมต่อ stream เข้า videoRef ถาวร
+  // เชื่อมต่อ stream เข้า videoRef ถาวรทุกครั้งที่เปลี่ยน Step หรือกล้องพร้อม
   useEffect(() => {
-    if (videoRef.current && streamRef.current && !videoRef.current.srcObject) {
-      videoRef.current.srcObject = streamRef.current;
+    if (videoRef.current && streamRef.current) {
+      if (videoRef.current.srcObject !== streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+      }
       videoRef.current.muted = true;
       videoRef.current.playsInline = true;
       videoRef.current.play().catch(() => {});
     }
-  }, [isCameraActive]);
+  }, [isCameraActive, currentStep]);
 
   // Preload Pose, Hand Tracker และ Face Liveness ล่วงหน้าใน Background ตอนอยู่ Step 1
   useEffect(() => {
@@ -1185,7 +1189,14 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       if (now - lastTime >= 50) {
         lastTime = now;
         const video = videoRef.current;
-        if (video && video.readyState >= 2 && !video.paused) {
+        if (video) {
+          if (!video.srcObject && (window as any).__kioskCameraStream) {
+            video.srcObject = (window as any).__kioskCameraStream;
+            video.muted = true;
+            video.playsInline = true;
+            video.play().catch(() => {});
+          }
+          if (video.readyState >= 2 && !video.paused) {
           try {
             let frameData = livenessEngine.processVideoFrame(video, now, 120);
 
@@ -1282,8 +1293,9 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           }
         }
       }
+    }
 
-      rafId = requestAnimationFrame(loop);
+    rafId = requestAnimationFrame(loop);
     };
 
     rafId = requestAnimationFrame(loop);
@@ -1478,28 +1490,26 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       >
         
         {/* ================================================================= */}
-        {/* Permanent Video Element at Parent Level: มีอยู่ตลอดใน Step 1-4   */}
-        {/* ไม่ unmount หรือขอสิทธิ์กล้องใหม่ระหว่างสลับ Step                */}
+        {/* ================================================================= */}
+        {/* Permanent Video Element at Parent Level: สำหรับ Step 2-3         */}
         {/* ================================================================= */}
         <div
           ref={cameraContainerRef}
           className={`transition-all duration-300 ease-in-out relative ${
-            currentStep === 1
-              ? 'fixed top-0 left-0 w-2 h-2 opacity-0 pointer-events-none -z-50 overflow-hidden'
-              : currentStep === 2 || currentStep === 3
+            currentStep === 2 || currentStep === 3
               ? 'w-full flex-1 min-h-[580px] sm:min-h-[640px] rounded-[30px] sm:rounded-[38px] overflow-hidden border-2 border-emerald-400/80 bg-slate-900 flex items-center justify-center shadow-2xl z-10'
-              : currentStep === 4
-              ? 'w-full flex-1 min-h-[350px] max-h-[440px] rounded-[32px] overflow-hidden border-2 border-emerald-400/80 bg-slate-900 flex items-center justify-center shadow-2xl my-2.5 z-10'
               : 'fixed top-0 left-0 w-2 h-2 opacity-0 pointer-events-none -z-50 overflow-hidden'
           }`}
         >
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full h-full object-cover transform -scale-x-100 opacity-90"
-          />
+          {currentStep !== 4 && (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full h-full object-cover transform -scale-x-100 opacity-90"
+            />
+          )}
 
           {/* Overlays สำหรับ Step 2 & 3 บนกล้อง */}
           {(currentStep === 2 || currentStep === 3) && (
@@ -1579,31 +1589,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 </p>
               </div>
             </>
-          )}
-
-          {/* Overlays สำหรับ Step 4 บนกล้องสี่เหลี่ยม: กรอบไกด์เล็งใบหน้า & แถบ HUD สถานะบนตัวกล้อง */}
-          {currentStep === 4 && (
-            <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-between p-3.5 z-20">
-              {/* แถบหัวด้านบนบนภาพกล้อง */}
-              <div className="bg-black/70 backdrop-blur-md px-3.5 py-1 rounded-full border border-emerald-400/40 flex items-center gap-1.5 shadow-md">
-                <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-                <span className="text-xs font-bold text-white tracking-wide">
-                  Face Verification {isDemoMode ? '(โหมดสาธิต)' : ''}
-                </span>
-              </div>
-
-              {/* กรอบไกด์เล็งใบหน้ารูปวงรีตรงกลางกล้องสี่เหลี่ยม */}
-              <div className="w-48 h-60 border-2 border-dashed border-emerald-400/80 rounded-[50%] bg-emerald-500/5 flex items-center justify-center shadow-inner">
-                <User className="w-20 h-20 text-emerald-400/25" />
-              </div>
-
-              {/* แถบแสดงสถานะการสแกน HUD ด้านล่างกล้อง */}
-              <div className="w-full bg-black/85 backdrop-blur-md rounded-2xl py-2 px-3 text-center border border-emerald-400/40 shadow-lg">
-                <p className="text-xs sm:text-sm text-emerald-300 font-bold" data-kiosk-target="step4-status-msg">
-                  {scanStatusMessage}
-                </p>
-              </div>
-            </div>
           )}
         </div>
 

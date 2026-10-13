@@ -228,18 +228,11 @@ export class LivenessEngine {
     const faceCenterY = (minY + maxY) / 2;
 
     qualityGate.sizeRatio = faceWidth;
-    qualityGate.isSizeValid = faceWidth >= 0.12 && faceWidth <= 0.75;
-    qualityGate.isCentered = faceCenterX >= 0.18 && faceCenterX <= 0.82 && faceCenterY >= 0.12 && faceCenterY <= 0.88;
-
-    if (!qualityGate.isCentered) {
-      qualityGate.errorMessageTh = 'กรุณาขยับใบหน้าให้อยู่กึ่งกลางกรอบวงรี';
-    } else if (!qualityGate.isSizeValid) {
-      qualityGate.errorMessageTh = faceWidth < 0.12
-        ? 'กรุณาขยับเข้าใกล้กล้องอีกเล็กน้อย'
-        : 'กรุณาถอยห่างจากกล้องอีกเล็กน้อย';
-    } else {
-      qualityGate.passed = true;
-    }
+    qualityGate.isSizeValid = faceWidth >= 0.08 && faceWidth <= 0.85;
+    qualityGate.isCentered = faceCenterX >= 0.12 && faceCenterX <= 0.88 && faceCenterY >= 0.08 && faceCenterY <= 0.92;
+    // เมื่อตรวจพบใบหน้า 1 คน ถือว่าผ่าน Quality Gate ทันที ไม่บล็อกการนับเวลา
+    qualityGate.passed = true;
+    qualityGate.errorMessageTh = null;
 
     // Analytical Euler Yaw & Pitch Calculation
     // Using MediaPipe 4x4 Transformation Matrix or 3D vector geometry
@@ -318,11 +311,11 @@ export class LivenessEngine {
     challenge: LivenessChallenge,
     frame: LivenessFrameData
   ): { satisfied: boolean; progressPercent: number; hintTh: string } {
-    if (!frame.qualityGate.passed && challenge === 'front') {
+    if (frame.qualityGate.faceCount === 0 && challenge === 'front') {
       return {
         satisfied: false,
         progressPercent: 0,
-        hintTh: frame.qualityGate.errorMessageTh || 'จัดใบหน้าให้อยู่ในกรอบวงรี',
+        hintTh: 'กรุณาจัดใบหน้าให้อยู่ในกรอบวงรี',
       };
     }
 
