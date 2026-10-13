@@ -1476,7 +1476,11 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       {/* ======================================================== */}
       {/* กรอบ Card หลักสีขาว ขอบมนตามภาพวาด (The Main Kiosk White Card) */}
       {/* ======================================================== */}
-      <div className="w-full max-w-[440px] sm:max-w-[480px] bg-white rounded-[36px] sm:rounded-[44px] border-2 sm:border-[2.5px] border-black/85 shadow-2xl relative overflow-hidden flex flex-col items-center p-5 sm:p-7 min-h-[620px] sm:min-h-[680px] justify-between transition-all duration-500 my-auto">
+      <div
+        className={`w-full max-w-[440px] sm:max-w-[480px] bg-white rounded-[36px] sm:rounded-[44px] border-2 sm:border-[2.5px] border-black/85 shadow-2xl relative overflow-hidden flex flex-col items-center ${
+          currentStep === 3 ? 'p-2 sm:p-2.5' : 'p-5 sm:p-7'
+        } min-h-[620px] sm:min-h-[680px] justify-between transition-all duration-500 my-auto`}
+      >
         
         {/* ================================================================= */}
         {/* Permanent Video Element at Parent Level: มีอยู่ตลอดใน Step 1-4   */}
@@ -1488,7 +1492,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             currentStep === 1
               ? 'fixed top-0 left-0 w-2 h-2 opacity-0 pointer-events-none -z-50 overflow-hidden'
               : currentStep === 2 || currentStep === 3
-              ? 'w-full flex-1 min-h-[280px] max-h-[340px] rounded-[32px] overflow-hidden border-2 border-emerald-400/80 bg-slate-900 flex items-center justify-center shadow-2xl my-2.5 z-10'
+              ? 'w-full flex-1 min-h-[580px] sm:min-h-[640px] rounded-[30px] sm:rounded-[38px] overflow-hidden border-2 border-emerald-400/80 bg-slate-900 flex items-center justify-center shadow-2xl z-10'
               : currentStep === 4
               ? 'w-full flex-1 min-h-[350px] max-h-[440px] rounded-[32px] overflow-hidden border-2 border-emerald-400/80 bg-slate-900 flex items-center justify-center shadow-2xl my-2.5 z-10'
               : 'fixed top-0 left-0 w-2 h-2 opacity-0 pointer-events-none -z-50 overflow-hidden'
@@ -1505,49 +1509,78 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           {/* Overlays สำหรับ Step 2 & 3 บนกล้อง */}
           {(currentStep === 2 || currentStep === 3) && (
             <>
-              {/* แป้นเป้าหมายวงกลมซ้าย (ไม่) */}
-              <div
-                data-kiosk-target={currentStep === 2 ? 'step2-no' : 'step3-no'}
-                className="absolute top-4 left-4 z-20 flex flex-col items-center cursor-pointer transition hover:scale-105 active:scale-95"
-              >
-                <div className="w-16 h-16 rounded-full bg-rose-700/90 border-2 border-rose-300 flex flex-col items-center justify-center text-white shadow-lg backdrop-blur-sm">
-                  <span className="font-black text-sm">ไม่</span>
-                  <span className="text-[10px] text-rose-200 font-bold">{currentStep === 2 ? 'แขนซ้าย' : 'ย้อนกลับ'}</span>
-                </div>
-                <span className="text-[11px] font-black text-white bg-black/70 px-2 py-0.5 rounded-full mt-1.5 border border-rose-400/50">
-                  แตะ &quot;ไม่&quot;
+              {/* แถบหัวด้านบนลอยอยู่บนกล้อง: ขั้นตอนยืนยันตัวตน + XP */}
+              <div className="absolute top-3.5 inset-x-3.5 z-20 flex items-center justify-between pointer-events-none">
+                <span className="text-[11px] sm:text-xs font-bold text-teal-800 bg-teal-100/90 backdrop-blur-md px-3 py-1 rounded-full flex items-center gap-1.5 shadow-md border border-teal-200/60">
+                  <Gamepad2 className="w-3.5 h-3.5 text-teal-700" />
+                  <span>ขั้นตอนยืนยันตัวตน</span>
+                </span>
+                <span className="text-[11px] sm:text-xs font-mono font-black text-amber-800 bg-amber-100/90 backdrop-blur-md px-3 py-1 rounded-full flex items-center gap-1.5 shadow-md border border-amber-200/60">
+                  <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
+                  <span>{gameXp} XP</span>
                 </span>
               </div>
 
-              {/* แป้นเป้าหมายวงกลมขวา (ใช่) */}
-              <div
-                data-kiosk-target={currentStep === 2 ? 'step2-yes' : 'step3-yes'}
-                className="absolute top-4 right-4 z-20 flex flex-col items-center cursor-pointer transition hover:scale-105 active:scale-95"
+              {/* แป้นเป้าหมายวงกลมซ้าย (ไม่ / ย้อนกลับ) */}
+              <button
+                type="button"
+                data-kiosk-target={currentStep === 2 ? 'step2-no' : 'step3-no'}
+                id="btnStep3No"
+                onClick={handleStep3No}
+                className="absolute top-16 left-3.5 sm:left-4 z-20 flex flex-col items-center cursor-pointer transition-all hover:scale-105 active:scale-95 group focus:outline-none"
+                title="ไม่ (ย้อนกลับ)"
               >
-                <div className="w-16 h-16 rounded-full bg-emerald-700/90 border-2 border-emerald-300 flex flex-col items-center justify-center text-white shadow-lg backdrop-blur-sm">
-                  <span className="font-black text-sm">ใช่</span>
-                  <span className="text-[10px] text-emerald-200 font-bold flex items-center gap-0.5">
-                    {currentStep === 2 ? 'แขนขวา' : 'เข้าสู่ระบบ'}
-                    <Sparkles className="w-2.5 h-2.5 text-yellow-300" />
-                  </span>
+                <div
+                  className={`w-18 h-18 sm:w-20 sm:h-20 rounded-full border-3 flex flex-col items-center justify-center text-white shadow-xl backdrop-blur-md transition-all ${
+                    detectedArmPose === 'left_no'
+                      ? 'bg-rose-600 scale-110 border-white ring-4 ring-rose-300'
+                      : 'bg-rose-700/90 hover:bg-rose-600 border-rose-200 group-hover:border-white'
+                  }`}
+                >
+                  <X className="w-7 h-7 stroke-[3.5] text-white" />
+                  <span className="font-black text-sm sm:text-base leading-tight mt-0.5">ไม่</span>
                 </div>
-                <span className="text-[11px] font-black text-white bg-black/70 px-2 py-0.5 rounded-full mt-1.5 border border-emerald-400/50">
-                  แตะ &quot;ใช่&quot;
+                <span className="text-[11px] sm:text-xs font-black text-white bg-black/75 backdrop-blur-sm px-2.5 py-1 rounded-full mt-1.5 border border-rose-400/60 shadow-md">
+                  {currentStep === 2 ? 'แขนซ้าย' : 'ย้อนกลับ (ซ้าย)'}
                 </span>
-              </div>
+              </button>
+
+              {/* แป้นเป้าหมายวงกลมขวา (ใช่ / เข้าสู่ระบบ) */}
+              <button
+                type="button"
+                data-kiosk-target={currentStep === 2 ? 'step2-yes' : 'step3-yes'}
+                id="btnStep3Yes"
+                onClick={handleStep3Yes}
+                className="absolute top-16 right-3.5 sm:right-4 z-20 flex flex-col items-center cursor-pointer transition-all hover:scale-105 active:scale-95 group focus:outline-none"
+                title="ใช่ (เข้าสู่ระบบ)"
+              >
+                <div
+                  className={`w-18 h-18 sm:w-20 sm:h-20 rounded-full border-3 flex flex-col items-center justify-center text-white shadow-xl backdrop-blur-md transition-all ${
+                    detectedArmPose === 'right_yes'
+                      ? 'bg-emerald-600 scale-110 border-white ring-4 ring-emerald-300'
+                      : 'bg-emerald-700/90 hover:bg-emerald-600 border-emerald-200 group-hover:border-white'
+                  }`}
+                >
+                  <Check className="w-7 h-7 stroke-[3.5] text-white" />
+                  <span className="font-black text-sm sm:text-base leading-tight mt-0.5">ใช่</span>
+                </div>
+                <span className="text-[11px] sm:text-xs font-black text-white bg-black/75 backdrop-blur-sm px-2.5 py-1 rounded-full mt-1.5 border border-emerald-400/60 shadow-md flex items-center gap-1">
+                  <span>{currentStep === 2 ? 'แขนขวา' : 'เข้าสู่ระบบ (ขวา)'}</span>
+                  <Sparkles className="w-3 h-3 text-yellow-300" />
+                </span>
+              </button>
 
               {/* กึ่งกลาง: เส้นไกด์บุคคล */}
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="w-36 h-36 rounded-full border-2 border-dashed border-emerald-400/50 flex items-center justify-center bg-emerald-500/5">
-                  <User className="w-16 h-16 text-emerald-400/35" />
+                <div className="w-44 h-56 sm:w-52 sm:h-64 rounded-[50%] border-2 border-dashed border-emerald-400/50 flex items-center justify-center bg-emerald-500/5">
+                  <User className="w-20 h-20 text-emerald-400/25" />
                 </div>
               </div>
 
               {/* ข้อความแนะนำด้านล่างกล้อง */}
-              <div className="absolute bottom-2 inset-x-2 z-20 bg-black/85 backdrop-blur-md rounded-2xl py-1.5 px-3 text-center border border-emerald-400/40">
-                <p className="text-[11px] sm:text-xs text-emerald-300 font-bold flex items-center justify-center gap-1">
-                  <span>✋</span>
-                  <span>ยื่นมือแตะลูกแก้วบนภาพค้าง 1 วินาที หรือกดปุ่มขนาดใหญ่ด้านล่าง</span>
+              <div className="absolute bottom-3.5 inset-x-3.5 z-20 bg-black/80 backdrop-blur-md rounded-2xl py-2 px-3 text-center border border-emerald-400/40 shadow-xl pointer-events-none">
+                <p className="text-xs sm:text-sm text-emerald-300 font-extrabold flex items-center justify-center gap-1.5">
+                  <span>✋ แตะปุ่มบนจอ หรือยกแขน ซ้าย/ขวา เพื่อเลือก</span>
                 </p>
               </div>
             </>
@@ -1749,52 +1782,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         )}
 
 
-
-        {/* ---------------------------------------------------- */}
-        {/* Step 3: ถามความพร้อมเข้าสู่ระบบ                      */}
-        {/* ---------------------------------------------------- */}
-        {currentStep === 3 && (
-          <div className="w-full flex-1 flex flex-col items-center justify-between animate-fadeIn">
-            <div className="w-full bg-[#E3F5FC] border border-[#BDE3F5] rounded-3xl py-3 px-4 text-center shadow-sm relative">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] font-bold text-teal-800 bg-teal-100/80 px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                  <Gamepad2 className="w-3.5 h-3.5" />
-                  <span>ขั้นตอนยืนยันตัวตน</span>
-                </span>
-                <span className="text-[11px] font-mono font-black text-amber-700 bg-amber-100 px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                  <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
-                  <span>{gameXp} XP</span>
-                </span>
-              </div>
-              <h2 className="text-base sm:text-lg font-black text-[#0B2B2B]">
-                คุณพร้อมเข้าสู่ระบบหรือไม่?
-              </h2>
-              <p className="text-xs text-[#0B2B2B]/75 font-semibold mt-0.5">
-                แตะปุ่มขนาดใหญ่ด้านล่างเพื่อเข้าสู่ระบบ
-              </p>
-            </div>
-
-            <div className="w-full flex items-center gap-2.5 mt-2">
-              <button
-                data-kiosk-target="step3-yes"
-                onClick={handleStep3Yes}
-                className="flex-1 py-4 px-3 rounded-2xl bg-[#0EA358] hover:bg-[#0C894A] text-white font-extrabold text-sm sm:text-base shadow-lg active:scale-95 transition flex items-center justify-center gap-1.5 cursor-pointer min-h-[54px]"
-              >
-                <Check className="w-5 h-5 stroke-[3]" />
-                <span>ใช่ (เข้าสู่ระบบ)</span>
-              </button>
-
-              <button
-                data-kiosk-target="step3-no"
-                onClick={handleStep3No}
-                className="w-36 py-4 px-3 rounded-2xl bg-[#E6284F] hover:bg-[#C91F41] text-white font-extrabold text-sm sm:text-base shadow-lg active:scale-95 transition flex items-center justify-center gap-1.5 cursor-pointer min-h-[54px]"
-              >
-                <X className="w-5 h-5 stroke-[3]" />
-                <span>ไม่ (ย้อนกลับ)</span>
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* ---------------------------------------------------- */}
         {/* Step 4: สแกนใบหน้าและอัตลักษณ์ชีวมิติ                */}
