@@ -755,11 +755,11 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
 
             <div className="p-3 rounded-xl bg-white border border-emerald-100 shadow-sm space-y-1">
               <div className="font-bold text-[#0B2B2B] flex items-center gap-1.5">
-                <span>🏥</span>
-                <span>Reception & Patient Onboarding</span>
+                <span>🤖</span>
+                <span>Zero-Touch & Pose Inquiry</span>
               </div>
               <p className="text-slate-600 text-[11px] leading-relaxed">
-                ต้อนรับคนไข้ใหม่ กรอกข้อมูล HN/อาการ/นักกายภาพผู้รับผิดชอบก่อน แล้วค่อยสแกนหน้าเพื่อล็อกอินเข้าตู้ทันที
+                ตรวจจับใบหน้าอัตโนมัติ 3 วินาทีเข้าสู่ระบบทันที และมี Popup ตรวจจับยกแขนขวา=ใช่ (3s) / ซ้าย=ไม่ แทนการสัมผัสหน้าจอ
               </p>
             </div>
 
