@@ -26,6 +26,8 @@ export interface UserAccount {
   therapistNotes?: string;       // โน้ต/ข้อความคำแนะนำจากนักกายภาพ
   created_at: string;
   last_active?: string;
+  must_change_password?: boolean;
+  temp_password?: string;
 }
 
 export interface PhysicalTherapist {

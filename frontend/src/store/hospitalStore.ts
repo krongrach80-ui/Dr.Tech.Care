@@ -12,7 +12,13 @@ import {
 } from '../types/hospital';
 import { faceService } from '../services/faceService';
 import { supabaseService } from '../services/supabaseService';
-import { verifyStaffPassword, hashPassword, STANDARD_PASSWORD_HASHES } from '../services/authSecurityService';
+import {
+  verifyStaffPassword,
+  hashPassword,
+  STANDARD_PASSWORD_HASHES,
+  generateSecureTemporaryPassword,
+  validatePasswordStrength,
+} from '../services/authSecurityService';
 
 const DEFAULT_PASSWORD_HASH = STANDARD_PASSWORD_HASHES['1234'];
 
@@ -703,6 +709,7 @@ interface HospitalState {
   deleteUser: (id: number | string) => void;
   toggleUserStatus: (id: number | string) => void;
   resetUserPassword: (id: number | string, newPin?: string) => string;
+  changePasswordWithVerification: (id: number | string, newPass: string) => Promise<boolean>;
   changeUserRole: (id: number | string, newRole: UserRole) => void;
   assignTherapist: (patientId: number | string, therapistId: number | string, therapistName: string) => void;
 
@@ -982,18 +989,50 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     }
   },
 
-  resetUserPassword: (id, newPin = '1234') => {
+  resetUserPassword: (id, newPin) => {
+    const finalPassword = newPin && newPin !== '1234' ? newPin : generateSecureTemporaryPassword();
     const user = get().users.find((u) => u.id === id);
-    hashPassword(newPin).then((hashedPin) => {
+    hashPassword(finalPassword).then((hashedPin) => {
       set((state) => ({
-        users: state.users.map((u) => (u.id === id ? { ...u, password: hashedPin } : u)),
+        users: state.users.map((u) =>
+          u.id === id
+            ? { ...u, password: hashedPin, must_change_password: true, temp_password: finalPassword }
+            : u
+        ),
       }));
       if (supabaseService.isConfigured()) {
-        supabaseService.updateProfile(id, { password: hashedPin }).catch((e) => console.warn('Supabase password error:', e));
+        supabaseService
+          .updateProfile(id, { password: hashedPin })
+          .catch((e) => console.warn('Supabase password error:', e));
       }
     });
-    get().addActivityLog('รีเซ็ตรหัสผ่าน/PIN', 'AUTH', `รีเซ็ตรหัสผ่านของผู้ใช้งาน ${user?.name || id} เป็นรหัสผ่านที่เข้ารหัสแบบ SHA-256`);
-    return newPin;
+    get().addActivityLog(
+      'รีเซ็ตรหัสผ่าน/PIN',
+      'AUTH',
+      `รีเซ็ตรหัสผ่านของผู้ใช้งาน ${user?.name || id} เป็นรหัสผ่านชั่วคราวและเข้ารหัสแบบ SHA-256 (บังคับเปลี่ยนเมื่อเข้าสู่ระบบครั้งแรก)`
+    );
+    return finalPassword;
+  },
+
+  changePasswordWithVerification: async (id, newPass) => {
+    const validation = validatePasswordStrength(newPass);
+    if (!validation.isValid) {
+      throw new Error(validation.message || 'รหัสผ่านต้องมีความยาวอย่างน้อย 8 ตัวอักษร');
+    }
+    const hashed = await hashPassword(newPass);
+    set((state) => ({
+      users: state.users.map((u) =>
+        u.id === id
+          ? { ...u, password: hashed, must_change_password: false, temp_password: undefined }
+          : u
+      ),
+    }));
+    if (supabaseService.isConfigured()) {
+      await supabaseService.updateProfile(id, { password: hashed }).catch((e) => console.warn('Supabase password error:', e));
+    }
+    const user = get().users.find((u) => u.id === id);
+    get().addActivityLog('เปลี่ยนรหัสผ่าน', 'AUTH', `เปลี่ยนรหัสผ่านของผู้ใช้งาน ${user?.name || id} สำเร็จ`);
+    return true;
   },
 
   changeUserRole: (id, newRole) => {

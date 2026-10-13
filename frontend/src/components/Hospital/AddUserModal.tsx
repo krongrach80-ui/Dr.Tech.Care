@@ -20,6 +20,7 @@ import {
   Award,
 } from 'lucide-react';
 import { UserAccount, UserRole, PhysicalTherapist } from '../../types/hospital';
+import { generateSecureTemporaryPassword, validatePasswordStrength } from '../../services/authSecurityService';
 
 interface AddUserModalProps {
   isOpen: boolean;
@@ -47,8 +48,8 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
   // Section 1: Account
   const [name, setName] = useState<string>('');
   const [username, setUsername] = useState<string>('');
-  const [password, setPassword] = useState<string>('123456');
-  const [confirmPassword, setConfirmPassword] = useState<string>('123456');
+  const [password, setPassword] = useState<string>(() => generateSecureTemporaryPassword());
+  const [confirmPassword, setConfirmPassword] = useState<string>(password);
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
   const [role, setRole] = useState<UserRole>(currentRole === 'therapist' ? 'patient' : 'patient');
@@ -88,10 +89,11 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
   // Initialize or reset when modal opens
   useEffect(() => {
     if (isOpen) {
+      const initialPass = generateSecureTemporaryPassword();
       setName('');
       setUsername('');
-      setPassword('123456');
-      setConfirmPassword('123456');
+      setPassword(initialPass);
+      setConfirmPassword(initialPass);
       setShowPassword(false);
       setShowConfirmPassword(false);
       setPhone('');
@@ -139,11 +141,11 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
     }
   };
 
-  // Auto-generate secure 6-digit random password
+  // Auto-generate secure temporary password
   const handleAutoGeneratePassword = () => {
-    const rndPin = Math.floor(100000 + Math.random() * 900000).toString();
-    setPassword(rndPin);
-    setConfirmPassword(rndPin);
+    const rndPass = generateSecureTemporaryPassword();
+    setPassword(rndPass);
+    setConfirmPassword(rndPass);
     if (errors.password || errors.confirmPassword) {
       setErrors((prev) => ({ ...prev, password: undefined, confirmPassword: undefined }));
     }
@@ -179,8 +181,11 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
     // 3. Password
     if (!password) {
       newErrors.password = 'กรุณากรอกรหัสผ่าน';
-    } else if (password.length < 6) {
-      newErrors.password = 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร';
+    } else {
+      const strength = validatePasswordStrength(password);
+      if (!strength.isValid) {
+        newErrors.password = strength.message || 'รหัสผ่านต้องมีความยาวอย่างน้อย 8 ตัวอักษร';
+      }
     }
 
     // 4. Confirm Password
@@ -229,6 +234,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
       status: 'active',
       code: randCode,
       password: password.trim(),
+      must_change_password: true,
       phone: phone.trim() || undefined,
       email: email.trim() || undefined,
       age: assignedRole === 'patient' ? (Number(age) || 60) : undefined,
@@ -451,16 +457,16 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="font-bold text-slate-700">
-                    รหัสผ่าน (อย่างน้อย 6 ตัว) <span className="text-rose-500">*</span>:
+                    รหัสผ่านชั่วคราว (อย่างน้อย 8 ตัว แนะนำ 10+) <span className="text-rose-500">*</span>:
                   </label>
                   <button
                     type="button"
                     onClick={handleAutoGeneratePassword}
                     className="text-[11px] text-emerald-700 font-bold hover:underline flex items-center gap-1 cursor-pointer"
-                    title="สุ่มรหัส PIN 6 หลัก"
+                    title="สุ่มรหัสผ่านปลอดภัย"
                   >
                     <RefreshCw className="w-3 h-3 text-emerald-600" />
-                    <span>สุ่ม PIN</span>
+                    <span>สุ่มรหัสปลอดภัย</span>
                   </button>
                 </div>
                 <div className="relative">
@@ -472,7 +478,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                       setPassword(e.target.value);
                       if (errors.password) setErrors((prev) => ({ ...prev, password: undefined }));
                     }}
-                    placeholder="อย่างน้อย 6 ตัวอักษร"
+                    placeholder="อย่างน้อย 8 ตัวอักษร (แนะนำ 10+)"
                     className={`w-full pl-9 pr-9 py-2.5 rounded-2xl bg-white border text-xs font-mono font-bold text-[#0F2F2B] outline-none transition ${
                       errors.password
                         ? 'border-rose-400 ring-2 ring-rose-100'

@@ -45,10 +45,11 @@ import {
   Calendar,
   LayoutGrid,
   List,
-  MapPin,
   ShieldCheck,
+  Copy,
 } from 'lucide-react';
 import { useHospitalStore } from '../../store/hospitalStore';
+import { validatePasswordStrength } from '../../services/authSecurityService';
 import { UserAccount, UserRole, PhysicalTherapist, HospitalExercise, ActivityLog, TreatmentPlan } from '../../types/hospital';
 import { ReceptionOnboardingModal } from '../../components/Reception/ReceptionOnboardingModal';
 import { AddUserModal } from '../../components/Hospital/AddUserModal';
@@ -120,6 +121,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     updateUser,
     deleteUser,
     resetUserPassword,
+    changePasswordWithVerification,
     addTherapist,
     updateTherapist,
     addExercise,
@@ -251,6 +253,13 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     try {
       const result = await loginStaff(u, p);
       if (result.success && result.user) {
+        if (result.user.must_change_password) {
+          setMustChangePasswordUser(result.user);
+          setNewMandatoryPassword('');
+          setConfirmMandatoryPassword('');
+          setMandatoryPasswordError(null);
+          return;
+        }
         setIsStaffAuthenticated(true);
         setStaffAuthError(null);
         setStaffUsernameInput('');
@@ -279,10 +288,65 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     }
   };
 
-  // Helper to pre-fill credentials into form
-  const handleFillDemoAccount = (username: string, pass: string) => {
+  // Mandatory First-time Password Change State
+  const [mustChangePasswordUser, setMustChangePasswordUser] = useState<UserAccount | null>(null);
+  const [newMandatoryPassword, setNewMandatoryPassword] = useState<string>('');
+  const [confirmMandatoryPassword, setConfirmMandatoryPassword] = useState<string>('');
+  const [showNewMandatoryPassword, setShowNewMandatoryPassword] = useState<boolean>(false);
+  const [showConfirmMandatoryPassword, setShowConfirmMandatoryPassword] = useState<boolean>(false);
+  const [mandatoryPasswordError, setMandatoryPasswordError] = useState<string | null>(null);
+  const [isSubmittingMandatoryPassword, setIsSubmittingMandatoryPassword] = useState<boolean>(false);
+
+  const handleSubmitMandatoryPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mustChangePasswordUser) return;
+
+    const strength = validatePasswordStrength(newMandatoryPassword);
+    if (!strength.isValid) {
+      setMandatoryPasswordError(strength.message || 'รหัสผ่านต้องมีความยาวอย่างน้อย 8 ตัวอักษร');
+      return;
+    }
+    if (newMandatoryPassword !== confirmMandatoryPassword) {
+      setMandatoryPasswordError('ยืนยันรหัสผ่านใหม่ไม่ตรงกับรหัสผ่านที่ตั้ง');
+      return;
+    }
+
+    setIsSubmittingMandatoryPassword(true);
+    setMandatoryPasswordError(null);
+    try {
+      const isSuccess = await changePasswordWithVerification(
+        mustChangePasswordUser.id,
+        newMandatoryPassword
+      );
+      if (isSuccess) {
+        const changedUser = mustChangePasswordUser;
+        setMustChangePasswordUser(null);
+        setIsStaffAuthenticated(true);
+        setStaffUsernameInput('');
+        setStaffPasswordInput('');
+        setFailedAttempts(0);
+        setLockoutUntil(null);
+        lastActivityRef.current = Date.now();
+        if (changedUser.role === 'therapist' && (activeTab === 'logs' || activeTab === 'settings')) {
+          setActiveTab('users');
+        }
+        showToast(`🔒 ตั้งรหัสผ่านใหม่สำเร็จ ยินดีต้อนรับ ${changedUser.name}`);
+      } else {
+        setMandatoryPasswordError('ไม่สามารถเปลี่ยนรหัสผ่านได้');
+      }
+    } catch (err: unknown) {
+      setMandatoryPasswordError(
+        err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการเปลี่ยนรหัสผ่าน'
+      );
+    } finally {
+      setIsSubmittingMandatoryPassword(false);
+    }
+  };
+
+  // Helper to pre-fill credentials into form (Development only - NEVER fills plain password)
+  const handleFillDemoAccount = (username: string) => {
     setStaffUsernameInput(username);
-    setStaffPasswordInput(pass);
+    setStaffPasswordInput('');
     setStaffAuthError(null);
   };
 
@@ -411,6 +475,30 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
   // Edit Password / PIN Modal State
   const [editingPasswordUser, setEditingPasswordUser] = useState<UserAccount | null>(null);
+
+  // Temporary Password Reset Result Modal State (Shows once with copy button)
+  const [resetResult, setResetResult] = useState<{
+    user: UserAccount;
+    tempPass: string;
+  } | null>(null);
+  const [copiedResetPass, setCopiedResetPass] = useState<boolean>(false);
+
+  const handleResetUserPassword = async (targetUser: UserAccount) => {
+    if (
+      !confirm(
+        `คุณต้องการรีเซ็ตรหัสผ่านสำหรับ "${targetUser.name}" (${targetUser.username}) ใช่หรือไม่?\n\nระบบจะสร้างรหัสผ่านชั่วคราวใหม่ความยาว 11 ตัวอักษร และบังคับให้ผู้ใช้งานเปลี่ยนรหัสผ่านทันทีเมื่อเข้าสู่ระบบครั้งแรก`
+      )
+    ) {
+      return;
+    }
+    const tempPassword = await resetUserPassword(targetUser.id);
+    setResetResult({
+      user: targetUser,
+      tempPass: tempPassword,
+    });
+    setCopiedResetPass(false);
+    showToast(`รีเซ็ตรหัสผ่านสำหรับ ${targetUser.name} เรียบร้อยแล้ว`);
+  };
 
   // Delete User Confirmation Modal State
   const [deletingUser, setDeletingUser] = useState<UserAccount | null>(null);
@@ -806,12 +894,11 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     showToast('รีเซ็ตเป็นค่ามาตรฐานที่แนะนำเรียบร้อยแล้ว');
   };
 
-  // If not authenticated, render New Staff Login Screen (Username + Password)
+  // If not authenticated, render Staff Login Screen or Force Password Change
   if (!isStaffAuthenticated) {
     const demoAccounts = [
       {
         username: 'admin',
-        password: '1234',
         role: 'admin' as const,
         roleTitle: 'แอดมินใหญ่ (Admin)',
         name: 'นพ. วรชัย อมรเวช',
@@ -821,7 +908,6 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       },
       {
         username: 'pt_thanakorn',
-        password: '1234',
         role: 'therapist' as const,
         roleTitle: 'นักกายภาพ (PT)',
         name: 'กภ. ธนากร วงศ์สวัสดิ์',
@@ -831,7 +917,6 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       },
       {
         username: 'pt_pimchanok',
-        password: '1234',
         role: 'therapist' as const,
         roleTitle: 'นักกายภาพ (PT)',
         name: 'กภ. พิมพ์ชนก สุขเกษม',
@@ -841,6 +926,146 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       },
     ];
 
+    // Sub-view A: Mandatory First-time Password Change Screen
+    if (mustChangePasswordUser) {
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#072420]/90 backdrop-blur-md p-4 animate-fadeIn overflow-y-auto">
+          <div className="bg-white rounded-[32px] sm:rounded-[36px] border-2 border-amber-400 p-6 sm:p-8 max-w-lg w-full shadow-2xl space-y-6 text-center my-auto">
+            {/* Header Banner */}
+            <div className="space-y-3">
+              <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-amber-500 to-amber-700 text-white mx-auto flex items-center justify-center shadow-lg shadow-amber-600/30">
+                <ShieldAlert className="w-8 h-8" />
+              </div>
+
+              <div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-900 border border-amber-200 text-xs font-bold mb-2">
+                  <Lock className="w-3.5 h-3.5 text-amber-700" />
+                  <span>บังคับเปลี่ยนรหัสผ่าน (First-time Security Setup)</span>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-black text-[#0F2F2B]">
+                  ตั้งรหัสผ่านใหม่ก่อนเข้าใช้งาน
+                </h2>
+                <p className="text-xs text-slate-600 font-medium mt-1 leading-relaxed">
+                  บัญชีของคุณได้รับการรีเซ็ตรหัสผ่านหรือเข้าสู่ระบบเป็นครั้งแรก เพื่อความปลอดภัยสูงสุด กรุณาตั้งรหัสผ่านใหม่ที่มีความยาวอย่างน้อย 8 ตัวอักษร (แนะนำ 10 ตัวขึ้นไป)
+                </p>
+              </div>
+            </div>
+
+            {/* Target User Info */}
+            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-left flex items-center justify-between">
+              <div>
+                <span className="text-slate-500">บัญชีผู้ใช้งาน:</span>{' '}
+                <strong className="text-[#0F2F2B] font-bold">{mustChangePasswordUser.name}</strong>
+              </div>
+              <span className="font-mono text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                @{mustChangePasswordUser.username}
+              </span>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleSubmitMandatoryPassword} className="space-y-4 text-left">
+              {/* New Password */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  รหัสผ่านใหม่ (อย่างน้อย 8 ตัวอักษร แนะนำ 10+) <span className="text-rose-500">*</span>
+                </label>
+                <div className="bg-slate-50 rounded-2xl border border-slate-300 p-3 flex items-center gap-2.5 focus-within:border-[#10B981] focus-within:ring-2 focus-within:ring-emerald-200 transition">
+                  <Lock className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                  <input
+                    type={showNewMandatoryPassword ? 'text' : 'password'}
+                    value={newMandatoryPassword}
+                    onChange={(e) => {
+                      setNewMandatoryPassword(e.target.value);
+                      setMandatoryPasswordError(null);
+                    }}
+                    placeholder="กรอกรหัสผ่านใหม่อย่างน้อย 8 ตัวอักษร"
+                    className="w-full bg-transparent text-sm font-semibold text-[#0F2F2B] outline-none"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewMandatoryPassword(!showNewMandatoryPassword)}
+                    className="text-slate-400 hover:text-slate-700 transition p-1 cursor-pointer"
+                  >
+                    {showNewMandatoryPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Confirm New Password */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  ยืนยันรหัสผ่านใหม่อีกครั้ง <span className="text-rose-500">*</span>
+                </label>
+                <div className="bg-slate-50 rounded-2xl border border-slate-300 p-3 flex items-center gap-2.5 focus-within:border-[#10B981] focus-within:ring-2 focus-within:ring-emerald-200 transition">
+                  <KeyRound className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                  <input
+                    type={showConfirmMandatoryPassword ? 'text' : 'password'}
+                    value={confirmMandatoryPassword}
+                    onChange={(e) => {
+                      setConfirmMandatoryPassword(e.target.value);
+                      setMandatoryPasswordError(null);
+                    }}
+                    placeholder="กรอกรหัสผ่านใหม่อีกครั้งให้ตรงกัน"
+                    className="w-full bg-transparent text-sm font-semibold text-[#0F2F2B] outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmMandatoryPassword(!showConfirmMandatoryPassword)}
+                    className="text-slate-400 hover:text-slate-700 transition p-1 cursor-pointer"
+                  >
+                    {showConfirmMandatoryPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Error Alert */}
+              {mandatoryPasswordError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2 animate-fadeIn">
+                  <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                  <span>{mandatoryPasswordError}</span>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex flex-col gap-2.5 pt-2">
+                <button
+                  type="submit"
+                  disabled={isSubmittingMandatoryPassword}
+                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-700 text-white font-extrabold text-sm shadow-md shadow-emerald-700/20 hover:brightness-105 transition active:scale-95 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
+                >
+                  {isSubmittingMandatoryPassword ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>กำลังบันทึกรหัสผ่านใหม่...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>บันทึกรหัสผ่านใหม่และเข้าใช้งาน</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMustChangePasswordUser(null);
+                    setStaffPasswordInput('');
+                  }}
+                  className="w-full py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>ยกเลิก (กลับสู่หน้า Login)</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    // Sub-view B: Standard Staff Login Form
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#072420]/90 backdrop-blur-md p-4 animate-fadeIn overflow-y-auto">
         <div className="bg-white rounded-[32px] sm:rounded-[36px] border-2 border-emerald-300 p-6 sm:p-8 max-w-lg w-full shadow-2xl space-y-6 text-center my-auto">
@@ -902,7 +1127,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     setStaffPasswordInput(e.target.value);
                     setStaffAuthError(null);
                   }}
-                  placeholder="กรอกรหัสผ่าน (เช่น 1234)"
+                  placeholder="กรอกรหัสผ่านเข้าสู่ระบบ"
                   className="w-full bg-transparent text-sm font-semibold text-[#0F2F2B] outline-none"
                   autoComplete="current-password"
                 />
@@ -920,7 +1145,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             {/* Auto-detect role hint */}
             <div className="text-[11px] text-emerald-800 bg-emerald-50/70 border border-emerald-200/80 rounded-xl px-3 py-2 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-              <span>ระบบจะตรวจสอบสิทธิ์อัตโนมัติ: Admin (6 เมนู) หรือ นักกายภาพ (4 เมนู)</span>
+              <span>ระบบจะตรวจสอบสิทธิ์อัตโนมัติ: Admin (7 เมนู) หรือ นักกายภาพ (5 เมนู)</span>
             </div>
 
             {/* Error Message Alert */}
@@ -963,48 +1188,52 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             </div>
           </form>
 
-          {/* Demo Accounts Quick-Select Table */}
-          <div className="pt-4 border-t border-slate-100 text-left space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                <span>บัญชีตัวอย่างสำหรับทดสอบ (Demo Accounts):</span>
-              </span>
-              <span className="text-[10px] text-slate-400 font-mono">Password: 1234</span>
-            </div>
+          {/* Demo Accounts Quick-Select Table (DEV ONLY - Completely Hidden in Production) */}
+          {import.meta.env.DEV && (
+            <div className="pt-4 border-t border-slate-100 text-left space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>บัญชีตัวอย่างสำหรับทดสอบ (เฉพาะโหมดพัฒนา):</span>
+                </span>
+                <span className="text-[10px] text-emerald-800 font-bold bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-300">
+                  DEV Mode
+                </span>
+              </div>
 
-            <div className="space-y-2">
-              {demoAccounts.map((acc) => (
-                <div
-                  key={acc.username}
-                  className="p-3 rounded-2xl border border-emerald-100 bg-slate-50/70 hover:bg-emerald-50/50 hover:border-emerald-300 transition flex items-center justify-between gap-3 text-xs"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-extrabold text-[#0F2F2B] truncate">{acc.name}</span>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${acc.badgeColor}`}>
-                        {acc.roleTitle}
-                      </span>
+              <div className="space-y-2">
+                {demoAccounts.map((acc) => (
+                  <div
+                    key={acc.username}
+                    className="p-3 rounded-2xl border border-emerald-100 bg-slate-50/70 hover:bg-emerald-50/50 hover:border-emerald-300 transition flex items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-[#0F2F2B] truncate">{acc.name}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${acc.badgeColor}`}>
+                          {acc.roleTitle}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-mono mt-0.5">
+                        Username: <strong className="text-emerald-800">{acc.username}</strong>
+                      </div>
                     </div>
-                    <div className="text-[11px] text-slate-500 font-mono mt-0.5">
-                      user: <strong className="text-emerald-800">{acc.username}</strong> • pass: <strong className="text-slate-700">{acc.password}</strong>
+
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleFillDemoAccount(acc.username)}
+                        className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:border-emerald-400 text-slate-700 hover:text-emerald-800 font-bold text-[11px] transition cursor-pointer shadow-2xs"
+                        title="กรอกชื่อผู้ใช้ลงในฟอร์ม"
+                      >
+                        ใช้ชื่อนี้
+                      </button>
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleFillDemoAccount(acc.username, acc.password)}
-                      className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:border-emerald-400 text-slate-700 hover:text-emerald-800 font-bold text-[11px] transition cursor-pointer shadow-2xs"
-                      title="กรอกชื่อผู้ใช้ลงในฟอร์ม"
-                    >
-                      ใช้ชื่อนี้
-                    </button>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     );
@@ -1453,11 +1682,12 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                     SHA-256
                                   </span>
                                   <button
-                                    onClick={() => setEditingPasswordUser(user)}
-                                    title="เปลี่ยนรหัสผ่าน / PIN"
-                                    className="text-[11px] font-bold text-emerald-700 hover:underline pl-0.5 cursor-pointer"
+                                    onClick={() => handleResetUserPassword(user)}
+                                    title="รีเซ็ตรหัสผ่าน (สร้างรหัสชั่วคราวและบังคับเปลี่ยน)"
+                                    className="text-[11px] font-bold text-emerald-700 hover:text-emerald-950 hover:underline pl-0.5 cursor-pointer inline-flex items-center gap-1"
                                   >
-                                    เปลี่ยน
+                                    <KeyRound className="w-3 h-3 text-emerald-600" />
+                                    <span>รีเซ็ตรหัสผ่าน</span>
                                   </button>
                                 </div>
                               </td>
@@ -3777,6 +4007,74 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         }}
         onSuccessToast={showToast}
       />
+
+      {/* 6.1 TEMPORARY PASSWORD DISPLAY MODAL (Shows once upon reset) */}
+      {resetResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl border-2 border-emerald-400 p-6 sm:p-8 max-w-md w-full shadow-2xl text-center space-y-5">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto border border-emerald-300 shadow-sm">
+              <KeyRound className="w-7 h-7 text-emerald-700" />
+            </div>
+
+            <div>
+              <h3 className="text-lg font-black text-[#0F2F2B]">
+                รหัสผ่านชั่วคราวใหม่ (แสดงเพียงครั้งเดียว)
+              </h3>
+              <p className="text-xs text-slate-600 mt-1">
+                สำหรับผู้ใช้: <strong className="text-emerald-900">{resetResult.user.name}</strong> ({resetResult.user.username})
+              </p>
+            </div>
+
+            <div className="bg-emerald-50/80 border-2 border-dashed border-emerald-400 rounded-2xl p-4 space-y-2">
+              <div className="text-[11px] font-bold text-emerald-800">
+                รหัสผ่านชั่วคราว (Temporary Password):
+              </div>
+              <div className="text-xl sm:text-2xl font-mono font-black text-[#0F2F2B] tracking-wider select-all break-all">
+                {resetResult.tempPass}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(resetResult.tempPass);
+                  setCopiedResetPass(true);
+                  setTimeout(() => setCopiedResetPass(false), 3000);
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-emerald-300 text-emerald-800 text-xs font-bold hover:bg-emerald-100/70 transition shadow-xs cursor-pointer"
+              >
+                {copiedResetPass ? (
+                  <>
+                    <Check className="w-4 h-4 text-emerald-600" />
+                    <span>คัดลอกสำเร็จแล้ว</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4 text-emerald-600" />
+                    <span>คัดลอกรหัสผ่าน</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-[11px] text-amber-900 text-left space-y-1">
+              <div className="font-bold flex items-center gap-1 text-amber-950">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+                <span>คำเตือนความปลอดภัย:</span>
+              </div>
+              <p className="leading-relaxed">
+                รหัสผ่านชั่วคราวนี้จะแสดงบนหน้านี้<strong>เพียงครั้งเดียวเท่านั้น</strong> และจะไม่สามารถเปิดดูย้อนหลังได้อีก เพื่อความปลอดภัย เมื่อผู้ใช้งานนำรหัสนี้เข้าสู่ระบบ ระบบจะบังคับให้เปลี่ยนรหัสผ่านทันทีก่อนเข้าใช้งาน
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setResetResult(null)}
+              className="w-full py-3 rounded-2xl bg-[#0F2F2B] text-emerald-200 font-bold text-xs hover:bg-emerald-950 transition cursor-pointer"
+            >
+              เข้าใจแล้ว ปิดหน้าต่างนี้
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ==================================================================== */}
       {/* 7. DELETE USER CONFIRMATION MODAL (Tab 1: users)                     */}

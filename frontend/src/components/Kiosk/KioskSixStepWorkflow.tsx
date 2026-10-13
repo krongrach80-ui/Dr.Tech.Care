@@ -540,7 +540,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     if (streamRef.current) return;
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setCameraError('ไม่พบอุปกรณ์กล้องบนอุปกรณ์นี้ กำลังเปิดโหมดจำลองภาพเสมือน');
+        setCameraError('ไม่พบอุปกรณ์กล้องบนอุปกรณ์นี้ ท่านสามารถแตะหน้าจอหรือใช้รหัส PIN เพื่อเริ่มใช้งาน');
         return;
       }
       let stream: MediaStream | null = null;
@@ -552,14 +552,21 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       } catch {
         try {
           stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 640 }, height: { ideal: 480 } },
+            video: { facingMode: 'user' },
             audio: false,
           });
         } catch {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: false,
-          });
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { width: { ideal: 640 }, height: { ideal: 480 } },
+              audio: false,
+            });
+          } catch {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: true,
+              audio: false,
+            });
+          }
         }
       }
 
@@ -575,9 +582,9 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         videoRef.current.playsInline = true;
         await videoRef.current.play().catch(() => {});
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.warn('Kiosk Camera start warning:', err);
-      setCameraError('ไม่สามารถใช้งานกล้องได้ กรุณาอนุญาตการใช้กล้องในการตั้งค่าเบราว์เซอร์ หรือเข้าสู่ระบบด้วยรหัส PIN');
+      setCameraError('ไม่สามารถเปิดกล้องได้ กรุณาตรวจสอบการอนุญาตใช้งานกล้อง หรือแตะหน้าจอ/ใช้รหัส PIN เพื่อเริ่มใช้งาน');
       setIsCameraActive(false);
     }
   }, []);
@@ -1471,26 +1478,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       {/* ======================================================== */}
       <div className="w-full max-w-[440px] sm:max-w-[480px] bg-white rounded-[36px] sm:rounded-[44px] border-2 sm:border-[2.5px] border-black/85 shadow-2xl relative overflow-hidden flex flex-col items-center p-5 sm:p-7 min-h-[620px] sm:min-h-[680px] justify-between transition-all duration-500 my-auto">
         
-        {/* กล่องแจ้งเตือนเมื่อขอสิทธิ์กล้องไม่สำเร็จ พร้อมปุ่มสัมผัสสำรอง PIN ทันที */}
-        {cameraError && currentStep <= 4 && (
-          <div className="w-full bg-amber-50 border-2 border-amber-400 rounded-2xl p-3 mb-2 text-amber-950 text-xs shadow-md animate-fadeIn flex flex-col gap-2 z-30">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-              <p className="flex-1 font-bold leading-relaxed">
-                {cameraError}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowPinModal(true)}
-              className="w-full py-2 px-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
-            >
-              <Key className="w-4 h-4" />
-              <span>แตะที่นี่เพื่อเข้าสู่ระบบด้วยรหัส PIN สำรองทันที</span>
-            </button>
-          </div>
-        )}
-        
         {/* ================================================================= */}
         {/* Permanent Video Element at Parent Level: มีอยู่ตลอดใน Step 1-4   */}
         {/* ไม่ unmount หรือขอสิทธิ์กล้องใหม่ระหว่างสลับ Step                */}
@@ -1628,19 +1615,36 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               </div>
             )}
 
-            {/* แสดงข้อความชัดเจนเมื่อกล้องมีปัญหา หรือไม่พบกล้อง */}
+            {/* แสดงข้อความชัดเจนเมื่อกล้องมีปัญหา หรือไม่พบกล้อง (กล่องเดียว สั้น ชัดเจน เหมาะกับผู้สูงอายุ) */}
             {cameraError && (
-              <div className="w-full bg-amber-50 border-2 border-amber-400 rounded-2xl p-3 mb-2 text-amber-950 text-xs shadow-md animate-fadeIn flex flex-col gap-1.5 text-left">
-                <div className="flex items-start gap-2">
+              <div className="w-full bg-amber-50 border-2 border-amber-400 rounded-2xl p-3.5 mb-3 text-amber-950 text-xs shadow-md animate-fadeIn flex flex-col gap-2.5 text-left">
+                <div className="flex items-start gap-2.5">
                   <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                   <div className="flex-1">
-                    <p className="font-black text-amber-900">⚠️ ไม่สามารถเปิดกล้องเว็บแคมได้</p>
-                    <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">{cameraError}</p>
+                    <p className="font-black text-amber-900 text-sm">กล้องเว็บแคมยังไม่พร้อมใช้งาน</p>
+                    <p className="text-xs text-amber-900/90 mt-0.5 leading-relaxed">
+                      {cameraError}
+                    </p>
                   </div>
                 </div>
-                <p className="text-[11px] text-amber-900 font-bold bg-amber-100/80 px-2 py-1 rounded-lg">
-                  👉 ท่านยังสามารถแตะปุ่มขนาดใหญ่ด้านล่าง หรือใช้รหัส PIN เพื่อเข้าใช้งานได้ตามปกติ
-                </p>
+                <div className="flex items-center gap-2 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={startCamera}
+                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 transition active:scale-95 cursor-pointer shadow-xs"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>ลองเปิดกล้องอีกครั้ง</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowPinModal(true)}
+                    className="px-3.5 py-1.5 rounded-xl bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold text-xs flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                  >
+                    <Key className="w-3.5 h-3.5 text-amber-800" />
+                    <span>ใช้รหัส PIN แทน</span>
+                  </button>
+                </div>
               </div>
             )}
 

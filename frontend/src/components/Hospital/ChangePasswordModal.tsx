@@ -10,6 +10,7 @@ import {
   Check,
 } from 'lucide-react';
 import { UserAccount } from '../../types/hospital';
+import { generateSecureTemporaryPassword, validatePasswordStrength } from '../../services/authSecurityService';
 
 interface ChangePasswordModalProps {
   isOpen: boolean;
@@ -46,26 +47,19 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
 
   if (!isOpen || !user) return null;
 
-  // Auto-generate PIN helper
+  // Auto-generate strong secure password helper (10+ characters)
   const handleAutoGeneratePin = () => {
-    const pin = Math.floor(100000 + Math.random() * 900000).toString();
-    setPassword(pin);
-    setConfirmPassword(pin);
-    setErrors({});
-  };
-
-  const handleUseDefault = () => {
-    setPassword('123456');
-    setConfirmPassword('123456');
+    const strongPass = generateSecureTemporaryPassword();
+    setPassword(strongPass);
+    setConfirmPassword(strongPass);
     setErrors({});
   };
 
   const validate = (): boolean => {
     const newErrors: typeof errors = {};
-    if (!password.trim()) {
-      newErrors.password = 'กรุณากรอกรหัสผ่านใหม่';
-    } else if (password.trim().length < 6) {
-      newErrors.password = 'รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร';
+    const validation = validatePasswordStrength(password);
+    if (!validation.isValid) {
+      newErrors.password = validation.message;
     }
 
     if (!confirmPassword.trim()) {
@@ -130,24 +124,22 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
             <button
               type="button"
               onClick={handleAutoGeneratePin}
-              className="flex-1 py-1.5 px-3 rounded-xl bg-white hover:bg-emerald-50 text-emerald-800 font-bold border border-slate-200 hover:border-emerald-300 transition flex items-center justify-center gap-1.5 cursor-pointer"
+              className="w-full py-2 px-3 rounded-xl bg-white hover:bg-emerald-50 text-emerald-800 font-bold border border-slate-200 hover:border-emerald-300 transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
             >
-              <RefreshCw className="w-3 h-3 text-emerald-600" />
-              <span>สุ่ม PIN 6 หลัก</span>
+              <RefreshCw className="w-3.5 h-3.5 text-emerald-600" />
+              <span>สุ่มรหัสผ่านปลอดภัยชั่วคราว (11 หลัก)</span>
             </button>
-            <button
-              type="button"
-              onClick={handleUseDefault}
-              className="flex-1 py-1.5 px-3 rounded-xl bg-white hover:bg-slate-100 text-slate-700 font-bold border border-slate-200 transition flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <span>ใช้ค่ามาตรฐาน (123456)</span>
-            </button>
+          </div>
+
+          {/* Security Notice */}
+          <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-900 font-medium">
+            🛡️ ระบบจัดเก็บรหัสผ่านเป็นค่าแฮช SHA-256 เท่านั้น และบังคับความยาวอย่างน้อย 8 ตัวอักษร
           </div>
 
           {/* New Password */}
           <div>
             <label className="block font-bold text-slate-700 mb-1">
-              รหัสผ่านใหม่ (อย่างน้อย 6 ตัวอักษร) <span className="text-rose-500">*</span>:
+              รหัสผ่านใหม่ (อย่างน้อย 8 ตัวอักษร แนะนำ 10 ตัวขึ้นไป) <span className="text-rose-500">*</span>:
             </label>
             <div className="relative">
               <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -158,7 +150,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
                   setPassword(e.target.value);
                   if (errors.password) setErrors((prev) => ({ ...prev, password: undefined }));
                 }}
-                placeholder="กรอกรหัสผ่านใหม่อย่างน้อย 6 ตัวอักษร"
+                placeholder="กรอกรหัสผ่านใหม่อย่างน้อย 8 ตัวอักษร"
                 className={`w-full pl-9 pr-9 py-2.5 rounded-2xl bg-white border text-xs font-mono font-bold text-[#0F2F2B] outline-none transition ${
                   errors.password
                     ? 'border-rose-400 ring-2 ring-rose-100'
