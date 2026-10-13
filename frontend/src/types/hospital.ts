@@ -3,7 +3,7 @@
  */
 
 export type UserRole = 'admin' | 'therapist' | 'patient';
-export type UserStatus = 'active' | 'suspended';
+export type UserStatus = 'active' | 'suspended' | 'pending_info';
 
 export interface UserAccount {
   id: number | string;
@@ -28,6 +28,9 @@ export interface UserAccount {
   last_active?: string;
   must_change_password?: boolean;
   temp_password?: string;
+  pendingInfoNote?: string;      // e.g. 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว'
+  biometricVector?: number[];    // 128-D embedding vector for biometric authentication
+  faceRegisteredAt?: string;     // Timestamp when face was enrolled at kiosk
 }
 
 export interface PhysicalTherapist {

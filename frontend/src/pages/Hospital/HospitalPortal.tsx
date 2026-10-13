@@ -118,6 +118,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     bannedIps,
     aiSettings,
     addUser,
+    completePendingPatientInfo,
     updateUser,
     deleteUser,
     resetUserPassword,
@@ -462,8 +463,9 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const canEditUser = (targetUser: UserAccount): boolean => {
     if (currentRole === 'admin') return true;
     if (currentRole === 'therapist') {
-      // Physiotherapist can ONLY edit patients under their care
+      // Physiotherapist can edit patients under their care or newly enrolled patients awaiting info
       if (targetUser.role !== 'patient') return false;
+      if (targetUser.status === 'pending_info') return true;
       const isAssigned =
         targetUser.assignedTherapistId === currentUserId ||
         (targetUser.assignedTherapistName &&
@@ -526,23 +528,31 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [patientDetailModal, setPatientDetailModal] = useState<UserAccount | null>(null);
 
   const filteredPatients = useMemo(() => {
-    return users.filter((u) => {
-      if (u.role !== 'patient') return false;
-      if (currentRole === 'therapist' && patientCareFilter === 'assigned') {
-        const isAssigned = canEditUser(u);
-        if (!isAssigned) return false;
-      }
-      const q = patientSearch.toLowerCase().trim();
-      return (
-        !q ||
-        u.name.toLowerCase().includes(q) ||
-        u.code.toLowerCase().includes(q) ||
-        (u.phone && u.phone.includes(q)) ||
-        (u.diagnosis && u.diagnosis.toLowerCase().includes(q)) ||
-        (u.assignedTherapistName && u.assignedTherapistName.toLowerCase().includes(q)) ||
-        (u.chiefComplaint && u.chiefComplaint.toLowerCase().includes(q))
-      );
-    });
+    return users
+      .filter((u) => {
+        if (u.role !== 'patient') return false;
+        if (currentRole === 'therapist' && patientCareFilter === 'assigned') {
+          const isAssigned = canEditUser(u);
+          if (!isAssigned) return false;
+        }
+        const q = patientSearch.toLowerCase().trim();
+        return (
+          !q ||
+          u.name.toLowerCase().includes(q) ||
+          u.code.toLowerCase().includes(q) ||
+          (u.phone && u.phone.includes(q)) ||
+          (u.diagnosis && u.diagnosis.toLowerCase().includes(q)) ||
+          (u.assignedTherapistName && u.assignedTherapistName.toLowerCase().includes(q)) ||
+          (u.chiefComplaint && u.chiefComplaint.toLowerCase().includes(q)) ||
+          (u.pendingInfoNote && u.pendingInfoNote.toLowerCase().includes(q))
+        );
+      })
+      .sort((a, b) => {
+        // บัญชีที่เพิ่งสแกนหน้าและรอลงข้อมูลส่วนตัว ให้ขึ้นมาบนสุดเสมอ
+        if (a.status === 'pending_info' && b.status !== 'pending_info') return -1;
+        if (a.status !== 'pending_info' && b.status === 'pending_info') return 1;
+        return 0;
+      });
   }, [users, patientSearch, currentRole, patientCareFilter, canEditUser]);
 
   // =========================================================================
@@ -2042,26 +2052,41 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   filteredPatients.map((patient) => (
                     <div
                       key={patient.id}
-                      className="bg-white rounded-3xl p-6 border border-emerald-100 shadow-sm space-y-4 hover:border-emerald-300 transition"
+                      className={`bg-white rounded-3xl p-6 border shadow-sm space-y-4 transition ${
+                        patient.status === 'pending_info'
+                          ? 'border-2 border-amber-400 bg-amber-50/25 ring-2 ring-amber-300/40 shadow-md'
+                          : 'border border-emerald-100 hover:border-emerald-300'
+                      }`}
                     >
                       {/* Patient Main Bar */}
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-50 pb-3">
                         <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#10B981] to-[#059669] text-white font-black text-lg flex items-center justify-center shadow-md">
+                          <div className={`w-12 h-12 rounded-2xl text-white font-black text-lg flex items-center justify-center shadow-md ${
+                            patient.status === 'pending_info'
+                              ? 'bg-gradient-to-br from-amber-500 to-amber-700'
+                              : 'bg-gradient-to-br from-[#10B981] to-[#059669]'
+                          }`}>
                             {patient.name.charAt(patient.name.startsWith('นาย') || patient.name.startsWith('นาง') ? 3 : 0)}
                           </div>
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <span className="font-extrabold text-base text-[#0F2F2B]">{patient.name}</span>
                               <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 font-mono text-xs font-bold text-emerald-800">
                                 {patient.code}
                               </span>
-                              <span className="text-xs font-semibold text-slate-500">
-                                อายุ {patient.age || 65} ปี • {patient.gender === 'female' ? 'หญิง' : 'ชาย'}
-                              </span>
+                              {patient.status === 'pending_info' ? (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-amber-100 border border-amber-300 font-extrabold text-xs text-amber-900 shadow-xs animate-pulse">
+                                  <Clock className="w-3.5 h-3.5 text-amber-700" />
+                                  <span>บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว</span>
+                                </span>
+                              ) : (
+                                <span className="text-xs font-semibold text-slate-500">
+                                  อายุ {patient.age || 65} ปี • {patient.gender === 'female' ? 'หญิง' : 'ชาย'}
+                                </span>
+                              )}
                             </div>
                             <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-3">
-                              <span>โทร: <strong className="text-slate-700">{patient.phone || '08x-xxx-xxxx'}</strong></span>
+                              <span>โทร: <strong className="text-slate-700">{patient.phone || 'ยังไม่ได้ระบุ'}</strong></span>
                               <span>•</span>
                               <span>วันที่เริ่มเข้าระบบ: <strong className="text-emerald-800">{patient.created_at || '2026-02-01'}</strong></span>
                             </div>
@@ -2069,31 +2094,42 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         </div>
 
                         <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => setPatientDetailModal({ ...patient })}
-                            className={`px-4 py-2 rounded-full border text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                              canEditUser(patient)
-                                ? 'border-emerald-200 text-emerald-800 hover:bg-emerald-50'
-                                : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                            }`}
-                            title={
-                              canEditUser(patient)
-                                ? 'ดูและแก้ไขข้อมูลเวชระเบียนคนไข้'
-                                : 'ดูข้อมูลเวชระเบียน (โหมดดูอย่างเดียว)'
-                            }
-                          >
-                            {canEditUser(patient) ? (
-                              <>
-                                <Pencil className="w-3.5 h-3.5 text-emerald-600" />
-                                <span>ดูและแก้ไขข้อมูล</span>
-                              </>
-                            ) : (
-                              <>
-                                <Eye className="w-3.5 h-3.5 text-slate-500" />
-                                <span>ดูข้อมูลคนไข้</span>
-                              </>
-                            )}
-                          </button>
+                          {patient.status === 'pending_info' ? (
+                            <button
+                              onClick={() => setPatientDetailModal({ ...patient })}
+                              className="px-4 py-2 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-extrabold text-xs shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                              title="กรอกข้อมูลคนไข้และซิงค์กลับตู้ Kiosk ทันที"
+                            >
+                              <Pencil className="w-3.5 h-3.5 text-white" />
+                              <span>กรอกข้อมูลคนไข้ (ซิงค์ตู้ Kiosk)</span>
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setPatientDetailModal({ ...patient })}
+                              className={`px-4 py-2 rounded-full border text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                                canEditUser(patient)
+                                  ? 'border-emerald-200 text-emerald-800 hover:bg-emerald-50'
+                                  : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                              }`}
+                              title={
+                                canEditUser(patient)
+                                  ? 'ดูและแก้ไขข้อมูลเวชระเบียนคนไข้'
+                                  : 'ดูข้อมูลเวชระเบียน (โหมดดูอย่างเดียว)'
+                              }
+                            >
+                              {canEditUser(patient) ? (
+                                <>
+                                  <Pencil className="w-3.5 h-3.5 text-emerald-600" />
+                                  <span>ดูและแก้ไขข้อมูล</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Eye className="w-3.5 h-3.5 text-slate-500" />
+                                  <span>ดูข้อมูลคนไข้</span>
+                                </>
+                              )}
+                            </button>
+                          )}
 
                           {onSelectPatientForKiosk && (
                             <button
@@ -4104,7 +4140,22 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         currentUserName={currentUser?.name || 'เจ้าหน้าที่'}
         canEdit={patientDetailModal ? canEditUser(patientDetailModal) : false}
         onSavePatient={(patientId, data) => {
-          updateUser(patientId, data);
+          if (patientDetailModal?.status === 'pending_info') {
+            completePendingPatientInfo(patientId, {
+              name: data.name || 'ผู้รับบริการใหม่',
+              age: data.age,
+              gender: data.gender,
+              phone: data.phone,
+              chiefComplaint: data.chiefComplaint,
+              patientBackground: data.patientBackground,
+              assignedTherapistId: data.assignedTherapistId,
+              assignedTherapistName: data.assignedTherapistName,
+            });
+            showToast(`✓ บันทึกข้อมูลและซิงค์คนไข้ใหม่ (${data.name}) ไปยังตู้ Kiosk เรียบร้อยแล้ว!`);
+          } else {
+            updateUser(patientId, data);
+            showToast(`บันทึกข้อมูลของ ${data.name || ''} เรียบร้อยแล้ว`);
+          }
         }}
         onSuccessToast={showToast}
       />

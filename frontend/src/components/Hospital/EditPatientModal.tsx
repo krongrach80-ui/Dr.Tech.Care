@@ -134,6 +134,8 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
 
     setIsSubmitting(true);
 
+    const finalStatus: UserStatus = status === 'pending_info' ? 'active' : status;
+
     const updatedData: Partial<UserAccount> = {
       name: name.trim(),
       age: Number(age) || 65,
@@ -146,11 +148,15 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
       patientBackground: patientBackground.trim() || undefined,
       treatmentOutcome: treatmentOutcome.trim() || undefined,
       therapistNotes: therapistNotes.trim() || undefined,
-      status,
+      status: finalStatus,
     };
 
     onSavePatient(patient.id, updatedData);
-    onSuccessToast(`บันทึกข้อมูลของ ${name.trim()} (${patient.code}) เรียบร้อยแล้ว`);
+    onSuccessToast(
+      patient.status === 'pending_info'
+        ? `✓ บันทึกข้อมูลของ ${name.trim()} (${patient.code}) และซิงค์ไปยังตู้ Kiosk เรียบร้อยแล้ว`
+        : `บันทึกข้อมูลของ ${name.trim()} (${patient.code}) เรียบร้อยแล้ว`
+    );
     setIsSubmitting(false);
     onClose();
   };
@@ -193,6 +199,21 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Pending Kiosk Scan Info Banner */}
+        {patient.status === 'pending_info' && (
+          <div className="px-6 py-3 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 text-white flex items-center justify-between text-xs font-bold shadow-inner">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
+              <span>
+                🔔 <strong>บัญชีนี้สแกนหน้าจากตู้ Kiosk แล้ว (รอลงข้อมูลส่วนตัว)</strong> — เมื่อกรอกข้อมูลเสร็จและกดบันทึก ระบบจะเปิดใช้งานและซิงค์แจ้งเตือนกลับไปยังตู้ Kiosk อัตโนมัติ
+              </span>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full bg-black/25 text-amber-100 font-mono text-[11px] font-black shrink-0">
+              {patient.code}
+            </span>
+          </div>
+        )}
 
         {/* Permission Restriction Banner (if read-only) */}
         {!canEdit && (
@@ -592,7 +613,11 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
               ) : (
                 <>
                   <Check className="w-4 h-4" />
-                  <span>บันทึกการแก้ไข</span>
+                  <span>
+                    {patient.status === 'pending_info'
+                      ? '✓ บันทึกข้อมูลและซิงค์ตู้ Kiosk ทันที'
+                      : 'บันทึกการแก้ไข'}
+                  </span>
                 </>
               )}
             </button>

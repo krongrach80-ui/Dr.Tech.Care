@@ -12,6 +12,8 @@ import {
 } from '../types/hospital';
 import { faceService } from '../services/faceService';
 import { supabaseService } from '../services/supabaseService';
+import { faceRegistryService } from '../services/faceRegistryService';
+import { patientSyncService } from '../services/patientSyncService';
 import {
   verifyStaffPassword,
   hashPassword,
@@ -589,6 +591,24 @@ const getStoredTreatmentPlans = (): TreatmentPlan[] => {
   return INITIAL_TREATMENT_PLANS;
 };
 
+const getStoredUsers = (): UserAccount[] => {
+  try {
+    const raw = localStorage.getItem('strongcare_hospital_users');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {}
+  return INITIAL_USERS;
+};
+
+const persistUsers = (users: UserAccount[]) => {
+  try {
+    localStorage.setItem('strongcare_hospital_users', JSON.stringify(users));
+  } catch {}
+};
 
 const INITIAL_LOGS: ActivityLog[] = [
   {
@@ -708,6 +728,20 @@ interface HospitalState {
 
   // User Management
   addUser: (user: Omit<UserAccount, 'id' | 'created_at'>) => UserAccount;
+  completePendingPatientInfo: (
+    id: number | string,
+    patientData: {
+      name: string;
+      age?: number;
+      gender?: 'male' | 'female' | 'other';
+      phone?: string;
+      diagnosis?: string;
+      chiefComplaint?: string;
+      patientBackground?: string;
+      assignedTherapistName?: string;
+      assignedTherapistId?: number | string;
+    }
+  ) => UserAccount | null;
   updateUser: (id: number | string, data: Partial<UserAccount>) => void;
   deleteUser: (id: number | string) => void;
   toggleUserStatus: (id: number | string) => void;
@@ -747,7 +781,7 @@ interface HospitalState {
 export const useHospitalStore = create<HospitalState>((set, get) => ({
   currentRole: 'admin',
   currentUserId: 1,
-  users: INITIAL_USERS,
+  users: getStoredUsers(),
   therapists: INITIAL_THERAPISTS,
   exercises: INITIAL_EXERCISES,
   treatmentPlans: getStoredTreatmentPlans(),
@@ -935,12 +969,24 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       created_at: now,
       last_active: 'เพิ่งลงทะเบียน',
     };
-    set((state) => ({ users: [newUser, ...state.users] }));
-    get().addActivityLog(
-      'เพิ่มผู้ใช้งานใหม่',
-      'AUTH',
-      `เพิ่ม ${newUser.name} (${newUser.code}) บทบาท: ${newUser.role}`
-    );
+    const updatedUsers = [newUser, ...get().users];
+    set({ users: updatedUsers });
+    persistUsers(updatedUsers);
+
+    if (newUser.status === 'pending_info') {
+      patientSyncService.broadcastEnrolledPending(newUser);
+      get().addActivityLog(
+        'สแกนหน้าคนไข้ใหม่ (รอข้อมูล)',
+        'PATIENT',
+        `คนไข้สแกนหน้า ณ ตู้ Kiosk รหัส ${newUser.code} สถานะ: ${newUser.pendingInfoNote || 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว'}`
+      );
+    } else {
+      get().addActivityLog(
+        'เพิ่มผู้ใช้งานใหม่',
+        'AUTH',
+        `เพิ่ม ${newUser.name} (${newUser.code}) บทบาท: ${newUser.role}`
+      );
+    }
 
     if (supabaseService.isConfigured()) {
       if (newUser.role === 'patient') {
@@ -978,10 +1024,68 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     return newUser;
   },
 
+  completePendingPatientInfo: (id, patientData) => {
+    const existing = get().users.find((u) => u.id === id);
+    if (!existing) return null;
+
+    const updatedUser: UserAccount = {
+      ...existing,
+      ...patientData,
+      status: 'active',
+      pendingInfoNote: undefined,
+      last_active: 'ลงทะเบียนข้อมูลครบถ้วนแล้ว',
+    };
+
+    const updatedUsers = get().users.map((u) => (u.id === id ? updatedUser : u));
+    set({ users: updatedUsers });
+    persistUsers(updatedUsers);
+
+    // อัปเดตโปรไฟล์ใบหน้าใน Face Registry ให้ตรงกับชื่อและข้อมูลจริง
+    try {
+      const allProfiles = faceRegistryService.getAllProfiles();
+      const profile = allProfiles.find((p) => String(p.patientId) === String(id) || p.patientCode === existing.code);
+      if (profile) {
+        profile.name = updatedUser.name;
+        if (updatedUser.age) profile.age = updatedUser.age;
+        if (updatedUser.gender) profile.gender = updatedUser.gender;
+        faceRegistryService.saveProfile(profile);
+      }
+    } catch {}
+
+    // ส่งสัญญาณ Broadcast ทันที เพื่อให้หน้าจอ Kiosk และหน้าอื่นๆ รับทราบและเปลี่ยนสถานะทันที
+    patientSyncService.broadcastInfoCompleted(updatedUser);
+
+    get().addActivityLog(
+      'ลงทะเบียนคนไข้สำเร็จ',
+      'PATIENT',
+      `บันทึกข้อมูลคนไข้ ${updatedUser.name} (${updatedUser.code}) เรียบร้อยแล้ว พร้อมใช้งานตู้ Kiosk`
+    );
+
+    if (supabaseService.isConfigured()) {
+      supabaseService.updatePatient(id, {
+        name: updatedUser.name,
+        age: updatedUser.age,
+        gender: updatedUser.gender,
+        phone: updatedUser.phone,
+        chief_complaint: updatedUser.chiefComplaint || updatedUser.diagnosis || '',
+        responsible_therapist_id: updatedUser.assignedTherapistId || null,
+        status: 'active',
+      }).catch((e) => console.warn('Supabase updatePatient error:', e));
+    }
+
+    return updatedUser;
+  },
+
   updateUser: (id, data) => {
-    set((state) => ({
-      users: state.users.map((u) => (u.id === id ? { ...u, ...data } : u)),
-    }));
+    const updatedUsers = get().users.map((u) => (u.id === id ? { ...u, ...data } : u));
+    set({ users: updatedUsers });
+    persistUsers(updatedUsers);
+
+    const updatedUser = updatedUsers.find((u) => u.id === id);
+    if (updatedUser && data.status === 'active' && updatedUser.role === 'patient') {
+      patientSyncService.broadcastInfoCompleted(updatedUser);
+    }
+
     get().addActivityLog('แก้ไขข้อมูลผู้ใช้งาน', 'AUTH', `อัปเดตข้อมูลผู้ใช้งาน ID: ${id}`);
 
     if (supabaseService.isConfigured()) {
@@ -1332,3 +1436,25 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     }
   },
 }));
+
+// Cross-tab / Cross-window Sync Listener
+if (typeof window !== 'undefined') {
+  patientSyncService.subscribe((event) => {
+    if (event.type === 'INFO_COMPLETED') {
+      useHospitalStore.setState((state) => ({
+        users: state.users.map((u) =>
+          u.id === event.user.id || u.code === event.user.code ? event.user : u
+        ),
+      }));
+    } else if (event.type === 'ENROLLED_PENDING') {
+      useHospitalStore.setState((state) => {
+        const exists = state.users.some(
+          (u) => u.id === event.user.id || u.code === event.user.code
+        );
+        if (exists) return state;
+        return { users: [event.user, ...state.users] };
+      });
+    }
+  });
+}
+
