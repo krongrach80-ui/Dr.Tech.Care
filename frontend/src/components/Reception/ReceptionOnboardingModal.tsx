@@ -398,7 +398,7 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
                 ต้อนรับและลงทะเบียนคนไข้ใหม่
               </h3>
               <p className="text-xs text-emerald-800 font-medium">
-                กรอกข้อมูลผู้ป่วยก่อน แล้วจึงสแกนบันทึกใบหน้าชีวมิติเพื่อใช้เข้าสู่ระบบตู้ StrongCare
+                กรอกข้อมูลผู้ป่วยก่อน แล้วจึงสแกนบันทึกใบหน้าชีวมิติเพื่อใช้เข้าสู่ระบบตู้ Dr.Tech.Care
               </p>
             </div>
           </div>
@@ -590,7 +590,7 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
                     <span className="font-bold text-emerald-900">
                       ความยินยอมจัดเก็บข้อมูลชีวมิติ (PDPA Biometric Consent):
                     </span>{' '}
-                    ยินยอมให้นำข้อมูลใบหน้าไปประมวลผลเป็นเวกเตอร์คณิตศาสตร์ 128 มิติ เพื่อใช้ในการยืนยันตัวตนเข้าใช้งานตู้ StrongCare
+                    ยินยอมให้นำข้อมูลใบหน้าไปประมวลผลเป็นเวกเตอร์คณิตศาสตร์ 128 มิติ เพื่อใช้ในการยืนยันตัวตนเข้าใช้งานตู้ Dr.Tech.Care
                     โดยระบบไม่บันทึกภาพถ่ายใบหน้าจริงลงในฐานข้อมูล
                   </div>
                 </label>

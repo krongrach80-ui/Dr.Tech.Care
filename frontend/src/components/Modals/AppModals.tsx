@@ -89,7 +89,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({ isOpen, onClose, onOpenA
 
         <div className="space-y-4 text-sm text-slate-600">
           <p>
-            <strong>STRONG CARE Administration</strong> — ระบบควบคุมและตรวจสอบความปลอดภัยทางการแพทย์
+            <strong>Dr.Tech.Care Administration</strong> — ระบบควบคุมและตรวจสอบความปลอดภัยทางการแพทย์
           </p>
 
           <div className="grid grid-cols-2 gap-3 p-4 rounded-2xl bg-emerald-50/70 border border-emerald-100 text-xs">
@@ -672,7 +672,7 @@ export const TherapistReportModal: React.FC<TherapistReportModalProps> = ({
 };
 
 // ============================================================================
-// 6. About Modal (ข้อมูลเกี่ยวกับระบบ Strong Care)
+// 6. About Modal (ข้อมูลเกี่ยวกับระบบ Dr.Tech.Care)
 // ============================================================================
 interface AboutModalProps {
   isOpen: boolean;
@@ -699,7 +699,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
             </div>
             <div>
               <h3 id="aboutModalTitle" className="text-base sm:text-lg font-bold text-[#0B2B2B]">
-                เกี่ยวกับ Strong Care
+                เกี่ยวกับ Dr.Tech.Care
               </h3>
               <p className="text-[11px] text-emerald-700 font-medium">
                 AI-assisted Rehabilitation Monitoring Platform v1.0

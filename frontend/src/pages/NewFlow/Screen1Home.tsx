@@ -57,9 +57,9 @@ export const Screen1Home: React.FC<Screen1HomeProps> = ({
           <span>ระบบดูแลและฟื้นฟูสุขภาพอัจฉริยะ</span>
         </div>
 
-        {/* กลางบน: ข้อความ "STRONG CARE" ตัวใหญ่หนา มีเส้นใต้ไล่สีเขียว */}
+        {/* กลางบน: ข้อความ "Dr.Tech.Care" ตัวใหญ่หนา มีเส้นใต้ไล่สีเขียว */}
         <h1 className="font-sans font-extrabold text-[clamp(2.2rem,6vw,3.4rem)] text-[#0B2B2B] tracking-tight leading-none">
-          STRONG CARE
+          Dr.Tech.Care
         </h1>
         <div className="w-48 sm:w-64 h-1.5 rounded-full bg-gradient-to-r from-[#6FD67F] to-[#1E8A4C] mt-3 shadow-sm" />
 
@@ -107,7 +107,7 @@ export const Screen1Home: React.FC<Screen1HomeProps> = ({
         <button
           onClick={onOpenAbout}
           className="fixed bottom-5 left-5 sm:bottom-7 sm:left-7 bg-white/90 backdrop-blur-md hover:bg-emerald-50 border-2 border-emerald-300 text-[#1E8A4C] font-sans font-bold text-xs sm:text-sm px-4 py-2 rounded-full shadow-md hover:shadow-lg flex items-center gap-1.5 transition active:scale-95 z-30"
-          aria-label="เกี่ยวกับระบบ Strong Care"
+          aria-label="เกี่ยวกับระบบ Dr.Tech.Care"
           id="btnAboutModal"
         >
           <Info className="w-4 h-4" />

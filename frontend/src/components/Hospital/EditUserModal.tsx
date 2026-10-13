@@ -225,9 +225,9 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
         name: name.trim(),
         specialty: specialty.trim() || 'กายภาพบำบัดระบบกระดูกและกล้ามเนื้อ (Orthopedic PT)',
         phone: phone.trim() || '08x-xxx-xxxx',
-        email: email.trim() || `${username.trim()}@strongcare.hospital`,
+        email: email.trim() || `${username.trim()}@drtechcare.hospital`,
         licenseNumber: licenseNumber.trim() || `กภ. 8920`,
-        bio: bio.trim() || 'นักกายภาพบำบัดวิชาชีพ ประจำโรงพยาบาล StrongCare',
+        bio: bio.trim() || 'นักกายภาพบำบัดวิชาชีพ ประจำโรงพยาบาล Dr.Tech.Care',
       };
     }
 

@@ -1,4 +1,4 @@
-# เกี่ยวกับ Strong Care (About Strong Care)
+# เกี่ยวกับ Dr.Tech.Care (About Dr.Tech.Care)
 
 ## AI-assisted Rehabilitation Monitoring Platform
 **แพลตฟอร์มช่วยติดตามและวิเคราะห์การฝึกกายภาพบำบัดด้วย AI อัจฉริยะ**
@@ -14,7 +14,7 @@
 
 ### 🔑 ตารางบัญชีเข้าใช้งานระบบ (Demo Credentials)
 
-ระบบ STRONG CARE ใช้ระบบยืนยันตัวตนจริงด้วย **Username + Password** สำหรับบุคลากรทางการแพทย์ และ **Face Biometrics / PIN** สำหรับคนไข้หน้าตู้ Kiosk (ยกเลิกระบบ Demo Switcher แบบปุ่มลอยปนกันโดยสิ้นเชิง):
+ระบบ Dr.Tech.Care ใช้ระบบยืนยันตัวตนจริงด้วย **Username + Password** สำหรับบุคลากรทางการแพทย์ และ **Face Biometrics / PIN** สำหรับคนไข้หน้าตู้ Kiosk (ยกเลิกระบบ Demo Switcher แบบปุ่มลอยปนกันโดยสิ้นเชิง):
 
 | ระบบ / บทบาท | Username | Password / PIN | จำนวนหน้า | สิทธิ์การเข้าถึงและความรับผิดชอบ |
 |---|---|---|---|---|
@@ -29,7 +29,7 @@
 
 ```
                     ┌────────────────────────────────────────────────────────┐
-                    │               STRONG CARE PLATFORM                     │
+                    │               DR.TECH.CARE PLATFORM                    │
                     └────────────────────────────────┬───────────────────────┘
                                                      │
          ┌───────────────────────────────────────────┼───────────────────────────────────────────┐
@@ -107,7 +107,7 @@
   - **สแกนใบหน้าชีวมิติจริง (Real Biometric Enrollment)**:
     - สแกนใบหน้า 3 มุม: มองตรง (Center), หันซ้าย (Left ~15°), หันขวา (Right ~15°) พร้อมตรวจจับการกะพริบตา (Liveness Blink)
     - สกัดเวกเตอร์ ResNet-34 128 มิติ ผูกกับโปรไฟล์คนไข้ทันที
-    - คนไข้สามารถเดินไปที่ตู้ StrongCare Kiosk แล้วสแกนหน้าหรือใส่ PIN เพื่อล็อกอินเข้าสู่ระบบได้ทันที
+    - คนไข้สามารถเดินไปที่ตู้ Dr.Tech.Care Kiosk แล้วสแกนหน้าหรือใส่ PIN เพื่อล็อกอินเข้าสู่ระบบได้ทันที
 
 #### 2. 🪞 Vertical Fullscreen Smart-Mirror (กล้องกายภาพแนวตั้งเต็มจอ)
 - หน้าจอกล้องจำลองกระจกกายภาพบำบัดอัจฉริยะ (Smart Rehab Mirror) แบบแนวตั้งเต็มจอ 100dvh
@@ -182,7 +182,7 @@
 
 ### 🗄️ สถาปัตยกรรมฐานข้อมูลจริงด้วย Supabase (PostgreSQL + RLS + Real Auth)
 
-ระบบ STRONG CARE ได้รับการอัปเกรดจากระบบ Demo / localStorage ให้เป็นระบบใช้งานจริงในระดับ Production โดยเชื่อมต่อกับ **Supabase (Managed PostgreSQL)** เป็น Backend หลัก:
+ระบบ Dr.Tech.Care ได้รับการอัปเกรดจากระบบ Demo / localStorage ให้เป็นระบบใช้งานจริงในระดับ Production โดยเชื่อมต่อกับ **Supabase (Managed PostgreSQL)** เป็น Backend หลัก:
 
 ```
                                     ┌───────────────────────────────────┐
@@ -267,6 +267,6 @@
 - **Frontend**: React 18, TypeScript 5, Vite 5, Tailwind CSS, Lucide Icons, Canvas-Confetti, Zustand, Recharts
 - **Database & Backend**: Supabase (PostgreSQL 15), Supabase Auth, Row Level Security (RLS), Web Crypto SHA-256
 - **Computer Vision & AI**: Google MediaPipe Pose Landmarker Full (WASM 0.10.35), MediaPipe FaceLandmarker (478 Dense Landmarks), ResNet-34 128-D Feature Embeddings
-- **Design System**: Strong Care Mint Aesthetic (`#1E8A4C`, `#6FD67F`, `#E9FCEB`), Hospital Dark Slate (`#0F2F2B`), WCAG AAA High Contrast
+- **Design System**: Dr.Tech.Care Mint Aesthetic (`#1E8A4C`, `#2FB39A`, `#E8FAF3`, `#0B2B2B`), Hospital Dark Slate (`#0F2F2B`), WCAG AAA High Contrast
 - **Offline & Fallback**: IndexedDB (`StrongCareDB`), LocalStorage Preference Caching, Auto-sync Queue
 - **Hosting & CI/CD**: GitHub Pages Static SPA Deployment, Supabase Cloud Database

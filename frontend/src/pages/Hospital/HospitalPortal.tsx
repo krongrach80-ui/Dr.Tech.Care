@@ -383,7 +383,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             therapistExtra.specialty ||
             'กายภาพบำบัดระบบกระดูกและกล้ามเนื้อ (Orthopedic PT)',
           phone: updatedData.phone || '08x-xxx-xxxx',
-          email: updatedData.email || 'pt@strongcare.hospital',
+          email: updatedData.email || 'pt@drtechcare.hospital',
           licenseNumber: therapistExtra.licenseNumber || 'กภ. 8920',
           activePatientsCount: 0,
           assignedCases: [],
@@ -702,11 +702,11 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       name: newTherapistForm.name.trim(),
       specialty: newTherapistForm.specialty,
       phone: newTherapistForm.phone || '08x-xxx-xxxx',
-      email: newTherapistForm.email || 'therapist@strongcare.com',
+      email: newTherapistForm.email || 'therapist@drtechcare.com',
       licenseNumber: newTherapistForm.licenseNumber || 'กภ. 9999',
       activePatientsCount: 0,
       assignedCases: [],
-      bio: newTherapistForm.bio || 'นักกายภาพบำบัดวิชาชีพ โรงพยาบาล StrongCare',
+      bio: newTherapistForm.bio || 'นักกายภาพบำบัดวิชาชีพ โรงพยาบาล Dr.Tech.Care',
       status: newTherapistForm.status,
     });
     setIsAddTherapistOpen(false);
@@ -853,10 +853,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             <div>
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold mb-2">
                 <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                <span>STRONG CARE • Hospital Staff Portal</span>
+                <span>Dr.Tech.Care • Hospital Staff Portal</span>
               </div>
               <h2 className="text-xl sm:text-2xl font-black text-[#0F2F2B]">
-                เข้าสู่ระบบบุคลากร STRONG CARE
+                เข้าสู่ระบบบุคลากร Dr.Tech.Care
               </h2>
               <p className="text-xs text-slate-500 font-medium mt-1">
                 สำหรับผู้อำนวยการ รพ., แอดมินใหญ่ และนักกายภาพบำบัด
@@ -1050,7 +1050,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               {!isSidebarCollapsed && (
                 <div className="min-w-0">
                   <div className="font-extrabold text-sm tracking-tight leading-tight text-white truncate">
-                    STRONG CARE
+                    Dr.Tech.Care
                   </div>
                   <div className="text-[10px] text-emerald-300/90 font-medium truncate">
                     {currentRole === 'admin' ? 'แอดมิน (Admin)' : 'นักกายภาพ (PT)'}
@@ -1442,19 +1442,16 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                 </div>
                               </td>
 
-                              {/* 2. Password with eye toggle & edit PIN */}
+                              {/* 2. Cryptographically Hashed Password (SHA-256) - Permanently Masked */}
                               <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
                                 <div className="inline-flex items-center gap-1.5 bg-stone-50 px-2.5 py-1 rounded-xl border border-stone-200">
+                                  <Lock className="w-3.5 h-3.5 text-emerald-600" />
                                   <span className="font-mono font-bold text-xs text-slate-700 tracking-wider">
-                                    {isPwRevealed ? user.password || '1234' : '••••••••'}
+                                    ••••••••
                                   </span>
-                                  <button
-                                    onClick={() => togglePasswordVisibility(user.id)}
-                                    title={isPwRevealed ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
-                                    className="text-slate-400 hover:text-emerald-700 transition cursor-pointer p-0.5"
-                                  >
-                                    {isPwRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                                  </button>
+                                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                    SHA-256
+                                  </span>
                                   <button
                                     onClick={() => setEditingPasswordUser(user)}
                                     title="เปลี่ยนรหัสผ่าน / PIN"

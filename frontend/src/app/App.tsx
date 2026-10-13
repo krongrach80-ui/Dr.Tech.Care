@@ -23,9 +23,11 @@ import {
 import { FaceAuthModal } from '../components/FaceAuth/FaceAuthModal';
 import { HospitalPortal } from '../pages/Hospital/HospitalPortal';
 import { ReceptionOnboardingModal } from '../components/Reception/ReceptionOnboardingModal';
+import { PatientHomeScreen } from '../pages/PatientHome/PatientHomeScreen';
 import { usePatientStore } from '../store/patientStore';
 import { useExerciseStore } from '../store/exerciseStore';
 import { useSessionStore } from '../store/sessionStore';
+import { useHospitalStore } from '../store/hospitalStore';
 import { api } from '../services/api';
 import { supabaseService } from '../services/supabaseService';
 import { OfflineStorageService } from '../services/offlineStorageService';
@@ -42,6 +44,9 @@ const parseRouteFromUrl = (): { screen: number; modal?: 'hospital' | 'reception'
   const searchParams = new URLSearchParams(window.location.search);
   const routePath = rawHash || (searchParams.get('p') || '').replace(/^\//, '').toLowerCase().trim();
 
+  if (routePath === 'home' || routePath === 'patient' || routePath === 'screen2') {
+    return { screen: 2 };
+  }
   if (routePath === 'exercise' || routePath === 'workout' || routePath === 'screen4') {
     return { screen: 4 };
   }
@@ -111,6 +116,28 @@ export const App: React.FC = () => {
     usePatientStore();
   const { exercises, selectedExercise, selectExercise, fetchExercises } = useExerciseStore();
   const { finishSession } = useSessionStore();
+  const { therapists, treatmentPlans, users } = useHospitalStore();
+
+  const attendingTherapist = React.useMemo(() => {
+    if (!selectedPatient) return therapists[0] || null;
+    const userEntry = users.find(
+      (u) => u.name === selectedPatient.name || String(u.id) === String(selectedPatient.id)
+    );
+    if (userEntry?.assignedTherapistId) {
+      const matched = therapists.find((t) => t.id === userEntry.assignedTherapistId);
+      if (matched) return matched;
+    }
+    return therapists[0] || null;
+  }, [selectedPatient, users, therapists]);
+
+  const activePlan = React.useMemo(() => {
+    if (!selectedPatient) return treatmentPlans[0] || null;
+    return (
+      treatmentPlans.find(
+        (p) => p.patientName === selectedPatient.name || String(p.patientId) === String(selectedPatient.id)
+      ) || treatmentPlans[0] || null
+    );
+  }, [selectedPatient, treatmentPlans]);
 
   useEffect(() => {
     fetchPatients();
@@ -164,6 +191,7 @@ export const App: React.FC = () => {
     else if (modal === 'reception') target = '#/reception';
     else if (modal === 'about') target = '#/about';
     else if (modal === 'profile') target = '#/profile';
+    else if (screen === 2) target = '#/home';
     else if (screen === 4) target = '#/exercise';
     else if (screen === 5) target = '#/minigame';
     else target = '#/kiosk';
@@ -187,9 +215,9 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  // Navigate & scroll to top smoothly (หน้า 2 และ 3 ถูกนำออกไป - วิ่งเข้าหน้า 1 ตู้ Kiosk เสมอ)
+  // Navigate & scroll to top smoothly (หน้า 3 ถูกนำออกไป - วิ่งเข้าหน้า 1 ตู้ Kiosk เสมอ)
   const handleNavigate = (screenNumber: number) => {
-    if (screenNumber === 2 || screenNumber === 3) {
+    if (screenNumber === 3) {
       screenNumber = 1;
     }
     setCurrentScreen(screenNumber);
@@ -281,13 +309,13 @@ export const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [selectedPatient?.id]);
 
-  // Login handler
+  // Login handler -> direct to Screen 2 (/home PatientHomeScreen)
   const handleLoginSuccess = (patient: Patient) => {
     setCurrentUserName(patient.name);
     selectPatient(patient);
     showToast(`เข้าสู่ระบบสำเร็จ ยินดีต้อนรับ ${patient.name}`);
     setTimeout(() => {
-      handleNavigate(4);
+      handleNavigate(2);
     }, 350);
   };
 
@@ -310,7 +338,7 @@ export const App: React.FC = () => {
       showToast('เข้าสู่ระบบด้วยใบหน้าสำเร็จ');
     }
     setTimeout(() => {
-      handleNavigate(4);
+      handleNavigate(2);
     }, 350);
   };
 
@@ -367,6 +395,7 @@ export const App: React.FC = () => {
         >
           {[
             { num: 1, label: '1: ตู้ Kiosk (6 ขั้นตอน)' },
+            { num: 2, label: '2: หน้าหลักคนไข้ (/home)' },
             { num: 4, label: '4: กายภาพบำบัด' },
             { num: 5, label: '5: มินิเกม' },
           ].map((tab) => (
@@ -480,6 +509,33 @@ export const App: React.FC = () => {
             }}
             onOpenHospitalPortal={() => setIsHospitalPortalOpen(true)}
             onOpenAbout={() => setIsAboutOpen(true)}
+          />
+        )}
+
+        {/* หน้า 2: หน้าหลักคนไข้หลัง Login (/home) พร้อม IdleGuard 45s และ Masked Surname */}
+        {currentScreen === 2 && (
+          <PatientHomeScreen
+            patient={
+              selectedPatient ||
+              ({
+                id: 1,
+                patient_code: 'P-0012',
+                name: currentUserName || 'คุณสมชาย ใจดี',
+                age: 68,
+                gender: 'male',
+                chief_complaint: 'ฟื้นฟูกล้ามเนื้อและข้อไหล่ติด',
+              } as Patient)
+            }
+            attendingTherapist={attendingTherapist}
+            activePlan={activePlan}
+            onStartExercise={(mode) => {
+              if (mode === 'minigame') {
+                handleNavigate(5);
+              } else {
+                handleNavigate(4);
+              }
+            }}
+            onLogout={handleLogout}
           />
         )}
 

@@ -250,11 +250,11 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
         name: name.trim(),
         specialty: specialty.trim() || 'กายภาพบำบัดระบบกระดูกและกล้ามเนื้อ (Orthopedic PT)',
         phone: phone.trim() || '08x-xxx-xxxx',
-        email: email.trim() || `${username.trim()}@strongcare.hospital`,
+        email: email.trim() || `${username.trim()}@drtechcare.hospital`,
         licenseNumber: licenseNumber.trim() || `กภ. ${Math.floor(1000 + Math.random() * 9000)}`,
         activePatientsCount: 0,
         assignedCases: [],
-        bio: bio.trim() || 'นักกายภาพบำบัดวิชาชีพ ประจำโรงพยาบาล StrongCare',
+        bio: bio.trim() || 'นักกายภาพบำบัดวิชาชีพ ประจำโรงพยาบาล Dr.Tech.Care',
         status: 'active',
       };
     }

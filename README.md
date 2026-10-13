@@ -1,16 +1,16 @@
-# Strong Care
+# Dr.Tech.Care
 
 ## AI-assisted Rehabilitation Monitoring Platform
 ### ระบบช่วยติดตามและวิเคราะห์การฝึกกายภาพด้วย AI
 **“เพื่อการฝึกที่ปลอดภัย เหมาะสมกับผู้ใช้แต่ละราย และคำนึงถึงความเป็นส่วนตัว”**
 
 - 🌐 **ทดลองใช้งานจริงออนไลน์ (Live Demo)**: [https://krongrach80-ui.github.io/Strong-Care/](https://krongrach80-ui.github.io/Strong-Care/)
-- 📖 **เอกสารเกี่ยวกับระบบ (About)**: [ABOUT.md](file:///c:/Users/Devops/.gemini/antigravity-ide/scratch/StrongCare/ABOUT.md)
+- 📖 **เอกสารเกี่ยวกับระบบ (About)**: [ABOUT.md](ABOUT.md)
 
 > **Master Pitch:**
-> “Strong Care — แพลตฟอร์ม AI ช่วยติดตามและวิเคราะห์การฝึกกายภาพ เพื่อการฝึกที่ปลอดภัย เหมาะสมกับผู้ใช้แต่ละราย และคำนึงถึงความเป็นส่วนตัว”
+> “Dr.Tech.Care — แพลตฟอร์ม AI ช่วยติดตามและวิเคราะห์การฝึกกายภาพ เพื่อการฝึกที่ปลอดภัย เหมาะสมกับผู้ใช้แต่ละราย และคำนึงถึงความเป็นส่วนตัว”
 > 
-> “Strong Care is an AI-assisted rehabilitation monitoring platform that combines facial identity verification, liveness detection, pose and biomechanical analysis, real-time safety monitoring, adaptive recommendations, and human approval within a privacy-conscious offline-first architecture.”
+> “Dr.Tech.Care is an AI-assisted rehabilitation monitoring platform that combines facial identity verification, liveness detection, pose and biomechanical analysis, real-time safety monitoring, adaptive recommendations, and human approval within a privacy-conscious offline-first architecture.”
 
 ### 🌟 ฟีเจอร์เด่นใหม่ (Production-Ready Architecture):
 1. **Single Primary Entrance & Senior Mode Default ON**: ซ่อนปุ่มสลับภาพและปุ่มเดโมใน Production Mode (เปิดดูด้วย `?demo=1`) พร้อมเปิดโหมดผู้สูงอายุเป็นค่าเริ่มต้น (ปุ่มสัมผัสขนาดใหญ่ $\ge 48$px ตัวอักษรคมชัด คอนทราสต์สูง ลดการกระตุ้นประสาทตา)

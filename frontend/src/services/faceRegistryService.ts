@@ -17,8 +17,7 @@ export interface EnrolledFaceProfile {
   name: string;
   age?: number;
   gender?: string;
-  photo?: string; // Captured photo (Data URL JPEG)
-  embeddings: number[][]; // 128-D L2-normalized float vectors
+  embeddings: number[][]; // 128-D L2-normalized float vectors only (NO RAW PHOTOS STORED - PDPA)
   enrolledAt: string;
 }
 
@@ -33,10 +32,10 @@ export interface MatchResult {
 
 const STORAGE_KEY = 'strongcare_enrolled_faces';
 // เกณฑ์ความปลอดภัยชีวมิติระดับสูง (ResNet-34)
-// สำหรับคนเดียวกัน: Cosine >= 0.90 (มักได้ 0.94-0.98), Distance <= 0.42 (มักได้ 0.20-0.35)
-// สำหรับคนละคน: Cosine <= 0.82 (มักได้ 0.65-0.80), Distance >= 0.60
-export const STRICT_COSINE_THRESHOLD = 0.90;
-export const STRICT_DISTANCE_THRESHOLD = 0.42;
+// สำหรับคนเดียวกัน: Cosine >= 0.88 (มักได้ 0.92-0.98)
+// สำหรับคนละคน: Cosine <= 0.80
+export const STRICT_COSINE_THRESHOLD = 0.88;
+export const STRICT_DISTANCE_THRESHOLD = 0.45;
 
 export class FaceRegistryService {
   private static instance: FaceRegistryService;
@@ -52,7 +51,7 @@ export class FaceRegistryService {
   }
 
   /**
-   * ดึงข้อมูลโปรไฟล์ใบหน้าทั้งหมดที่ลงทะเบียนไว้
+   * ดึงข้อมูลโปรไฟล์ใบหน้าทั้งหมดที่ลงทะเบียนไว้ (กรองรูปภาพออกเด็ดขาดตาม PDPA)
    */
   public getAllProfiles(): EnrolledFaceProfile[] {
     if (this.cache) return this.cache;
@@ -69,7 +68,11 @@ export class FaceRegistryService {
       }
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        this.cache = parsed;
+        // Strip any legacy photo data to ensure strict PDPA compliance
+        this.cache = parsed.map((p) => {
+          const { photo, ...safeProfile } = p;
+          return safeProfile;
+        });
         return this.cache;
       }
     } catch (e) {
@@ -81,7 +84,7 @@ export class FaceRegistryService {
   }
 
   /**
-   * บันทึกหรืออัปเดตโปรไฟล์ใบหน้า (อัปเดตเวกเตอร์ล่าสุดและรูปถ่าย)
+   * บันทึกหรืออัปเดตโปรไฟล์ใบหน้า (เฉพาะเวกเตอร์ 128 มิติ ห้ามบันทึกรูปภาพจริง)
    */
   public saveProfile(profile: EnrolledFaceProfile): void {
     const list = this.getAllProfiles();
@@ -107,7 +110,6 @@ export class FaceRegistryService {
       name: profile.name,
       age: profile.age,
       gender: profile.gender,
-      photo: profile.photo || (existingIdx >= 0 ? list[existingIdx].photo : undefined),
       embeddings: cleanEmbeddings,
       enrolledAt: profile.enrolledAt || new Date().toISOString(),
     };
@@ -300,11 +302,6 @@ export class FaceRegistryService {
       }
 
       let photo: string | undefined = p.photo || p.avatar_url;
-      if (!photo && typeof p.medical_history === 'string' && p.medical_history.includes('FACE_PHOTO:')) {
-        const match = p.medical_history.match(/FACE_PHOTO:(data:image\/[^\s\n]+)/);
-        if (match) photo = match[1];
-      }
-
       if (embeddings.length > 0) {
         this.saveProfile({
           patientId: p.id,
@@ -312,7 +309,6 @@ export class FaceRegistryService {
           name: p.full_name || p.name,
           age: p.age,
           gender: p.gender,
-          photo,
           embeddings,
           enrolledAt: p.created_at || new Date().toISOString(),
         });

@@ -12,6 +12,9 @@ import {
 } from '../types/hospital';
 import { faceService } from '../services/faceService';
 import { supabaseService } from '../services/supabaseService';
+import { verifyStaffPassword, hashPassword, STANDARD_PASSWORD_HASHES } from '../services/authSecurityService';
+
+const DEFAULT_PASSWORD_HASH = STANDARD_PASSWORD_HASHES['1234'];
 
 const INITIAL_THERAPISTS: PhysicalTherapist[] = [
   {
@@ -75,7 +78,7 @@ const INITIAL_USERS: UserAccount[] = [
     role: 'admin',
     status: 'active',
     code: 'ADM-01',
-    password: '1234',
+    password: DEFAULT_PASSWORD_HASH,
     phone: '02-555-0199',
     email: 'director@strongcare.hospital',
     created_at: '2026-01-10',
@@ -88,7 +91,7 @@ const INITIAL_USERS: UserAccount[] = [
     role: 'therapist',
     status: 'active',
     code: 'T-003',
-    password: '1234',
+    password: DEFAULT_PASSWORD_HASH,
     phone: '081-456-7890',
     email: 'thanakorn.w@strongcare.hospital',
     created_at: '2026-01-15',
@@ -101,7 +104,7 @@ const INITIAL_USERS: UserAccount[] = [
     role: 'therapist',
     status: 'active',
     code: 'T-007',
-    password: '1234',
+    password: DEFAULT_PASSWORD_HASH,
     phone: '089-765-4321',
     email: 'pimchanok.s@strongcare.hospital',
     created_at: '2026-01-20',
@@ -114,7 +117,7 @@ const INITIAL_USERS: UserAccount[] = [
     role: 'patient',
     status: 'active',
     code: 'P-0012',
-    password: '1234',
+    password: DEFAULT_PASSWORD_HASH,
     assignedTherapistName: 'กภ. ธนากร วงศ์สวัสดิ์',
     assignedTherapistId: 1,
     phone: '081-998-1122',
@@ -136,7 +139,7 @@ const INITIAL_USERS: UserAccount[] = [
     role: 'patient',
     status: 'active',
     code: 'P-0013',
-    password: '1234',
+    password: DEFAULT_PASSWORD_HASH,
     assignedTherapistName: 'กภ. ธนากร วงศ์สวัสดิ์',
     assignedTherapistId: 1,
     phone: '084-332-9900',
@@ -158,7 +161,7 @@ const INITIAL_USERS: UserAccount[] = [
     role: 'patient',
     status: 'active',
     code: 'P-0021',
-    password: '1234',
+    password: DEFAULT_PASSWORD_HASH,
     assignedTherapistName: 'กภ. ธนากร วงศ์สวัสดิ์',
     assignedTherapistId: 1,
     phone: '089-445-5667',
@@ -179,7 +182,7 @@ const INITIAL_USERS: UserAccount[] = [
     role: 'patient',
     status: 'suspended',
     code: 'P-0008',
-    password: '1234',
+    password: DEFAULT_PASSWORD_HASH,
     assignedTherapistName: 'กภ. พิมพ์ชนก สุขเกษม',
     assignedTherapistId: 2,
     phone: '087-654-3210',
@@ -200,7 +203,7 @@ const INITIAL_USERS: UserAccount[] = [
     role: 'patient',
     status: 'active',
     code: 'P-0034',
-    password: '1234',
+    password: DEFAULT_PASSWORD_HASH,
     assignedTherapistName: 'กภ. พิมพ์ชนก สุขเกษม',
     assignedTherapistId: 2,
     phone: '082-111-2233',
@@ -221,7 +224,7 @@ const INITIAL_USERS: UserAccount[] = [
     role: 'patient',
     status: 'active',
     code: 'P-0035',
-    password: '1234',
+    password: DEFAULT_PASSWORD_HASH,
     assignedTherapistName: 'กภ. พิมพ์ชนก สุขเกษม',
     assignedTherapistId: 2,
     phone: '085-889-9001',
@@ -624,7 +627,7 @@ const INITIAL_LOGS: ActivityLog[] = [
     action: 'สแกนใบหน้าเข้าใช้งานตู้ (Biometric Kiosk Login)',
     category: 'AUTH',
     details: 'ยืนยันตัวตนด้วยใบหน้าสำเร็จ (Cosine: 0.86, Liveness: Blink + Yaw Right)',
-    device: 'Android 14 / StrongCare Kiosk Station A',
+    device: 'Android 14 / Dr.Tech.Care Kiosk Station A',
     ipAddress: '192.168.1.120',
   },
   {
@@ -691,7 +694,7 @@ interface HospitalState {
   // Role & Authentication
   setCurrentRole: (role: UserRole) => void;
   setCurrentUserId: (id: number | string) => void;
-  loginStaff: (username: string, password: string) => { success: boolean; user?: UserAccount; error?: string };
+  loginStaff: (username: string, password: string) => Promise<{ success: boolean; user?: UserAccount; error?: string }>;
   logoutStaff: () => void;
 
   // User Management
@@ -807,7 +810,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   setCurrentRole: (role) => set({ currentRole: role }),
   setCurrentUserId: (id) => set({ currentUserId: id }),
 
-  loginStaff: (username, password) => {
+  loginStaff: async (username, password) => {
     const cleanUsername = username.trim().toLowerCase();
     const cleanPassword = password.trim();
 
@@ -835,12 +838,8 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       return { success: false, error: 'บัญชีนี้ถูกระงับการใช้งานชั่วคราว กรุณาติดต่อผู้ดูแลระบบ' };
     }
 
-    const isMatch =
-      user.password === cleanPassword ||
-      cleanPassword === '1234' ||
-      (user.username === 'admin' && cleanPassword === 'admin*password') ||
-      (user.username === 'pt_thanakorn' && cleanPassword === 'pt*pass123') ||
-      (user.username === 'pt_pimchanok' && cleanPassword === 'pt*pass456');
+    // Cryptographic verification against stored SHA-256 hash or fallback seeds
+    const isMatch = await verifyStaffPassword(cleanPassword, user.password || '');
 
     if (!isMatch) {
       return { success: false, error: 'รหัสผ่าน (Password) ไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง' };
@@ -854,7 +853,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     get().addActivityLog(
       'เข้าสู่ระบบบุคลากรสำเร็จ',
       'AUTH',
-      `${user.name} เข้าสู่ระบบสำเร็จด้วยสิทธิ์ ${user.role === 'admin' ? 'แอดมินใหญ่ (Admin)' : 'นักกายภาพบำบัด (PT)'}`,
+      `${user.name} เข้าสู่ระบบสำเร็จด้วยสิทธิ์ ${user.role === 'admin' ? 'ผู้อำนวยการ รพ. / แอดมินใหญ่' : 'นักกายภาพบำบัด'}`,
       'Staff Workstation / Kiosk Admin Portal',
       '192.168.1.10'
     );
@@ -985,14 +984,15 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
 
   resetUserPassword: (id, newPin = '1234') => {
     const user = get().users.find((u) => u.id === id);
-    set((state) => ({
-      users: state.users.map((u) => (u.id === id ? { ...u, password: newPin } : u)),
-    }));
-    get().addActivityLog('รีเซ็ตรหัสผ่าน/PIN', 'AUTH', `รีเซ็ตรหัสผ่านของผู้ใช้งาน ${user?.name} เป็น PIN ค่าเริ่มต้น: ${newPin}`);
-
-    if (supabaseService.isConfigured()) {
-      supabaseService.updateProfile(id, { password: newPin }).catch((e) => console.warn('Supabase password error:', e));
-    }
+    hashPassword(newPin).then((hashedPin) => {
+      set((state) => ({
+        users: state.users.map((u) => (u.id === id ? { ...u, password: hashedPin } : u)),
+      }));
+      if (supabaseService.isConfigured()) {
+        supabaseService.updateProfile(id, { password: hashedPin }).catch((e) => console.warn('Supabase password error:', e));
+      }
+    });
+    get().addActivityLog('รีเซ็ตรหัสผ่าน/PIN', 'AUTH', `รีเซ็ตรหัสผ่านของผู้ใช้งาน ${user?.name || id} เป็นรหัสผ่านที่เข้ารหัสแบบ SHA-256`);
     return newPin;
   },
 

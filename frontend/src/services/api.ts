@@ -439,7 +439,7 @@ export const api = {
       };
     }
 
-    // บันทึกเวกเตอร์และรูปภาพลงเครื่องเพื่อใช้สแกนยืนยันตัวตนได้ทันที
+    // บันทึกเวกเตอร์ลงเครื่องเพื่อใช้สแกนยืนยันตัวตนได้ทันที (ห้ามเก็บรูปจริงตาม PDPA)
     if (rawVectors.length > 0) {
       faceRegistryService.saveProfile({
         patientId: enrolledPatient.id,
@@ -447,7 +447,6 @@ export const api = {
         name: enrolledPatient.name,
         age: enrolledPatient.age,
         gender: enrolledPatient.gender,
-        photo: payload.photo,
         embeddings: rawVectors,
         enrolledAt: new Date().toISOString(),
       });
@@ -477,7 +476,6 @@ export const api = {
               name: item.name,
               age: item.age,
               gender: item.gender,
-              photo: item.photo,
               embeddings: item.embeddings,
               enrolledAt: new Date().toISOString(),
             });
@@ -506,9 +504,7 @@ export const api = {
           name: p.name,
           age: p.age,
           gender: p.gender,
-          photo: p.photo,
         },
-        matchedPhoto: p.photo,
         message: `ยืนยันตัวตนสำเร็จ: ยินดีต้อนรับคุณ ${p.name} (ความแม่นยำ ${matchRes.similarityPercent}%)`,
       };
     }
