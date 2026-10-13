@@ -1,0 +1,80 @@
+[
+  {
+    "id": 12,
+    "code": "P-0012",
+    "username": "somchai",
+    "name": "นายสมชาย ใจดี",
+    "age": 68,
+    "gender": "male",
+    "phone": "081-998-1122",
+    "diagnosis": "ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder - Subacute Phase)",
+    "assignedTherapistName": "กภ. ธนากร วงศ์สวัสดิ์",
+    "assignedTherapistId": 1,
+    "status": "active"
+  },
+  {
+    "id": 13,
+    "code": "P-0013",
+    "username": "malee",
+    "name": "นางมาลี รักสุข",
+    "age": 72,
+    "gender": "female",
+    "phone": "084-332-9900",
+    "diagnosis": "ข้อเข่าเสื่อมระยะที่ 2 และกล้ามเนื้อต้นขาอ่อนแรง (Knee OA Grade 2)",
+    "assignedTherapistName": "กภ. ธนากร วงศ์สวัสดิ์",
+    "assignedTherapistId": 1,
+    "status": "active"
+  },
+  {
+    "id": 21,
+    "code": "P-0021",
+    "username": "wichai",
+    "name": "นายวิชัย แก้วมณี",
+    "age": 65,
+    "gender": "male",
+    "phone": "089-445-5667",
+    "diagnosis": "ปวดหลังส่วนล่างเรื้อรัง (Chronic Low Back Pain)",
+    "assignedTherapistName": "กภ. ธนากร วงศ์สวัสดิ์",
+    "assignedTherapistId": 1,
+    "status": "active"
+  },
+  {
+    "id": 8,
+    "code": "P-0008",
+    "username": "suda",
+    "name": "นางสุดา ศรีอ่อน",
+    "age": 75,
+    "gender": "female",
+    "phone": "087-654-3210",
+    "diagnosis": "ฟื้นฟูหลังผ่าตัดเปลี่ยนข้อสะโพกเทียม (Post THA)",
+    "assignedTherapistName": "กภ. พิมพ์ชนก สุขเกษม",
+    "assignedTherapistId": 2,
+    "status": "suspended"
+  },
+  {
+    "id": 34,
+    "code": "P-0034",
+    "username": "prasert",
+    "name": "นายประเสริฐ มั่นคง",
+    "age": 70,
+    "gender": "male",
+    "phone": "082-111-2233",
+    "diagnosis": "โรคหลอดเลือดสมองระยะฟื้นตัว กล้ามเนื้อซีกขวาอ่อนแรง (Post Stroke Hemiparesis)",
+    "assignedTherapistName": "กภ. พิมพ์ชนก สุขเกษม",
+    "assignedTherapistId": 2,
+    "status": "active"
+  },
+  {
+    "id": 35,
+    "code": "P-0035",
+    "username": "kanya",
+    "name": "นางกัญญา บุญมา",
+    "age": 63,
+    "gender": "female",
+    "phone": "085-889-9001",
+    "diagnosis": "กลุ่มอาการปวดกล้ามเนื้อคอบ่าเรื้อรัง (Myofascial Pain Syndrome)",
+    "assignedTherapistName": "กภ. พิมพ์ชนก สุขเกษม",
+    "assignedTherapistId": 2,
+    "status": "active"
+  }
+]
