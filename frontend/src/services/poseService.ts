@@ -221,6 +221,32 @@ export class PoseService {
     return this.faceInitPromise;
   }
 
+  public closeHandLandmarker(): void {
+    if (this.handLandmarker) {
+      try {
+        this.handLandmarker.close();
+      } catch (err) {
+        console.warn('⚠️ Error closing HandLandmarker:', err);
+      }
+      this.handLandmarker = null;
+      this.handInitPromise = null;
+      console.log('🧹 HandLandmarker instance destroyed and memory freed');
+    }
+  }
+
+  public closeFaceLandmarker(): void {
+    if (this.faceLandmarker) {
+      try {
+        this.faceLandmarker.close();
+      } catch (err) {
+        console.warn('⚠️ Error closing FaceLandmarker:', err);
+      }
+      this.faceLandmarker = null;
+      this.faceInitPromise = null;
+      console.log('🧹 FaceLandmarker instance destroyed and memory freed');
+    }
+  }
+
   public getFaceLandmarker(): FaceLandmarker | null {
     return this.faceLandmarker;
   }

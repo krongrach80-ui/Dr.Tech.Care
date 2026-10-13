@@ -4,8 +4,8 @@
  * Provides:
  * 1. Persistent client-side face vector storage (Indexed/localStorage)
  * 2. High-precision Dual-Metric Verification:
- *    - Cosine Similarity >= 0.88 (88%+)
- *    - Euclidean Distance <= 0.48
+ *    - Cosine Similarity >= 0.90 (90%+)
+ *    - Euclidean Distance <= 0.42
  * 3. Multi-frame angle tolerance (Center, Left, Right)
  * 4. Dual cloud-synchronization with Supabase (public.face_embeddings & public.patients)
  * 5. Rejects imposters / strangers with clear safety feedback
@@ -183,7 +183,7 @@ export class FaceRegistryService {
 
   /**
    * ค้นหาโปรไฟล์ที่ตรงกับเวกเตอร์จากกล้องมากที่สุดด้วยระบบ Dual-Metric
-   * ต้องผ่านทั้งเกณฑ์ Cosine Similarity (>= 0.88) และ Euclidean Distance (<= 0.48)
+   * ต้องผ่านทั้งเกณฑ์ Cosine Similarity (>= 0.90) และ Euclidean Distance (<= 0.42)
    */
   public findBestMatch(
     queryEmbedding: number[],
