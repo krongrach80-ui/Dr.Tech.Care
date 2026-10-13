@@ -188,25 +188,86 @@ class PatientFaceStorageService {
   }
 
   /**
-   * 2. Capture live camera frame as high-quality JPG Data URL
+   * 2. Capture and automatically compress/resize live camera frame
+   * [AUTOMATIC IMAGE COMPRESSION]: Max dimensions 800x800px, JPEG quality 80% (0.80).
+   * Ensures crisp human viewing on profile modal while keeping file sizes small (~100-150 KB).
    */
-  public captureFrameAsJpg(video: HTMLVideoElement | null, quality: number = 0.88): string | null {
+  public captureFrameAsJpg(
+    video: HTMLVideoElement | null,
+    quality: number = 0.80,
+    maxWidth: number = 800,
+    maxHeight: number = 800
+  ): string | null {
     if (!video || video.readyState < 2) return null;
     try {
+      const origW = video.videoWidth || 640;
+      const origH = video.videoHeight || 480;
+
+      // Maintain aspect ratio while bounding within maxWidth x maxHeight
+      let targetW = origW;
+      let targetH = origH;
+      if (targetW > maxWidth || targetH > maxHeight) {
+        const ratio = Math.min(maxWidth / targetW, maxHeight / targetH);
+        targetW = Math.round(targetW * ratio);
+        targetH = Math.round(targetH * ratio);
+      }
+
       const canvas = document.createElement('canvas');
-      const vw = video.videoWidth || 640;
-      const vh = video.videoHeight || 480;
-      canvas.width = vw;
-      canvas.height = vh;
+      canvas.width = targetW;
+      canvas.height = targetH;
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
 
-      ctx.drawImage(video, 0, 0, vw, vh);
-      return canvas.toDataURL('image/jpeg', quality);
+      // High-quality bicubic downscaling
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(video, 0, 0, targetW, targetH);
+
+      const compressedJpg = canvas.toDataURL('image/jpeg', quality);
+      const approxKb = Math.round((compressedJpg.length * 0.75) / 1024);
+      console.log(
+        `[STORAGE] Compressed image: ${targetW}x${targetH}px, quality ${Math.round(quality * 100)}% (~${approxKb} KB)`
+      );
+      return compressedJpg;
     } catch (err) {
-      console.error('❌ Failed to capture camera frame:', err);
+      console.error('❌ Failed to capture & compress camera frame:', err);
       return null;
     }
+  }
+
+  /**
+   * Helper to ensure an existing image Data URL is compressed within 800x800px & 80% JPEG quality
+   */
+  public compressDataUrl(
+    dataUrl: string,
+    quality: number = 0.80,
+    maxWidth: number = 800,
+    maxHeight: number = 800
+  ): string {
+    if (!dataUrl || !dataUrl.startsWith('data:image')) return dataUrl;
+    try {
+      const img = new Image();
+      img.src = dataUrl;
+      if (img.width && img.height && (img.width > maxWidth || img.height > maxHeight)) {
+        let targetW = img.width;
+        let targetH = img.height;
+        const ratio = Math.min(maxWidth / targetW, maxHeight / targetH);
+        targetW = Math.round(targetW * ratio);
+        targetH = Math.round(targetH * ratio);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, targetW, targetH);
+          return canvas.toDataURL('image/jpeg', quality);
+        }
+      }
+    } catch {}
+    return dataUrl;
   }
 
   /**
@@ -301,6 +362,10 @@ class PatientFaceStorageService {
 
   /**
    * 4. Save login snapshot image taken during verification into login_history/
+   * [LOGIN SNAPSHOT CLEANUP POLICY]:
+   * Retain ONLY latest 10 login snapshots per patient.
+   * Auto-purge older snapshot files upon saving a new one.
+   * NEVER delete or compress the main reference profile_face.jpg or face_vector!
    */
   public saveLoginSnapshot(
     patientId: string | number,
@@ -313,6 +378,9 @@ class PatientFaceStorageService {
     const fileName = `login_${timestamp}_${Math.round(similarityScore * 100)}.jpg`;
     const snapshotPath = `/public/uploads/patients/${code}/login_history/${fileName}`;
 
+    // Ensure snapshot is compressed to max 800x800 & 80% JPEG quality
+    const compressedSnapshot = this.compressDataUrl(snapshotJpg, 0.80, 800, 800);
+
     const snapshotItem: PatientLoginSnapshot = {
       timestamp,
       date_str: new Date(timestamp).toLocaleString('th-TH'),
@@ -323,24 +391,89 @@ class PatientFaceStorageService {
 
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
-        localStorage.setItem(`fs:${snapshotPath}`, snapshotJpg);
-      } catch {}
+        localStorage.setItem(`fs:${snapshotPath}`, compressedSnapshot);
+      } catch (err) {
+        console.warn('⚠️ LocalStorage quota warning when saving login snapshot:', err);
+      }
     }
 
-    // Update patient dossier's login_history
+    // Update patient dossier's login_history and apply RETENTION POLICY (Latest 10)
     const record = this.getPatientRecord(code);
     if (record) {
-      record.login_history.unshift(snapshotItem);
-      // Keep up to 20 recent snapshots
-      if (record.login_history.length > 20) {
-        record.login_history = record.login_history.slice(0, 20);
+      if (!record.login_history) {
+        record.login_history = [];
       }
+      record.login_history.unshift(snapshotItem);
+
+      // [AUTO-PURGE]: Retain ONLY latest 10 login snapshots per patient
+      const MAX_SNAPSHOTS = 10;
+      if (record.login_history.length > MAX_SNAPSHOTS) {
+        const snapshotsToPurge = record.login_history.slice(MAX_SNAPSHOTS);
+        record.login_history = record.login_history.slice(0, MAX_SNAPSHOTS);
+
+        // Delete older snapshot files from storage
+        snapshotsToPurge.forEach((oldSnap) => {
+          if (oldSnap.snapshot_image_url) {
+            // Strict security check: NEVER delete profile_face.jpg or anything outside login_history
+            if (
+              oldSnap.snapshot_image_url.includes('/login_history/') &&
+              !oldSnap.snapshot_image_url.includes('profile_face.jpg')
+            ) {
+              try {
+                if (typeof window !== 'undefined' && window.localStorage) {
+                  localStorage.removeItem(`fs:${oldSnap.snapshot_image_url}`);
+                }
+                console.log(
+                  `[STORAGE] Purged older login snapshot: ${oldSnap.snapshot_image_url} (retaining latest ${MAX_SNAPSHOTS})`
+                );
+              } catch (e) {}
+            }
+          }
+        });
+      }
+
       this.savePatientRecord(code, record);
     }
 
     // Required Debug Logging
     console.log(`[STORAGE] Saved login snapshot: ${snapshotPath}`);
     return snapshotItem;
+  }
+
+  /**
+   * Manually or periodically purge older login snapshots beyond retainCount
+   */
+  public purgeOldLoginSnapshots(patientId: string | number, retainCount: number = 10): number {
+    const code = this.normalizePatientId(patientId);
+    const record = this.getPatientRecord(code);
+    if (!record || !record.login_history || record.login_history.length <= retainCount) {
+      return 0;
+    }
+
+    const toPurge = record.login_history.slice(retainCount);
+    record.login_history = record.login_history.slice(0, retainCount);
+    let count = 0;
+
+    toPurge.forEach((oldSnap) => {
+      if (
+        oldSnap.snapshot_image_url &&
+        oldSnap.snapshot_image_url.includes('/login_history/') &&
+        !oldSnap.snapshot_image_url.includes('profile_face.jpg')
+      ) {
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            localStorage.removeItem(`fs:${oldSnap.snapshot_image_url}`);
+          }
+          count++;
+          console.log(
+            `[STORAGE] Purged older login snapshot: ${oldSnap.snapshot_image_url} (retaining latest ${retainCount})`
+          );
+        } catch (e) {}
+      }
+    });
+
+    this.savePatientRecord(code, record);
+    return count;
   }
 
   /**

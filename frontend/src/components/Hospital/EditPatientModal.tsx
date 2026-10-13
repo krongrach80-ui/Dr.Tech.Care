@@ -927,6 +927,9 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
                   <div className="font-bold text-sm text-[#0F2F2B] flex items-center gap-2">
                     <Camera className="w-4 h-4 text-emerald-600" />
                     <span>ภาพถ่ายบันทึกการ Login ที่ตู้ Kiosk (login_history/)</span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                      นโยบายจัดเก็บ: ล่าสุด 10 ภาพ (~100-150 KB/ภาพ)
+                    </span>
                   </div>
                   <span className="text-[11px] text-slate-500 font-mono">
                     📁 /public/uploads/patients/{patient.code}/login_history/

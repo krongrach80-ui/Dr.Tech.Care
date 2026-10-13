@@ -1269,10 +1269,9 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       setBiometricProgress(65);
       setScanStatusMessage('🧬 [2/2] สกัดเวกเตอร์ชีวมิติ 128 มิติ (ResNet-34) และเปรียบเทียบ Cosine Similarity...');
 
-      // 1. Capture live camera frame as high-quality JPG image
-      const liveJpg = patientFaceStorageService.captureFrameAsJpg(videoRef.current, 0.88);
-
-      // 2. Extract real 128-D vector directly from video via face-api / MediaPipe
+      // [PERFORMANCE & COMPATIBILITY]:
+      // 1. Extract real 128-D vector directly from raw uncompressed webcam video frame FIRST
+      // (Ensures ZERO loss in Cosine Similarity matching precision)
       let vector128 = await livenessEngine.extractBiometricEmbedding(videoRef.current);
       if (!vector128) {
         if (isDemoMode) {
@@ -1281,6 +1280,11 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           throw new Error('ไม่สามารถตรวจจับใบหน้าได้ กรุณามองตรงเข้าหากล้อง');
         }
       }
+
+      // [AUTOMATIC IMAGE COMPRESSION]:
+      // 2. AFTER feature extraction is completed, capture and compress the frame for storage
+      // (Max dimensions 800x800px, JPEG quality 80% ~100-150 KB)
+      const liveJpg = patientFaceStorageService.captureFrameAsJpg(videoRef.current, 0.80, 800, 800);
 
       if (!isEnrollmentFlow) {
         // =========================================================================
