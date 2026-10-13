@@ -30,6 +30,8 @@ export interface UserAccount {
   temp_password?: string;
   pendingInfoNote?: string;      // e.g. 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว'
   biometricVector?: number[];    // 128-D embedding vector for biometric authentication
+  face_vector?: number[] | string; // 128-D embedding vector for patient biometric authentication
+  face_image_url?: string;       // Path or Data URL pointing to the patient's registered facial photo
   faceRegisteredAt?: string;     // Timestamp when face was enrolled at kiosk
 }
 

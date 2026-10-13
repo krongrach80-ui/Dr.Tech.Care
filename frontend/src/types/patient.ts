@@ -6,6 +6,8 @@ export interface Patient {
   gender: 'male' | 'female' | 'other';
   photo?: string;
   avatar_url?: string;
+  face_image_url?: string;
+  face_vector?: number[] | string;
   notes?: string;
   phone?: string;
   chief_complaint?: string;

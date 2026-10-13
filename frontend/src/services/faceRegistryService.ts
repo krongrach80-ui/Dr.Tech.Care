@@ -17,7 +17,8 @@ export interface EnrolledFaceProfile {
   name: string;
   age?: number;
   gender?: string;
-  embeddings: number[][]; // 128-D L2-normalized float vectors only (NO RAW PHOTOS STORED - PDPA)
+  embeddings: number[][]; // 128-D L2-normalized float vectors only
+  face_image_url?: string; // Captured face photo URL / Data URL for patient profile
   enrolledAt: string;
 }
 
@@ -51,7 +52,7 @@ export class FaceRegistryService {
   }
 
   /**
-   * ดึงข้อมูลโปรไฟล์ใบหน้าทั้งหมดที่ลงทะเบียนไว้ (กรองรูปภาพออกเด็ดขาดตาม PDPA)
+   * ดึงข้อมูลโปรไฟล์ใบหน้าทั้งหมดที่ลงทะเบียนไว้
    */
   public getAllProfiles(): EnrolledFaceProfile[] {
     if (this.cache) return this.cache;
@@ -68,11 +69,10 @@ export class FaceRegistryService {
       }
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        // Strip any legacy photo data to ensure strict PDPA compliance
-        this.cache = parsed.map((p) => {
-          const { photo, ...safeProfile } = p;
-          return safeProfile;
-        });
+        this.cache = parsed.map((p) => ({
+          ...p,
+          face_image_url: p.face_image_url || p.photo || p.avatar_url,
+        }));
         return this.cache;
       }
     } catch (e) {
@@ -84,7 +84,7 @@ export class FaceRegistryService {
   }
 
   /**
-   * บันทึกหรืออัปเดตโปรไฟล์ใบหน้า (เฉพาะเวกเตอร์ 128 มิติ ห้ามบันทึกรูปภาพจริง)
+   * บันทึกหรืออัปเดตโปรไฟล์ใบหน้า (เวกเตอร์ 128 มิติ + รูปถ่ายใบหน้าประจำตัวคนไข้)
    */
   public saveProfile(profile: EnrolledFaceProfile): void {
     const list = this.getAllProfiles();
@@ -111,10 +111,15 @@ export class FaceRegistryService {
       age: profile.age,
       gender: profile.gender,
       embeddings: cleanEmbeddings,
+      face_image_url: profile.face_image_url,
       enrolledAt: profile.enrolledAt || new Date().toISOString(),
     };
 
     if (existingIdx >= 0) {
+      // Preserve existing face_image_url if new one is omitted
+      if (!newProfile.face_image_url && list[existingIdx].face_image_url) {
+        newProfile.face_image_url = list[existingIdx].face_image_url;
+      }
       list[existingIdx] = newProfile;
     } else {
       list.push(newProfile);

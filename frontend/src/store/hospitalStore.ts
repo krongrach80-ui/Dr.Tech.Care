@@ -140,6 +140,7 @@ const INITIAL_USERS: UserAccount[] = [
     patientBackground: 'ความดันโลหิตสูงเล็กน้อย (ควบคุมได้ดีด้วยยา), ไม่มีประวัติผ่าตัดใหญ่, เดินออกกำลังกายเช้าสม่ำเสมอ',
     treatmentOutcome: 'ROM กางแขนข้างลำตัวเพิ่มจาก 65° เป็น 88°, ความปวดลดลงจาก 6/10 เหลือ 2/10, ทำกายภาพสม่ำเสมอ 94%',
     therapistNotes: 'คนไข้ให้ความร่วมมือดีมาก กล้ามเนื้อไหล่คลายตัวขึ้น แนะนำให้รักษาระดับการยืดแขนอย่างนุ่มนวล หลีกเลี่ยงการยกของหนักเกิน 3 กก.',
+    face_image_url: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&auto=format&fit=crop&q=80',
     created_at: '2026-02-01',
     last_active: 'วันนี้ 10:15',
   },
@@ -162,6 +163,7 @@ const INITIAL_USERS: UserAccount[] = [
     patientBackground: 'มีภาวะกระดูกบางระยะเริ่มต้น ทานแคลเซียมเสริมประจำ ไม่มีโรคหัวใจ',
     treatmentOutcome: 'สามารถลุกยืนจากเก้าอี้ได้มั่นคงขึ้น อาการเสียวข้อเข่าลดลง กำลังกล้ามเนื้อ Quadriceps เพิ่มขึ้น 1 ระดับ',
     therapistNotes: 'ฝึกย่อเข่าแบบมีเก้าอี้พยุงอย่างระมัดระวัง เข่าต้องไม่เลยปลายเท้า เน้นเพิ่มความแข็งแรงกล้ามเนื้อรอบข้อเข่า',
+    face_image_url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400&auto=format&fit=crop&q=80',
     created_at: '2026-02-05',
     last_active: 'เมื่อวานนี้',
   },
@@ -597,7 +599,18 @@ const getStoredUsers = (): UserAccount[] => {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        return parsed.map((u: UserAccount) => {
+          if (!u.face_image_url && typeof window !== 'undefined' && window.localStorage) {
+            const saved = localStorage.getItem(`face_image_${u.code}`) || localStorage.getItem(`face_image_${u.id}`);
+            if (saved) u.face_image_url = saved;
+          }
+          if (u.code === 'P-0012' && !u.face_image_url) {
+            u.face_image_url = 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&auto=format&fit=crop&q=80';
+          } else if (u.code === 'P-0013' && !u.face_image_url) {
+            u.face_image_url = 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400&auto=format&fit=crop&q=80';
+          }
+          return u;
+        });
       }
     }
   } catch (e) {}
@@ -1048,6 +1061,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
         profile.name = updatedUser.name;
         if (updatedUser.age) profile.age = updatedUser.age;
         if (updatedUser.gender) profile.gender = updatedUser.gender;
+        if (updatedUser.face_image_url) profile.face_image_url = updatedUser.face_image_url;
         faceRegistryService.saveProfile(profile);
       }
     } catch {}

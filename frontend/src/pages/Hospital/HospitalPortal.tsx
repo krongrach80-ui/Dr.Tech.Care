@@ -2061,13 +2061,21 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       {/* Patient Main Bar */}
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-50 pb-3">
                         <div className="flex items-center gap-3">
-                          <div className={`w-12 h-12 rounded-2xl text-white font-black text-lg flex items-center justify-center shadow-md ${
-                            patient.status === 'pending_info'
-                              ? 'bg-gradient-to-br from-amber-500 to-amber-700'
-                              : 'bg-gradient-to-br from-[#10B981] to-[#059669]'
-                          }`}>
-                            {patient.name.charAt(patient.name.startsWith('นาย') || patient.name.startsWith('นาง') ? 3 : 0)}
-                          </div>
+                          {patient.face_image_url ? (
+                            <img
+                              src={patient.face_image_url}
+                              alt={patient.name}
+                              className="w-12 h-12 rounded-2xl object-cover shadow-md border-2 border-emerald-300"
+                            />
+                          ) : (
+                            <div className={`w-12 h-12 rounded-2xl text-white font-black text-lg flex items-center justify-center shadow-md ${
+                              patient.status === 'pending_info'
+                                ? 'bg-gradient-to-br from-amber-500 to-amber-700'
+                                : 'bg-gradient-to-br from-[#10B981] to-[#059669]'
+                            }`}>
+                              {patient.name.charAt(patient.name.startsWith('นาย') || patient.name.startsWith('นาง') ? 3 : 0)}
+                            </div>
+                          )}
                           <div>
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="font-extrabold text-base text-[#0F2F2B]">{patient.name}</span>

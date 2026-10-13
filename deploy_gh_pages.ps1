@@ -8,7 +8,7 @@ Remove-Item -Force $gitIndex
 Remove-Item Env:\GIT_INDEX_FILE
 
 $parent = (git rev-parse origin/gh-pages).Trim()
-$commit = (git commit-tree $tree -p $parent -m "deploy: fix dual video collision in step 4 and connect live stream to LivenessScanHUD").Trim()
+$commit = (git commit-tree $tree -p $parent -m "deploy: instant temp account creation on face scan with real-time dual-channel sync and 3s auto-reset").Trim()
 git update-ref refs/heads/gh-pages $commit
 Write-Host "gh-pages branch successfully updated to commit: $commit"
 git push origin gh-pages
