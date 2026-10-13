@@ -1190,10 +1190,14 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         lastTime = now;
         const video = videoRef.current;
         if (video) {
-          if (!video.srcObject && (window as any).__kioskCameraStream) {
-            video.srcObject = (window as any).__kioskCameraStream;
+          const activeStream = streamRef.current || (window as any).__kioskCameraStream;
+          if (!video.srcObject && activeStream) {
+            video.srcObject = activeStream;
             video.muted = true;
             video.playsInline = true;
+            video.play().catch(() => {});
+          }
+          if (video.paused && video.srcObject) {
             video.play().catch(() => {});
           }
           if (video.readyState >= 2 && !video.paused) {
@@ -1772,6 +1776,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         {currentStep === 4 && (
           <LivenessScanHUD
             videoRef={videoRef}
+            stream={streamRef.current}
             cameraState={{
               isActive: isCameraActive,
               isLoading: false,

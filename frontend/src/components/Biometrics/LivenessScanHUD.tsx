@@ -26,6 +26,7 @@ import {
 
 interface LivenessScanHUDProps {
   videoRef: React.RefObject<HTMLVideoElement>;
+  stream?: MediaStream | null;
   cameraState: CameraState;
   frameData: LivenessFrameData | null;
   activeNonce: LivenessNonce | null;
@@ -42,6 +43,7 @@ interface LivenessScanHUDProps {
 
 export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
   videoRef,
+  stream,
   cameraState,
   frameData,
   activeNonce,
@@ -61,15 +63,16 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
   // เชื่อมต่อสัญญาณกล้องทันทีเมื่อ HUD เปิดใน Step 4
   React.useEffect(() => {
     const video = videoRef.current;
-    if (video && (window as any).__kioskCameraStream) {
-      if (video.srcObject !== (window as any).__kioskCameraStream) {
-        video.srcObject = (window as any).__kioskCameraStream;
+    const activeStream = stream || (window as any).__kioskCameraStream;
+    if (video && activeStream) {
+      if (video.srcObject !== activeStream) {
+        video.srcObject = activeStream;
       }
       video.muted = true;
       video.playsInline = true;
       video.play().catch(() => {});
     }
-  }, [cameraState.isActive]);
+  }, [cameraState.isActive, stream]);
 
   return (
     <div className="w-full flex-1 flex flex-col items-center justify-between relative overflow-hidden select-none">
@@ -136,7 +139,20 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
       <div className="w-full flex-1 min-h-[300px] max-h-[420px] rounded-[32px] overflow-hidden border-2 border-emerald-400 relative bg-slate-950 flex items-center justify-center shadow-2xl my-1">
         {/* Live Video Element */}
         <video
-          ref={videoRef}
+          ref={(el) => {
+            if (videoRef) {
+              (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el;
+            }
+            if (el) {
+              const activeStream = stream || (window as any).__kioskCameraStream;
+              if (activeStream && el.srcObject !== activeStream) {
+                el.srcObject = activeStream;
+                el.muted = true;
+                el.playsInline = true;
+                el.play().catch(() => {});
+              }
+            }
+          }}
           autoPlay
           playsInline
           muted
