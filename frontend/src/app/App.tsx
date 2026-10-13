@@ -547,6 +547,11 @@ export const App: React.FC = () => {
               setTherapistReportData({ score, poseName, romAngle });
               setIsTherapistReportOpen(true);
             }}
+            onNavigateToMinigame={() => {
+              showToast('🎮 ยินดีต้อนรับเข้าสู่มินิเกมฝึกสมองและการตอบสนอง (+50 XP)');
+              handleNavigate(5);
+            }}
+            includeMinigame={Boolean(activePlan?.includeMinigame ?? (activePlan as any)?.include_minigame ?? true)}
             selectedExercise={selectedExercise}
             stretchQueue={activeStretchQueue}
             customHoldTimes={activeCustomHoldTimes}

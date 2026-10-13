@@ -97,6 +97,8 @@ export interface TreatmentPlan {
   startDate?: string;       // วัน/เดือน/ปี เริ่มต้น เช่น '2026-10-01'
   endDate?: string;         // วัน/เดือน/ปี สิ้นสุด เช่น '2026-10-31'
   roomStation?: string;     // ห้อง/ตู้ฝึก เช่น 'ตู้ Kiosk 1'
+  includeMinigame?: boolean; // รวมมินิเกมฝึกสมองและการตอบสนอง (Interactive Quiz) ในคอร์สประจำวัน
+  include_minigame?: boolean; // snake_case compatibility alias
 }
 
 export interface ActivityLog {

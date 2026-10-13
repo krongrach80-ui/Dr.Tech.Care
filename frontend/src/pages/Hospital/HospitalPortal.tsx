@@ -567,7 +567,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [planCareFilter, setPlanCareFilter] = useState<'all' | 'assigned'>('all');
 
   // Timetable scheduling states (ตารางเรียนกายภาพ) & Approval Gate (P2-10)
-  const [scheduleViewMode, setScheduleViewMode] = useState<'timetable' | 'list' | 'approvals'>('timetable');
+  const [scheduleViewMode, setScheduleViewMode] = useState<'today' | 'weekly' | 'timetable' | 'list' | 'approvals'>('today');
   const [scheduleSelectedMonth, setScheduleSelectedMonth] = useState<number>(9); // 0-indexed, 9 = ตุลาคม (October)
   const [scheduleSelectedYear, setScheduleSelectedYear] = useState<number>(2026);
   const [scheduleDayFilter, setScheduleDayFilter] = useState<string>('all');
@@ -2336,25 +2336,37 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2.5 flex-wrap">
-                  {/* View Mode Switcher: Timetable Grid vs List */}
+                  {/* View Mode Switcher: Today's Queue vs Weekly Calendar vs List vs Approvals */}
                   <div className="flex items-center p-1 bg-white border border-emerald-200 rounded-full shadow-2xs">
                     <button
-                      onClick={() => setScheduleViewMode('timetable')}
+                      onClick={() => setScheduleViewMode('today')}
                       className={`px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                        scheduleViewMode === 'timetable'
-                          ? 'bg-[#10B981] text-[#0F2F2B] font-extrabold shadow-xs'
+                        scheduleViewMode === 'today'
+                          ? 'bg-[#10B981] text-white font-extrabold shadow-xs'
                           : 'text-slate-600 hover:text-emerald-800'
                       }`}
-                      title="สลับเป็นมุมมองตารางเรียน (Timetable Grid)"
+                      title="คิวนัดหมายประจำวันนี้ (Today's Queue)"
                     >
-                      <LayoutGrid className="w-3.5 h-3.5" />
-                      <span>ตารางจัดเวลา (ตารางเรียน)</span>
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>📌 นัดหมายวันนี้ (14 ต.ค.)</span>
+                    </button>
+                    <button
+                      onClick={() => setScheduleViewMode('weekly')}
+                      className={`px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                        scheduleViewMode === 'weekly'
+                          ? 'bg-[#10B981] text-white font-extrabold shadow-xs'
+                          : 'text-slate-600 hover:text-emerald-800'
+                      }`}
+                      title="มุมมองปฏิทินรายสัปดาห์ 7 วัน (Weekly Calendar)"
+                    >
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span>🗓️ มุมมองปฏิทินรายสัปดาห์</span>
                     </button>
                     <button
                       onClick={() => setScheduleViewMode('list')}
                       className={`px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                         scheduleViewMode === 'list'
-                          ? 'bg-[#10B981] text-[#0F2F2B] font-extrabold shadow-xs'
+                          ? 'bg-[#10B981] text-white font-extrabold shadow-xs'
                           : 'text-slate-600 hover:text-emerald-800'
                       }`}
                       title="สลับเป็นมุมมองตารางรายชื่อแบบละเอียด"
@@ -2366,7 +2378,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       onClick={() => setScheduleViewMode('approvals')}
                       className={`px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                         scheduleViewMode === 'approvals'
-                          ? 'bg-[#10B981] text-[#0F2F2B] font-extrabold shadow-xs'
+                          ? 'bg-[#10B981] text-white font-extrabold shadow-xs'
                           : 'text-slate-600 hover:text-emerald-800'
                       }`}
                       title="ระบบอนุมัติคำแนะนำทางคลินิกจาก AI (Therapist Approval Gate)"
@@ -2450,16 +2462,16 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     />
                   </div>
 
-                  {/* Add Plan Button */}
+                  {/* Prominent Primary Add Plan Button */}
                   <button
                     onClick={() => {
                       setSelectedPlanForEdit(null);
                       setIsTreatmentPlanModalOpen(true);
                     }}
-                    className="px-3.5 py-1.5 rounded-full bg-gradient-to-r from-[#10B981] to-[#059669] text-white text-xs font-bold shadow-md hover:opacity-95 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap active:scale-95"
+                    className="px-4 py-2 rounded-2xl bg-gradient-to-r from-[#10B981] to-[#059669] text-white text-xs font-extrabold shadow-md hover:shadow-lg hover:opacity-95 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap active:scale-95"
                   >
                     <Plus className="w-4 h-4" />
-                    <span>+ ลงเวลา / จัดตารางใหม่</span>
+                    <span>➕ สร้างตารางฝึกใหม่ (New Schedule)</span>
                   </button>
                 </div>
               </div>
@@ -2569,7 +2581,391 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                 </div>
               </div>
 
-              {/* VIEW 1: TIMETABLE GRID (ตารางเรียนจัดเวลาเหมือนตารางเรียน) */}
+              {/* VIEW 1: TODAY'S QUEUE (ตารางนัดวันนี้) */}
+              {scheduleViewMode === 'today' && (() => {
+                const todayPlans = filteredTreatmentPlans.filter((p) => {
+                  const days = p.scheduleDays || [];
+                  const matchesDay = days.some((d) => d.includes('พุธ') || d.includes('พ.') || d === 'ทุกวัน' || d.includes('วันทำการ'));
+                  const todayYmd = '2026-10-14';
+                  if (p.startDate && todayYmd < p.startDate) return false;
+                  if (p.endDate && todayYmd > p.endDate) return false;
+                  return matchesDay;
+                });
+
+                return (
+                  <div className="bg-white rounded-3xl border border-emerald-200 shadow-sm overflow-hidden animate-fadeIn space-y-4 p-5 sm:p-6 text-left">
+                    {/* Today Header Banner */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-emerald-100">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#10B981] to-[#059669] text-white flex items-center justify-center font-bold shadow-md shadow-emerald-500/20">
+                          <Clock className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                            <span>ตารางนัดหมายประจำวัน (Live Queue)</span>
+                          </div>
+                          <h3 className="text-base sm:text-lg font-black text-[#0F2F2B] mt-0.5">
+                            วันพุธที่ 14 ตุลาคม พ.ศ. 2569 (14/10/2569)
+                          </h3>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="px-3 py-1.5 rounded-xl bg-emerald-100 text-emerald-900 font-extrabold text-xs">
+                          คิววันนี้: {todayPlans.length} คนไข้
+                        </span>
+                        <button
+                          onClick={() => {
+                            setSelectedPlanForEdit(null);
+                            setIsTreatmentPlanModalOpen(true);
+                          }}
+                          className="px-3.5 py-1.5 rounded-xl bg-[#10B981] hover:bg-emerald-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span>+ เพิ่มนัดวันนี้</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Today's Patient Queue List */}
+                    {todayPlans.length === 0 ? (
+                      <div className="py-12 text-center space-y-3 bg-emerald-50/40 rounded-2xl border border-dashed border-emerald-200">
+                        <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto text-xl">
+                          🌿
+                        </div>
+                        <div className="font-extrabold text-[#0F2F2B] text-sm">
+                          วันนี้ยังไม่มีรายการนัดฝึกกายภาพบำบัด
+                        </div>
+                        <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                          คุณสามารถคลิก "➕ สร้างตารางฝึกใหม่" เพื่อมอบหมายโปรแกรมและเวลาฝึกให้คนไข้ได้ทันที
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {todayPlans.map((p, idx) => {
+                          const patientUser = users.find(
+                            (u) =>
+                              String(u.id) === String(p.patientId) ||
+                              u.code === p.patientCode ||
+                              u.name === p.patientName
+                          );
+                          const isMinigameIncluded = p.includeMinigame ?? (p as any).include_minigame ?? true;
+
+                          return (
+                            <div
+                              key={p.id || idx}
+                              className="p-4 rounded-2xl bg-white border border-emerald-200 hover:border-emerald-400 shadow-2xs hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-left"
+                            >
+                              {/* Left: Time & Patient Info */}
+                              <div className="flex items-start gap-3 min-w-0">
+                                <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 font-extrabold flex items-center justify-center flex-shrink-0 text-sm">
+                                  {idx + 1}
+                                </div>
+                                <div className="min-w-0 space-y-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-mono text-xs font-black text-emerald-900 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200">
+                                      ⏰ {p.timeSlot || '09:30 - 10:30 น.'}
+                                    </span>
+                                    <span className="text-[11px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-lg">
+                                      🖥️ {p.roomStation || 'ตู้ Kiosk 1'}
+                                    </span>
+                                    {isMinigameIncluded && (
+                                      <span className="text-[11px] font-black text-purple-700 bg-purple-100 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                                        🎮 มีมินิเกมฝึกสมอง
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="font-black text-sm text-[#0F2F2B] truncate">
+                                      👤 {p.patientName}
+                                    </h4>
+                                    <span className="font-mono text-xs text-slate-400 font-bold">
+                                      (HN: {p.patientCode})
+                                    </span>
+                                  </div>
+
+                                  <div className="text-xs text-slate-600 flex items-center gap-2 flex-wrap">
+                                    <span className="font-bold text-emerald-700">
+                                      🎯 {p.diagnosis}
+                                    </span>
+                                    <span className="text-slate-400">•</span>
+                                    <span>บริเวณ: {p.targetJoint}</span>
+                                    <span className="text-slate-400">•</span>
+                                    <span className="font-bold text-slate-700">
+                                      🏋️ {p.assignedExercises.length} ท่าฝึก
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Right: Status Tag & Actions */}
+                              <div className="flex items-center justify-end gap-2.5 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 flex-shrink-0">
+                                {/* Status Tag */}
+                                <span
+                                  className={`px-3 py-1 rounded-full text-xs font-black whitespace-nowrap ${
+                                    p.status === 'completed'
+                                      ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                      : p.status === 'paused'
+                                      ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                      : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                                  }`}
+                                >
+                                  {p.status === 'completed'
+                                    ? '🟢 ฝึกเสร็จแล้ว'
+                                    : p.status === 'paused'
+                                    ? '⏸️ พักการฝึก'
+                                    : '🟡 รอเข้าฝึก'}
+                                </span>
+
+                                {/* Quick Action: Start at Kiosk */}
+                                {onLaunchKioskExercise && (
+                                  <button
+                                    onClick={() => {
+                                      if (patientUser && onSelectPatientForKiosk)
+                                        onSelectPatientForKiosk(patientUser);
+                                      if (onLaunchKioskExercise) onLaunchKioskExercise();
+                                      showToast(`สั่งเปิดตู้ Kiosk เริ่มฝึกตามตารางของ ${p.patientName}`);
+                                      onClose();
+                                    }}
+                                    className="px-3 py-1.5 rounded-xl bg-[#10B981] hover:bg-emerald-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+                                    title="เปิดตู้ Kiosk ให้คนไข้เข้าฝึกทันที"
+                                  >
+                                    <Play className="w-3.5 h-3.5 fill-white" />
+                                    <span>เริ่มฝึกที่ Kiosk</span>
+                                  </button>
+                                )}
+
+                                {/* Edit Button */}
+                                <button
+                                  onClick={() => {
+                                    setSelectedPlanForEdit(p);
+                                    setIsTreatmentPlanModalOpen(true);
+                                  }}
+                                  className="p-2 rounded-xl bg-slate-100 hover:bg-emerald-100 text-slate-600 hover:text-emerald-800 transition cursor-pointer"
+                                  title="แก้ไขตารางฝึก"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+
+                                {/* Delete Button */}
+                                <button
+                                  onClick={() => setDeletingPlan(p)}
+                                  className="p-2 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 transition cursor-pointer"
+                                  title="ลบตารางฝึกนี้"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* VIEW 2: WEEKLY CALENDAR (มุมมองปฏิทินรายสัปดาห์ 7 วัน - ตาม ASCII Mockup) */}
+              {scheduleViewMode === 'weekly' && (
+                <div className="bg-white rounded-3xl border border-emerald-200 shadow-sm overflow-hidden animate-fadeIn space-y-3 p-4 sm:p-5 text-left">
+                  {/* Calendar Sub-header */}
+                  <div className="flex items-center justify-between pb-3 border-b border-emerald-100">
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-5 h-5 text-emerald-600" />
+                      <h3 className="font-black text-sm sm:text-base text-[#0F2F2B]">
+                        ปฏิทินฝึกกายภาพรายสัปดาห์ (7 วัน)
+                      </h3>
+                    </div>
+                    <span className="text-xs text-slate-500 font-bold">
+                      {THAI_MONTH_NAMES[scheduleSelectedMonth]} {scheduleSelectedYear}
+                    </span>
+                  </div>
+
+                  {/* 7 Columns Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-3">
+                    {TIMETABLE_DAYS_CONFIG.map((day) => {
+                      const isToday = day.key === 'พุธ';
+                      const dayPlans = filteredTreatmentPlans.filter((p) => {
+                        const days = p.scheduleDays || [];
+                        return days.some(
+                          (d) =>
+                            d.includes(day.key) ||
+                            d.includes(day.short) ||
+                            d === 'ทุกวัน' ||
+                            (d.includes('วันทำการ') && !['เสาร์', 'อาทิตย์'].includes(day.key))
+                        );
+                      });
+
+                      return (
+                        <div
+                          key={day.key}
+                          className={`rounded-2xl border p-2.5 flex flex-col space-y-2.5 min-h-[260px] ${
+                            isToday
+                              ? 'bg-emerald-50/70 border-2 border-emerald-400 ring-2 ring-emerald-200 shadow-xs'
+                              : 'bg-slate-50/40 border-slate-200'
+                          }`}
+                        >
+                          {/* Column Header */}
+                          <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/80">
+                            <div className="flex items-center gap-1">
+                              <span className={`w-2 h-2 rounded-full ${day.dot}`} />
+                              <span className="font-black text-xs text-[#0F2F2B]">
+                                {day.label}
+                              </span>
+                            </div>
+                            {isToday && (
+                              <span className="px-1.5 py-0.2 rounded-md bg-[#10B981] text-white text-[10px] font-extrabold animate-pulse">
+                                วันนี้
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Sessions in this Day Column */}
+                          <div className="space-y-2 flex-1 overflow-y-auto max-h-[380px] pr-0.5">
+                            {dayPlans.length === 0 ? (
+                              <div className="py-6 text-center space-y-2">
+                                <span className="text-[11px] text-slate-400 font-bold block">
+                                  (ไม่มีนัดหมาย)
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedPlanForEdit({
+                                      id: '',
+                                      patientId: '',
+                                      patientName: '',
+                                      patientCode: '',
+                                      therapistId: currentUserId,
+                                      therapistName:
+                                        currentRole === 'therapist'
+                                          ? currentUser?.name || 'นักกายภาพ'
+                                          : 'กภ. ธนากร วงศ์สวัสดิ์',
+                                      diagnosis: '',
+                                      targetJoint: 'ข้อต่อและกล้ามเนื้อทั่วไป',
+                                      assignedExercises: [],
+                                      clinicalNotes: 'ฝึกอย่างสม่ำเสมอ พักระหว่างเซ็ต 30 วินาที',
+                                      createdAt: '2026-10-14',
+                                      status: 'active',
+                                      scheduleDays: [day.key],
+                                      timeSlot: '09:30 - 10:30',
+                                      startTime: '09:30',
+                                      endTime: '10:30',
+                                      startDate: '2026-10-01',
+                                      endDate: '2026-10-31',
+                                      roomStation: 'ตู้ Kiosk 1',
+                                      includeMinigame: true,
+                                    } as TreatmentPlan);
+                                    setIsTreatmentPlanModalOpen(true);
+                                  }}
+                                  className="w-full py-1.5 px-2 rounded-xl bg-white hover:bg-emerald-50 border border-dashed border-emerald-300 text-emerald-800 text-[10px] font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  <span>+ นัดหมาย</span>
+                                </button>
+                              </div>
+                            ) : (
+                              dayPlans.map((p) => {
+                                const ptUser = users.find(
+                                  (u) =>
+                                    String(u.id) === String(p.patientId) ||
+                                    u.code === p.patientCode ||
+                                    u.name === p.patientName
+                                );
+                                const isMinigameIncluded =
+                                  p.includeMinigame ?? (p as any).include_minigame ?? true;
+
+                                return (
+                                  <div
+                                    key={p.id}
+                                    className="p-2.5 rounded-xl bg-white border border-emerald-200 hover:border-emerald-400 shadow-2xs hover:shadow-md transition text-left space-y-1.5"
+                                  >
+                                    {/* Patient Name */}
+                                    <div className="font-extrabold text-xs text-[#0F2F2B] truncate flex items-center gap-1">
+                                      <span>👤</span>
+                                      <span className="truncate">{p.patientName}</span>
+                                    </div>
+
+                                    {/* Time */}
+                                    <div className="text-[10px] font-mono font-bold text-slate-600 flex items-center gap-1">
+                                      <Clock className="w-3 h-3 text-emerald-600" />
+                                      <span>
+                                        ⏰ {p.startTime || p.timeSlot?.split(' - ')[0] || '09:30'} น.
+                                      </span>
+                                    </div>
+
+                                    {/* Exercise summary + minigame badge */}
+                                    <div className="text-[10px] font-bold text-emerald-800 bg-emerald-50/80 px-1.5 py-0.5 rounded-md flex items-center justify-between">
+                                      <span className="truncate">
+                                        🎯 {p.assignedExercises?.length || 0} ท่า
+                                      </span>
+                                      {isMinigameIncluded && (
+                                        <span className="text-purple-700 font-extrabold">+ 🎮</span>
+                                      )}
+                                    </div>
+
+                                    {/* Status Pill & Action */}
+                                    <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[10px]">
+                                      <span
+                                        className={`px-1.5 py-0.2 rounded font-black ${
+                                          p.status === 'completed'
+                                            ? 'bg-blue-100 text-blue-800'
+                                            : p.status === 'paused'
+                                            ? 'bg-amber-100 text-amber-800'
+                                            : 'bg-emerald-100 text-emerald-800'
+                                        }`}
+                                      >
+                                        {p.status === 'completed'
+                                          ? '🟢 ฝึกเสร็จ'
+                                          : p.status === 'paused'
+                                          ? '⏸️ พัก'
+                                          : '🟡 รอเข้าฝึก'}
+                                      </span>
+
+                                      <div className="flex items-center gap-1">
+                                        {onLaunchKioskExercise && (
+                                          <button
+                                            onClick={() => {
+                                              if (ptUser && onSelectPatientForKiosk)
+                                                onSelectPatientForKiosk(ptUser);
+                                              if (onLaunchKioskExercise) onLaunchKioskExercise();
+                                              showToast(
+                                                `สั่งเปิดตู้ Kiosk เริ่มฝึกตามตารางของ ${p.patientName}`
+                                              );
+                                              onClose();
+                                            }}
+                                            className="p-1 rounded bg-[#10B981] hover:bg-emerald-600 text-white cursor-pointer"
+                                            title="เริ่มฝึกที่ Kiosk"
+                                          >
+                                            <Play className="w-2.5 h-2.5 fill-white" />
+                                          </button>
+                                        )}
+                                        <button
+                                          onClick={() => {
+                                            setSelectedPlanForEdit(p);
+                                            setIsTreatmentPlanModalOpen(true);
+                                          }}
+                                          className="p-1 rounded bg-slate-100 hover:bg-emerald-100 text-slate-600 cursor-pointer"
+                                          title="แก้ไข"
+                                        >
+                                          <Pencil className="w-2.5 h-2.5" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* VIEW 3: TIMETABLE GRID (ตารางเรียนจัดเวลาเดิม) */}
               {scheduleViewMode === 'timetable' && (
                 <div className="bg-white rounded-3xl border border-emerald-200 shadow-sm overflow-hidden animate-fadeIn">
                   {/* Timetable Sub-header */}
@@ -2600,11 +2996,9 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     <table className="w-full text-left text-xs border-collapse min-w-[980px]">
                       <thead>
                         <tr className="border-b border-emerald-200 text-[11px] font-black uppercase tracking-wider bg-emerald-50/80">
-                          {/* Sticky Time Header */}
                           <th className="py-3 px-3.5 sticky left-0 bg-emerald-100/90 z-20 border-r border-emerald-200 text-slate-700 w-36 min-w-[140px] text-center shadow-xs">
                             คาบ / ช่วงเวลา
                           </th>
-                          {/* 7 Days Columns */}
                           {TIMETABLE_DAYS_CONFIG.map((day) => (
                             <th
                               key={day.key}
@@ -2639,7 +3033,6 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
                           return (
                             <tr key={period.id} className="hover:bg-slate-50/60 transition">
-                              {/* Sticky Time Column */}
                               <td className="py-3 px-3 sticky left-0 bg-emerald-50/90 z-10 border-r border-emerald-200 text-center shadow-xs">
                                 <div className="font-extrabold text-[#0F2F2B] text-xs leading-tight">
                                   {period.label}
@@ -2649,7 +3042,6 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                 </div>
                               </td>
 
-                              {/* 7 Day Slot Cells */}
                               {TIMETABLE_DAYS_CONFIG.map((day) => {
                                 const slotPlans = filteredTreatmentPlans.filter((p) => {
                                   const days = p.scheduleDays || [];
@@ -2681,7 +3073,6 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                               key={p.id}
                                               className="p-2 rounded-2xl bg-white border border-emerald-200 shadow-2xs hover:shadow-md hover:border-emerald-400 transition-all text-left space-y-1.5"
                                             >
-                                              {/* Card Top: Time & Station badge */}
                                               <div className="flex items-center justify-between gap-1 text-[10px]">
                                                 <span className="font-mono font-bold text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200 truncate">
                                                   ⏰ {p.timeSlot || period.time}
@@ -2691,7 +3082,6 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                                 </span>
                                               </div>
 
-                                              {/* Patient Name & Diagnosis */}
                                               <div>
                                                 <div className="font-black text-xs text-[#0F2F2B] truncate leading-tight flex items-center gap-1">
                                                   <span className="w-1.5 h-1.5 rounded-full bg-[#10B981] flex-shrink-0" />
@@ -2702,22 +3092,18 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                                 </div>
                                               </div>
 
-                                              {/* Exercises Count & Date Range */}
                                               <div className="pt-1 border-t border-emerald-50 flex items-center justify-between text-[10px] text-slate-600">
                                                 <span className="font-bold text-emerald-800 bg-emerald-50/80 px-1.5 py-0.2 rounded">
                                                   {p.assignedExercises.length} ท่าฝึก
                                                 </span>
-                                                <span className="font-mono text-[9px] text-slate-400 truncate">
-                                                  {p.startDate ? p.startDate.substring(5) : '10-01'} - {p.endDate ? p.endDate.substring(5) : '10-31'}
-                                                </span>
                                               </div>
 
-                                              {/* Quick Actions */}
                                               <div className="pt-1 flex items-center justify-end gap-1">
                                                 {onLaunchKioskExercise && (
                                                   <button
                                                     onClick={() => {
-                                                      if (patientUser && onSelectPatientForKiosk) onSelectPatientForKiosk(patientUser);
+                                                      if (patientUser && onSelectPatientForKiosk)
+                                                        onSelectPatientForKiosk(patientUser);
                                                       if (onLaunchKioskExercise) onLaunchKioskExercise();
                                                       showToast(`เปิดตู้ Kiosk เริ่มฝึกตามตารางของ ${p.patientName}`);
                                                       onClose();
@@ -2749,18 +3135,28 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                         onClick={() => {
                                           setSelectedPlanForEdit({
                                             id: '',
-                                            patientId: users.find((u) => u.role === 'patient')?.id || '',
+                                            patientId: '',
                                             patientName: '',
                                             patientCode: '',
                                             therapistId: currentUserId,
-                                            therapistName: currentRole === 'therapist' ? (currentUser?.name || 'นักกายภาพ') : 'กภ. ธนากร วงศ์สวัสดิ์',
+                                            therapistName:
+                                              currentRole === 'therapist'
+                                                ? currentUser?.name || 'นักกายภาพ'
+                                                : 'กภ. ธนากร วงศ์สวัสดิ์',
                                             diagnosis: '',
                                             targetJoint: 'ข้อต่อและกล้ามเนื้อทั่วไป',
                                             assignedExercises: [
-                                              { exerciseSlug: 'shoulder_raise', exerciseName: 'กางแขนยกด้านข้าง', sets: 3, reps: 10, holdSeconds: 3, difficulty: 'beginner' }
+                                              {
+                                                exerciseSlug: 'shoulder_raise',
+                                                exerciseName: 'กางแขนยกด้านข้าง',
+                                                sets: 3,
+                                                reps: 10,
+                                                holdSeconds: 3,
+                                                difficulty: 'beginner',
+                                              },
                                             ],
                                             clinicalNotes: 'ฝึกอย่างสม่ำเสมอ พักระหว่างเซ็ต 30 วินาที',
-                                            createdAt: new Date().toISOString().split('T')[0],
+                                            createdAt: '2026-10-14',
                                             status: 'active',
                                             scheduleDays: [day.key],
                                             timeSlot: period.time,
@@ -2769,6 +3165,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                             startDate: '2026-10-01',
                                             endDate: '2026-10-31',
                                             roomStation: 'ตู้ Kiosk 1',
+                                            includeMinigame: true,
                                           } as TreatmentPlan);
                                           setIsTreatmentPlanModalOpen(true);
                                         }}

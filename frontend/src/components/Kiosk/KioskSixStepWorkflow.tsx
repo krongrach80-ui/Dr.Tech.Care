@@ -40,6 +40,7 @@ import {
   FileText,
   Phone,
   Pencil,
+  LogOut,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Patient } from '../../types/patient';
@@ -1944,15 +1945,64 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     }
   }, [currentStep]);
 
-  // Load treatment plan
+  // Load treatment plan dynamically from isolated patient dossier or treatmentPlans
   useEffect(() => {
+    if (!activePatient) return;
+
+    // 1. Check isolated dossier single source of truth
+    const isolatedRecord = patientFaceStorageService.getPatientRecord(activePatient.patient_code);
+    const isolatedSchedule = isolatedRecord?.medical_records?.schedule;
+
     const plan = treatmentPlans.find(
       (p) =>
         p.patientCode?.toLowerCase() === activePatient.patient_code.toLowerCase() ||
         p.patientName?.includes(activePatient.name) ||
         p.patientId === activePatient.id
     );
-    if (plan) {
+
+    if (isolatedSchedule && isolatedRecord?.medical_records?.assigned_exercises) {
+      setActivePlan({
+        id: plan?.id || 1,
+        patientId: activePatient.id,
+        patientName: activePatient.name,
+        patientCode: activePatient.patient_code,
+        therapistId: 1,
+        therapistName:
+          isolatedRecord.medical_records.responsible_therapist ||
+          plan?.therapistName ||
+          'กภ. ธนากร วงศ์สวัสดิ์',
+        diagnosis:
+          isolatedRecord.medical_records.diagnosis ||
+          plan?.diagnosis ||
+          'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
+        targetJoint: (isolatedRecord.medical_records as any).target_joint || plan?.targetJoint || 'ข้อไหล่และแขน',
+        assignedExercises: isolatedRecord.medical_records.assigned_exercises.map((ex) => ({
+          exerciseSlug: ex.exerciseSlug || ex.id,
+          exerciseName: ex.exerciseName || ex.name,
+          sets: ex.sets || 3,
+          reps: ex.reps || 10,
+          holdSeconds: ex.hold_seconds || 3,
+          difficulty: ex.difficulty || 'beginner',
+        })),
+        clinicalNotes:
+          (isolatedSchedule as any).clinical_notes ||
+          plan?.clinicalNotes ||
+          'ให้ค่อยๆ เคลื่อนไหวตามคำแนะนำของเสียงและสเกเลตัน AI หากมีอาการเจ็บสามารถกดปุ่มหยุดได้ทันที',
+        createdAt: '2026-10-01',
+        status: (isolatedSchedule.status as any) || plan?.status || 'active',
+        scheduleDays: isolatedSchedule.schedule_days || plan?.scheduleDays || ['จันทร์', 'พุธ', 'ศุกร์'],
+        timeSlot: isolatedSchedule.time_slot || plan?.timeSlot || '09:30 - 10:30',
+        startTime: isolatedSchedule.start_time || plan?.startTime || '09:30',
+        endTime: isolatedSchedule.end_time || plan?.endTime || '10:30',
+        startDate: isolatedSchedule.start_date || plan?.startDate || '2026-10-01',
+        endDate: isolatedSchedule.end_date || plan?.endDate || '2026-10-31',
+        roomStation: isolatedSchedule.room_station || plan?.roomStation || 'ตู้ Kiosk 1',
+        includeMinigame:
+          typeof isolatedSchedule.include_minigame === 'boolean'
+            ? isolatedSchedule.include_minigame
+            : true,
+      });
+    } else if (plan) {
       setActivePlan(plan);
     } else {
       setActivePlan({
@@ -1963,18 +2013,19 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         therapistId: 1,
         therapistName: 'กภ. ธนากร วงศ์สวัสดิ์',
         diagnosis: 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
-        targetJoint: 'ข้อไหล่และสะบัก (Shoulder & Scapula)',
+        targetJoint: 'ข้อไหล่และแขน',
         assignedExercises: [
           { exerciseSlug: 'shoulder_raise', exerciseName: 'กางแขนยกด้านข้าง', sets: 3, reps: 10, holdSeconds: 3, difficulty: 'beginner' },
-          { exerciseSlug: 'stretch_shoulder_cross', exerciseName: 'ยืดไหล่ข้ามอก', sets: 3, reps: 5, holdSeconds: 20, difficulty: 'beginner' },
-          { exerciseSlug: 'stretch_chest_open', exerciseName: 'ยืดอกเปิดไหล่', sets: 2, reps: 5, holdSeconds: 15, difficulty: 'beginner' },
+          { exerciseSlug: 'cross_body_stretch', exerciseName: 'ยืดไหล่ข้ามอก', sets: 3, reps: 5, holdSeconds: 5, difficulty: 'beginner' },
+          { exerciseSlug: 'chest_expansion', exerciseName: 'ยืดอกเปิดไหล่', sets: 2, reps: 5, holdSeconds: 5, difficulty: 'beginner' },
         ],
-        clinicalNotes: 'เน้นเพิ่มองศาการยกแขนข้างซ้าย หลีกเลี่ยงการยกกระตุกเร็ว สังเกตอาการปวดไม่ให้เกินระดับ 3/10',
+        clinicalNotes: 'ให้ค่อยๆ เคลื่อนไหวตามคำแนะนำของเสียงและสเกเลตัน AI หากมีอาการเจ็บสามารถกดปุ่มหยุดได้ทันที',
         createdAt: '2026-10-01',
         status: 'active',
         scheduleDays: ['จันทร์', 'พุธ', 'ศุกร์'],
         timeSlot: '09:30 - 10:30',
         roomStation: 'ตู้ Kiosk 1',
+        includeMinigame: true,
       });
     }
   }, [activePatient, treatmentPlans]);
@@ -2885,156 +2936,233 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         )}
 
         {/* ---------------------------------------------------- */}
-        {/* Step 6: รายการกายภาพที่หมอเซ็ตไว้                    */}
+        {/* Step 6: รายการกายภาพของวันนี้ (ตาม Image 2 & Dynamic Sync) */}
         {/* ---------------------------------------------------- */}
-        {currentStep === 6 && (
-          <div className="w-full flex-1 flex flex-col items-center justify-between animate-fadeIn text-left py-1">
-            <div className="w-full bg-gradient-to-b from-[#EAEAEA] to-[#D5D5D5] border-2 border-[#BEBEBE] rounded-2xl py-2 px-4 text-center shadow-md mb-2">
-              <h2 className="text-base sm:text-lg font-black text-[#0B2B2B]">
-                รายการกายภาพของวันนี้
-              </h2>
-            </div>
+        {currentStep === 6 && activePatient && (() => {
+          // Dynamic Schedule Evaluation for today (Wednesday 14 Oct 2026)
+          const scheduleEval = patientFaceStorageService.evaluateTodaySchedule(
+            activePlan || activePatient,
+            new Date(2026, 9, 14, 10, 30)
+          );
 
-            {/* กล่องแพทย์ผู้ดูแล */}
-            <div className="w-full bg-[#EBF7EE] border-2 border-[#76CA85] rounded-2xl p-2.5 shadow-sm flex items-start gap-2.5 mb-2">
-              <div className="w-10 h-10 rounded-xl bg-white border border-emerald-300 flex items-center justify-center text-emerald-700 flex-shrink-0 shadow-2xs mt-0.5">
-                <Stethoscope className="w-5 h-5" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-[10px] font-bold text-emerald-800">แพทย์ / นักกายภาพผู้ดูแล</span>
+          // Exercises to display
+          const displayExercises = (scheduleEval.assignedExercises && scheduleEval.assignedExercises.length > 0)
+            ? scheduleEval.assignedExercises
+            : (activePlan?.assignedExercises || [
+                { exerciseSlug: 'shoulder_raise', exerciseName: 'กางแขนยกด้านข้าง', sets: 3, reps: 10, holdSeconds: 3 },
+                { exerciseSlug: 'cross_body_stretch', exerciseName: 'ยืดไหล่ข้ามอก', sets: 3, reps: 5, holdSeconds: 5 },
+                { exerciseSlug: 'chest_expansion', exerciseName: 'ยืดอกเปิดไหล่', sets: 2, reps: 5, holdSeconds: 5 },
+              ]);
+
+          const patientFaceUrl =
+            patientFaceStorageService.getProfileFaceImage(activePatient.patient_code) ||
+            patientFaceStorageService.getPatientFaceImage(activePatient.patient_code) ||
+            null;
+
+          return (
+            <div className="w-full flex-1 flex flex-col justify-between animate-fadeIn text-left py-1 space-y-3 max-w-xl mx-auto">
+              {/* 1. Header Bar (Image 2 Top Bar) */}
+              <div className="flex items-center justify-between gap-2 pb-2 border-b border-emerald-100 flex-shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-700 shadow-2xs">
+                    <Heart className="w-5 h-5 fill-emerald-600 text-emerald-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-xs sm:text-sm font-black text-[#0B2B2B] tracking-wide">
+                      DR.TECH.CARE • SMART REHAB
+                    </h2>
+                    <p className="text-[11px] font-bold text-slate-500">
+                      {scheduleEval.formattedDateTh || 'วันพุธที่ 14 ตุลาคม พ.ศ. 2569 (14/10/2569)'}
+                    </p>
+                  </div>
                 </div>
-                <h3 className="text-xs sm:text-sm font-black text-[#0B2B2B] truncate">
-                  {activePlan?.therapistName || 'กภ. ธนากร วงศ์สวัสดิ์'}
-                </h3>
-                <p className="text-[11px] text-gray-700 font-bold truncate">
-                  นักกายภาพบำบัดชำนาญการ • เวชศาสตร์ฟื้นฟูกล้ามเนื้อและกระดูก
-                </p>
-                <p className="text-[10px] text-gray-500 line-clamp-1 mt-0.5">
-                  {activePlan?.clinicalNotes || 'เน้นเพิ่มองศาการยกแขนด้านข้าง หลีกเลี่ยงการยกกระตุกเร็ว'}
-                </p>
-              </div>
-            </div>
 
-            {/* รายการท่าที่หมอกำหนด */}
-            <div className="w-full flex-1 flex flex-col justify-start bg-slate-50/70 border border-slate-200 rounded-2xl p-2 space-y-1.5 overflow-hidden">
-              <div className="flex items-center justify-between text-xs font-extrabold text-emerald-900 px-1">
-                <span className="flex items-center gap-1">
-                  <Activity className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>ท่าที่แพทย์กำหนด (3 ท่า)</span>
-                </span>
-                <span className="text-[10px] text-slate-500 font-bold">
-                  {activePlan?.targetJoint || 'ข้อไหล่และสะบัก'}
-                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentStep(1);
+                    audioFeedback.playHoldTick();
+                  }}
+                  className="px-3.5 py-1.5 rounded-2xl border-2 border-rose-200 bg-white hover:bg-rose-50 text-rose-600 font-black text-xs flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>ออกจากระบบ</span>
+                </button>
               </div>
 
-              <div className="space-y-1.5 flex-1 overflow-y-auto pr-0.5">
-                {activePlan?.assignedExercises?.map((ex, idx) => (
-                  <div
-                    key={ex.exerciseSlug || idx}
-                    className="bg-white border border-slate-200 rounded-xl p-2 shadow-2xs flex items-center justify-between gap-2"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 font-black text-xs flex items-center justify-center flex-shrink-0">
-                        {idx + 1}
-                      </div>
-                      <div className="min-w-0">
-                        <span className="font-extrabold text-xs text-slate-800 block truncate">
-                          {ex.exerciseName}
-                        </span>
-                        <span className="text-[10px] text-slate-500 font-medium">ระดับเริ่มต้น</span>
-                      </div>
+              {/* 2. Patient Info Box (Image 2 Top Box) */}
+              <div className="bg-white rounded-3xl border-2 border-[#86efac] p-4 shadow-sm relative overflow-hidden flex flex-col gap-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1 min-w-0">
+                    <div className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-extrabold">
+                      ข้อมูลผู้รับบริการ (HN: {activePatient.patient_code})
                     </div>
-                    <div className="text-right flex-shrink-0">
-                      <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-lg text-[10px] font-black block">
-                        {ex.sets} เซ็ต × {ex.reps} ครั้ง
+                    <h3 className="text-xl sm:text-2xl font-black text-[#0B2B2B] truncate tracking-tight">
+                      {activePatient.name}
+                    </h3>
+                    <p className="text-xs text-slate-600 font-bold truncate">
+                      อายุ {activePatient.age || 5} ปี • สิทธิ์การรักษา:{' '}
+                      {(activePatient as any).health_scheme || (activePatient as any).healthScheme || 'สิทธิประกันสุขภาพถ้วนหน้า'}
+                    </p>
+                  </div>
+
+                  {/* Avatar Icon */}
+                  <div className="w-14 h-14 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center flex-shrink-0 text-2xl shadow-inner overflow-hidden">
+                    {patientFaceUrl ? (
+                      <img src={patientFaceUrl} alt={activePatient.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <span>{(activePatient.age || 0) < 18 ? '🧒' : (activePatient.age || 0) >= 60 ? '🧓' : '👤'}</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Attending Therapist Row */}
+                <div className="pt-2 border-t border-emerald-100 flex items-center gap-2 text-xs font-bold text-slate-700">
+                  <Stethoscope className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                  <span>
+                    นักกายภาพบำบัดผู้ดูแล:{' '}
+                    <strong className="text-emerald-800 font-black">
+                      {activePlan?.therapistName || scheduleEval.therapistName || 'กภ. ธนากร วงศ์สวัสดิ์'}
+                    </strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* 3. Main Schedule Plan Section or Rest Day Notice */}
+              {scheduleEval.isScheduledToday ? (
+                <div className="flex-1 flex flex-col justify-between space-y-3">
+                  {/* Daily Rehab Plan Card (Image 2 Center Card) */}
+                  <div className="bg-white rounded-3xl border-2 border-emerald-200/90 p-4 shadow-sm space-y-3 flex-1 flex flex-col justify-between">
+                    <div className="flex items-center justify-between pb-2 border-b border-emerald-100">
+                      <div className="flex items-center gap-2 font-black text-sm sm:text-base text-[#0B2B2B]">
+                        <Activity className="w-4 h-4 text-emerald-600" />
+                        <span>แผนการทำกายภาพประจำวันนี้</span>
+                      </div>
+                      <span className="px-3 py-1 rounded-full bg-[#10B981] text-white font-extrabold text-xs shadow-2xs">
+                        {displayExercises.length} ท่ากายภาพ
                       </span>
-                      <span className="text-[9px] text-slate-400 font-semibold">ค้าง {ex.holdSeconds} วิ</span>
+                    </div>
+
+                    {/* Prescribed Exercises List */}
+                    <div className="space-y-2 flex-1 overflow-y-auto max-h-48 pr-0.5">
+                      {displayExercises.map((ex: any, idx: number) => (
+                        <div
+                          key={ex.exerciseSlug || ex.id || idx}
+                          className="p-3 rounded-2xl bg-slate-50/70 border border-slate-200/90 hover:border-emerald-300 flex items-center justify-between gap-2.5 transition shadow-2xs"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-7 h-7 rounded-full bg-emerald-100 text-emerald-800 font-black text-xs flex items-center justify-center flex-shrink-0">
+                              {idx + 1}
+                            </div>
+                            <div className="min-w-0">
+                              <h4 className="font-extrabold text-xs sm:text-sm text-[#0B2B2B] truncate">
+                                {ex.name || ex.exerciseName}
+                              </h4>
+                              <p className="text-[11px] text-slate-500 font-semibold mt-0.5">
+                                {ex.reps || 10} ครั้ง/เซ็ต • {ex.sets || 3} เซ็ต
+                              </p>
+                            </div>
+                          </div>
+
+                          <span className="px-2.5 py-1 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-black whitespace-nowrap">
+                            พร้อมฝึก
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Clinical Advice Box (Image 2 Advice Card) */}
+                    <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-200 text-xs text-amber-950 flex items-start gap-2.5">
+                      <Sparkles className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <p className="font-bold leading-relaxed text-[11px] sm:text-xs">
+                        {activePlan?.clinicalNotes ||
+                          'คำแนะนำ: ให้ค่อยๆ เคลื่อนไหวตามคำแนะนำของเสียงและสเกเลตัน AI หากมีอาการเจ็บสามารถกดปุ่มหยุดได้ทันที'}
+                      </p>
                     </div>
                   </div>
-                ))}
-              </div>
+
+                  {/* 4. Action Buttons (Image 2 Bottom Buttons) */}
+                  <div className="space-y-2.5 flex-shrink-0">
+                    {/* Primary Big Start Button */}
+                    <button
+                      type="button"
+                      onClick={() => handleProceedToExercise('physio')}
+                      className="w-full py-4 px-5 rounded-2xl bg-gradient-to-r from-[#0F5132] via-[#107044] to-[#0F5132] text-white shadow-xl hover:shadow-2xl hover:scale-[1.01] active:scale-98 transition-all flex items-center justify-between cursor-pointer group"
+                      id="btnStartWorkoutNow"
+                    >
+                      <div className="flex items-center gap-3.5">
+                        <div className="w-11 h-11 rounded-2xl bg-white/20 flex items-center justify-center text-white shadow-inner group-hover:scale-105 transition">
+                          <Play className="w-6 h-6 fill-white" />
+                        </div>
+                        <div className="text-left">
+                          <div className="text-base sm:text-lg font-black tracking-wide">
+                            เริ่มต้นฝึกกายภาพบำบัด
+                          </div>
+                          <div className="text-xs text-emerald-200 font-semibold">
+                            พร้อม AI วิเคราะห์ท่าและตรวจสอบความปลอดภัย
+                          </div>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-6 h-6 text-emerald-300 group-hover:translate-x-1 transition" />
+                    </button>
+
+                    {/* Secondary Interactive Quiz Minigame Button */}
+                    <button
+                      type="button"
+                      onClick={() => handleProceedToExercise('minigame')}
+                      className="w-full py-3.5 px-5 rounded-2xl bg-[#E8F8F0] hover:bg-[#D8F3E5] border-2 border-[#10B981] text-[#0F2F2B] font-black text-xs sm:text-sm shadow-xs hover:shadow-md active:scale-98 transition flex items-center justify-between cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-xl">🎮</span>
+                        <span>มินิเกมฝึกสมองและการตอบสนอง (Interactive Quiz)</span>
+                      </div>
+                      <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-black text-xs shadow-2xs">
+                        +50 XP
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Rest Day Screen */
+                <div className="flex-1 flex flex-col justify-center items-center py-8 px-6 rounded-3xl bg-emerald-50/70 border-2 border-dashed border-emerald-300 text-center space-y-4">
+                  <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto text-3xl shadow-xs">
+                    🛋️
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-lg sm:text-xl font-black text-[#0F2F2B]">
+                      วันพักผ่อนของคุณ (Rest Day)
+                    </h3>
+                    <p className="text-sm font-bold text-emerald-900">
+                      วันนี้เป็นวันพักผ่อนของคุณ หรือไม่มีรายการฝึกกายภาพสำหรับวันนี้
+                    </p>
+                    <p className="text-xs text-slate-500 max-w-md mx-auto">
+                      กล้ามเนื้อต้องการเวลาฟื้นฟูเพื่อความแข็งแรงที่ยั่งยืน คุณสามารถฝึกยืดเหยียดเบาๆ หรือเล่นมินิเกมฝึกสมองเพื่อผ่อนคลายได้ครับ
+                    </p>
+                  </div>
+
+                  <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2.5 max-w-md mx-auto w-full">
+                    <button
+                      type="button"
+                      onClick={() => handleProceedToExercise('minigame')}
+                      className="w-full py-3 px-4 rounded-xl bg-[#10B981] hover:bg-emerald-600 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                    >
+                      <span>🎮</span>
+                      <span>เล่นมินิเกมฝึกสมอง (+50 XP)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowStretchModal(true)}
+                      className="w-full py-3 px-4 rounded-xl bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                    >
+                      <span>🧘</span>
+                      <span>ยืดเหยียดเบาๆ 11 ท่า</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-
-            {/* ตัวเลือกสลับโหมด */}
-            <div className="w-full grid grid-cols-2 gap-2 my-2">
-              <button
-                onClick={() => setSelectedTherapyType('physio')}
-                className={`py-2 px-3 rounded-xl text-xs font-black transition border flex items-center justify-center gap-1.5 cursor-pointer ${
-                  selectedTherapyType === 'physio'
-                    ? 'bg-emerald-50 text-emerald-800 border-2 border-emerald-500 shadow-xs'
-                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                }`}
-              >
-                <Check className="w-3.5 h-3.5" />
-                <span>กายภาพบำบัด</span>
-              </button>
-
-              <button
-                onClick={() => setSelectedTherapyType('minigame')}
-                className={`py-2 px-3 rounded-xl text-xs font-black transition border flex items-center justify-center gap-1.5 cursor-pointer ${
-                  selectedTherapyType === 'minigame'
-                    ? 'bg-purple-50 text-purple-800 border-2 border-purple-500 shadow-xs'
-                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                }`}
-              >
-                <Gamepad2 className="w-3.5 h-3.5 text-purple-600" />
-                <span>กายภาพมินิเกม</span>
-              </button>
-            </div>
-
-            {/* ปุ่มคลังท่ายืด 11 ท่า */}
-            <button
-              onClick={() => {
-                step6Countdown.togglePause();
-                setShowStretchModal(true);
-              }}
-              className="w-full py-2 px-3 rounded-xl bg-white hover:bg-emerald-50 border border-emerald-300 text-emerald-900 font-bold text-xs flex items-center justify-between shadow-2xs mb-2 cursor-pointer"
-            >
-              <span className="flex items-center gap-1.5">
-                <span>📋</span>
-                <span>เลือกโปรแกรมยืดกล้ามเนื้อ 11 ท่า</span>
-              </span>
-              <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md text-[10px] font-black">
-                {selectedStretchIds.length} ท่า
-              </span>
-            </button>
-
-            {/* แถบตัวนับถอยหลังซิงโครไนซ์ */}
-            <div className="w-full space-y-1.5">
-              <div className="flex items-center justify-between text-xs font-bold text-gray-600 px-1">
-                <span className="flex items-center gap-1 text-emerald-700">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>
-                    {step6Countdown.isPaused
-                      ? 'หยุดเวลานับถอยหลัง'
-                      : `เริ่มทำกายภาพอัตโนมัติในอีก ${step6Countdown.seconds} วินาที`}
-                  </span>
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={step6Countdown.togglePause}
-                  className="py-3 px-3.5 rounded-2xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer min-h-[48px]"
-                >
-                  <Pause className="w-3.5 h-3.5" />
-                  <span>{step6Countdown.isPaused ? 'เล่นต่อ' : 'หยุดเวลา'}</span>
-                </button>
-
-                <button
-                  onClick={() => handleProceedToExercise(selectedTherapyType)}
-                  className="flex-1 py-3 px-4 rounded-2xl bg-gradient-to-r from-[#6FD67F] via-[#22c55e] to-[#1E8A4C] text-white font-extrabold text-sm sm:text-base shadow-lg hover:shadow-xl active:scale-95 transition flex items-center justify-center gap-1.5 cursor-pointer min-h-[48px]"
-                  id="btnStartWorkoutNow"
-                >
-                  <Play className="w-5 h-5 fill-white" />
-                  <span>เริ่มทำกายภาพ ({selectedTherapyType === 'physio' ? 'กายภาพบำบัด' : 'กายภาพมินิเกม'})</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
       </div>
 

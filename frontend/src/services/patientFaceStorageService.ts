@@ -56,6 +56,30 @@ export interface PatientDailyChecklist {
   last_checked_at: string;
 }
 
+export interface PatientAssignedExercise {
+  id: string;
+  name: string;
+  target_angle: number;
+  hold_seconds: number;
+  reps: number;
+  sets?: number;
+  exerciseSlug?: string;
+  exerciseName?: string;
+  difficulty?: 'beginner' | 'intermediate' | 'advanced';
+}
+
+export interface PatientScheduleData {
+  schedule_days: string[];
+  time_slot?: string;
+  start_time?: string;
+  end_time?: string;
+  start_date?: string;
+  end_date?: string;
+  room_station?: string;
+  include_minigame?: boolean;
+  status?: 'active' | 'completed' | 'paused';
+}
+
 export interface PatientMedicalRecords {
   diagnosis: string;
   chief_complaint?: string;
@@ -63,13 +87,9 @@ export interface PatientMedicalRecords {
   treatment_plan?: string;
   progress_notes?: string;
   responsible_therapist?: string;
-  assigned_exercises: Array<{
-    id: string;
-    name: string;
-    target_angle: number;
-    hold_seconds: number;
-    reps: number;
-  }>;
+  assigned_exercises: PatientAssignedExercise[];
+  schedule?: PatientScheduleData;
+  include_minigame?: boolean;
 }
 
 export interface PatientLoginSnapshot {
@@ -749,6 +769,247 @@ class PatientFaceStorageService {
       bestScore: Math.max(0, highestScore),
       bestScorePercent,
       comparisons,
+    };
+  }
+
+  /**
+   * Synchronize Treatment Plan & Schedule configuration into patient_record.json
+   */
+  public syncTreatmentPlan(plan: any): CompletePatientRecord | null {
+    if (!plan) return null;
+    const patientCode = plan.patientCode || plan.patientId;
+    if (!patientCode) return null;
+    const code = this.normalizePatientId(patientCode);
+
+    const convertedExercises: PatientAssignedExercise[] = (plan.assignedExercises || []).map((ex: any, idx: number) => ({
+      id: ex.exerciseSlug || ex.id || String(idx + 1),
+      name: ex.exerciseName || ex.name || 'ท่ากายภาพบำบัด',
+      target_angle: ex.targetAngle || 90,
+      hold_seconds: ex.holdSeconds || 3,
+      reps: ex.reps || ex.repsPerSet || 10,
+      sets: ex.sets || 3,
+      exerciseSlug: ex.exerciseSlug || ex.slug || ex.id,
+      exerciseName: ex.exerciseName || ex.name,
+      difficulty: ex.difficulty || 'beginner',
+    }));
+
+    const minigameEnabled = Boolean(plan.includeMinigame ?? plan.include_minigame);
+
+    const scheduleData: PatientScheduleData = {
+      schedule_days: plan.scheduleDays || ['จันทร์', 'พุธ', 'ศุกร์'],
+      time_slot: plan.timeSlot || '09:30 - 10:30',
+      start_time: plan.startTime || '09:30',
+      end_time: plan.endTime || '10:30',
+      start_date: plan.startDate || '2026-10-01',
+      end_date: plan.endDate || '2026-10-31',
+      room_station: plan.roomStation || 'ตู้ Kiosk 1',
+      include_minigame: minigameEnabled,
+      status: plan.status || 'active',
+    };
+
+    const saved = this.savePatientRecord(code, {
+      patient_profile: {
+        patient_id: code,
+        full_name: plan.patientName || undefined,
+      },
+      medical_records: {
+        diagnosis: plan.diagnosis || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
+        treatment_plan: plan.clinicalNotes || 'ปฏิบัติตามแผนฟื้นฟูกายภาพประจำวัน',
+        responsible_therapist: plan.therapistName || 'กภ. ธนากร วงศ์สวัสดิ์',
+        assigned_exercises: convertedExercises,
+        schedule: scheduleData,
+        include_minigame: minigameEnabled,
+      },
+    });
+
+    console.log(`[STORAGE] Synchronized treatment plan & schedule for ${code}:`, {
+      exercisesCount: convertedExercises.length,
+      days: scheduleData.schedule_days,
+      include_minigame: minigameEnabled,
+    });
+
+    return saved;
+  }
+
+  /**
+   * Evaluate if a patient has a scheduled physical therapy session today
+   */
+  public evaluateTodaySchedule(planOrRecord: any, referenceDate?: Date): {
+    isScheduledToday: boolean;
+    isRestDay: boolean;
+    isOutsideCourse: boolean;
+    reason: 'scheduled' | 'rest_day' | 'outside_course' | 'no_plan';
+    message: string;
+    todayDayNameTh: string;
+    todayDayShortTh: string;
+    formattedDateTh: string;
+    timeSlot: string;
+    roomStation: string;
+    therapistName: string;
+    includeMinigame: boolean;
+    assignedExercises: PatientAssignedExercise[];
+  } {
+    const d = referenceDate || new Date();
+    const THAI_DAYS_FULL = [
+      'วันอาทิตย์', 'วันจันทร์', 'วันอังคาร', 'วันพุธ', 'วันพฤหัสบดี', 'วันศุกร์', 'วันเสาร์'
+    ];
+    const THAI_DAYS_SHORT = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
+    const THAI_MONTHS_FULL = [
+      'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+      'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+    ];
+
+    const dayIndex = d.getDay();
+    const todayDayNameTh = THAI_DAYS_FULL[dayIndex];
+    const todayDayShortTh = THAI_DAYS_SHORT[dayIndex];
+    const dayOfMonth = d.getDate();
+    const monthIndex = d.getMonth();
+    const beYear = d.getFullYear() + 543;
+    const formattedDateTh = `${todayDayNameTh}ที่ ${dayOfMonth} ${THAI_MONTHS_FULL[monthIndex]} พ.ศ. ${beYear} (${String(dayOfMonth).padStart(2, '0')}/${String(monthIndex + 1).padStart(2, '0')}/${beYear})`;
+
+    if (!planOrRecord) {
+      return {
+        isScheduledToday: false,
+        isRestDay: true,
+        isOutsideCourse: false,
+        reason: 'no_plan',
+        message: 'วันนี้เป็นวันพักผ่อนของคุณ หรือไม่มีรายการฝึกกายภาพสำหรับวันนี้',
+        todayDayNameTh,
+        todayDayShortTh,
+        formattedDateTh,
+        timeSlot: '09:30 - 10:30',
+        roomStation: 'ตู้ Kiosk 1',
+        therapistName: 'กภ. ธนากร วงศ์สวัสดิ์',
+        includeMinigame: false,
+        assignedExercises: [],
+      };
+    }
+
+    const scheduleDays: string[] =
+      planOrRecord.scheduleDays ||
+      planOrRecord.schedule?.schedule_days ||
+      planOrRecord.medical_records?.schedule?.schedule_days ||
+      ['จันทร์', 'พุธ', 'ศุกร์'];
+
+    const startDate: string | undefined =
+      planOrRecord.startDate ||
+      planOrRecord.schedule?.start_date ||
+      planOrRecord.medical_records?.schedule?.start_date;
+
+    const endDate: string | undefined =
+      planOrRecord.endDate ||
+      planOrRecord.schedule?.end_date ||
+      planOrRecord.medical_records?.schedule?.end_date;
+
+    const timeSlot: string =
+      planOrRecord.timeSlot ||
+      planOrRecord.schedule?.time_slot ||
+      planOrRecord.medical_records?.schedule?.time_slot ||
+      '09:30 - 10:30 น.';
+
+    const roomStation: string =
+      planOrRecord.roomStation ||
+      planOrRecord.schedule?.room_station ||
+      planOrRecord.medical_records?.schedule?.room_station ||
+      'ตู้ Kiosk 1';
+
+    const therapistName: string =
+      planOrRecord.therapistName ||
+      planOrRecord.medical_records?.responsible_therapist ||
+      'กภ. ธนากร วงศ์สวัสดิ์';
+
+    const includeMinigame: boolean = Boolean(
+      planOrRecord.includeMinigame ??
+      planOrRecord.include_minigame ??
+      planOrRecord.schedule?.include_minigame ??
+      planOrRecord.medical_records?.schedule?.include_minigame ??
+      planOrRecord.medical_records?.include_minigame
+    );
+
+    const rawExercises: any[] =
+      planOrRecord.assignedExercises ||
+      planOrRecord.medical_records?.assigned_exercises ||
+      [];
+
+    const assignedExercises: PatientAssignedExercise[] = rawExercises.map((ex, idx) => ({
+      id: ex.exerciseSlug || ex.id || String(idx + 1),
+      name: ex.exerciseName || ex.name || 'ท่ากายภาพบำบัด',
+      target_angle: ex.targetAngle || ex.target_angle || 90,
+      hold_seconds: ex.holdSeconds || ex.hold_seconds || 3,
+      reps: ex.reps || ex.targetReps || 10,
+      sets: ex.sets || 3,
+      exerciseSlug: ex.exerciseSlug || ex.slug || ex.id,
+      exerciseName: ex.exerciseName || ex.name,
+      difficulty: ex.difficulty || 'beginner',
+    }));
+
+    // 1. Check Date Range
+    const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    let isOutsideCourse = false;
+    if (startDate && ymd < startDate) isOutsideCourse = true;
+    if (endDate && ymd > endDate) isOutsideCourse = true;
+
+    if (isOutsideCourse) {
+      return {
+        isScheduledToday: false,
+        isRestDay: true,
+        isOutsideCourse: true,
+        reason: 'outside_course',
+        message: 'วันนี้อยู่นอกช่วงวันที่กำหนดคอร์สการรักษา',
+        todayDayNameTh,
+        todayDayShortTh,
+        formattedDateTh,
+        timeSlot,
+        roomStation,
+        therapistName,
+        includeMinigame,
+        assignedExercises,
+      };
+    }
+
+    // 2. Check Day-of-Week Matching
+    const dayKey = todayDayNameTh.replace('วัน', ''); // e.g. "พุธ"
+    const isDayMatched = scheduleDays.some((sd) => {
+      const clean = sd.trim();
+      return (
+        clean.includes(dayKey) ||
+        clean.includes(todayDayShortTh) ||
+        todayDayNameTh.includes(clean)
+      );
+    });
+
+    if (!isDayMatched) {
+      return {
+        isScheduledToday: false,
+        isRestDay: true,
+        isOutsideCourse: false,
+        reason: 'rest_day',
+        message: 'วันนี้เป็นวันพักผ่อนของคุณ หรือไม่มีรายการฝึกกายภาพสำหรับวันนี้',
+        todayDayNameTh,
+        todayDayShortTh,
+        formattedDateTh,
+        timeSlot,
+        roomStation,
+        therapistName,
+        includeMinigame,
+        assignedExercises,
+      };
+    }
+
+    return {
+      isScheduledToday: true,
+      isRestDay: false,
+      isOutsideCourse: false,
+      reason: 'scheduled',
+      message: 'วันนี้มีรายการฝึกกายภาพบำบัดตามตารางนัดหมาย',
+      todayDayNameTh,
+      todayDayShortTh,
+      formattedDateTh,
+      timeSlot,
+      roomStation,
+      therapistName,
+      includeMinigame,
+      assignedExercises,
     };
   }
 

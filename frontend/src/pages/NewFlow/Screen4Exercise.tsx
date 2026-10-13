@@ -57,6 +57,8 @@ interface Screen4ExerciseProps {
   stretchQueue?: StretchExerciseItem[];
   customHoldTimes?: Record<string, number>;
   patientId?: number | string;
+  onNavigateToMinigame?: () => void;
+  includeMinigame?: boolean;
 }
 
 export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
@@ -66,6 +68,8 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
   stretchQueue,
   customHoldTimes,
   patientId = 1,
+  onNavigateToMinigame,
+  includeMinigame = true,
 }) => {
   // Check if we are running in Stretch Queue Mode
   const isStretchMode = Boolean(stretchQueue && stretchQueue.length > 0);
@@ -1132,6 +1136,32 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
               )}
             </div>
           </div>
+
+          {/* Minigame Continuity Card */}
+          {onNavigateToMinigame && includeMinigame !== false && (
+            <div className="p-4 rounded-3xl bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-2 border-emerald-400 text-left shadow-md space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-black text-xs sm:text-sm text-[#0B2B2B]">
+                  <span className="text-xl">🎮</span>
+                  <span>รวมมินิเกมฝึกสมองและการตอบสนอง (Interactive Quiz)</span>
+                </div>
+                <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-extrabold text-[11px]">
+                  +50 XP
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 font-semibold">
+                คุณทำกายภาพบำบัดครบแล้ว! คุณหมอได้เปิดใช้งานมินิเกมฝึกสมองต่อเพื่อกระตุ้นการทำงานของระบบประสาท
+              </p>
+              <button
+                type="button"
+                onClick={onNavigateToMinigame}
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#10B981] to-[#059669] hover:brightness-105 text-white font-black text-sm shadow-md transition flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+              >
+                <span>🎮 ไปต่อ: เล่นมินิเกมฝึกสมองทันที</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
 
           <div className="pt-2">
             <button

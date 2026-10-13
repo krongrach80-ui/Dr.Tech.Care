@@ -578,6 +578,12 @@ export const Screen5MiniGame: React.FC<Screen5MiniGameProps> = ({
             {ratingMsg}
           </p>
 
+          {/* Daily Course Completion Badge */}
+          <div className="w-full max-w-md p-3.5 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-2 border-emerald-300 text-emerald-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 my-2 shadow-sm">
+            <span className="text-xl">🏆</span>
+            <span>คุณทำกายภาพและกิจกรรมเสร็จสิ้นสำหรับวันนี้แล้ว เชิญพักผ่อนได้ครับ</span>
+          </div>
+
           {/* Stars Rating */}
           <div className="flex items-center gap-2 my-4">
             {[1, 2, 3].map((star) => (
