@@ -1,0 +1,111 @@
+{
+  "patient_profile": {
+    "patient_id": "P-0012",
+    "id": 12,
+    "first_name": "สมชาย",
+    "last_name": "ใจดี",
+    "full_name": "นายสมชาย ใจดี",
+    "age": 68,
+    "gender": "male",
+    "contact": "081-998-1122",
+    "phone": "081-998-1122",
+    "email": "somchai.j@gmail.com",
+    "created_at": "2026-02-01",
+    "last_active": "วันนี้ 10:15",
+    "status": "active"
+  },
+  "biometric_data": {
+    "face_vector": [
+      0.0384, 0.0762, 0.1128, 0.1475, 0.1798, 0.2091, 0.2351, 0.2573,
+      0.2755, 0.2893, 0.2987, 0.3034, 0.3034, 0.2987, 0.2893, 0.2755,
+      0.2573, 0.2351, 0.2091, 0.1798, 0.1475, 0.1128, 0.0762, 0.0384,
+      -0.0003, -0.0389, -0.0767, -0.1132, -0.1479, -0.1802, -0.2095, -0.2354,
+      -0.2576, -0.2757, -0.2895, -0.2988, -0.3034, -0.3034, -0.2988, -0.2895,
+      -0.2757, -0.2576, -0.2354, -0.2095, -0.1802, -0.1479, -0.1132, -0.0767,
+      -0.0389, -0.0003, 0.0384, 0.0762, 0.1128, 0.1475, 0.1798, 0.2091,
+      0.2351, 0.2573, 0.2755, 0.2893, 0.2987, 0.3034, 0.3034, 0.2987,
+      0.2893, 0.2755, 0.2573, 0.2351, 0.2091, 0.1798, 0.1475, 0.1128,
+      0.0762, 0.0384, -0.0003, -0.0389, -0.0767, -0.1132, -0.1479, -0.1802,
+      -0.2095, -0.2354, -0.2576, -0.2757, -0.2895, -0.2988, -0.3034, -0.3034,
+      -0.2988, -0.2895, -0.2757, -0.2576, -0.2354, -0.2095, -0.1802, -0.1479,
+      -0.1132, -0.0767, -0.0389, -0.0003, 0.0384, 0.0762, 0.1128, 0.1475,
+      0.1798, 0.2091, 0.2351, 0.2573, 0.2755, 0.2893, 0.2987, 0.3034,
+      0.3034, 0.2987, 0.2893, 0.2755, 0.2573, 0.2351, 0.2091, 0.1798,
+      0.1475, 0.1128, 0.0762, 0.0384, -0.0003, -0.0389, -0.0767, -0.1132
+    ],
+    "registered_face_url": "/uploads/patients/P-0012/profile_face.jpg",
+    "enrolled_at": "2026-02-01T10:00:00.000Z",
+    "model_version": "face-resnet34-v2"
+  },
+  "game_rehab": {
+    "daily_checklists": [
+      {
+        "date": "2026-10-13",
+        "completed_exercises": ["shoulder_raise", "overhead_reach"],
+        "total_reps": 20,
+        "is_completed": true,
+        "last_checked_at": "2026-10-13T10:45:00Z"
+      }
+    ],
+    "rehab_scores": [
+      {
+        "id": "score-001",
+        "timestamp": "2026-10-13T10:40:00Z",
+        "exercise_id": "shoulder_raise",
+        "exercise_name": "กางแขนด้านข้าง (Shoulder Abduction)",
+        "mode": "physio",
+        "score": 94,
+        "max_angle": 88,
+        "target_angle": 90,
+        "reps": 10,
+        "accuracy": 96,
+        "duration_seconds": 130
+      },
+      {
+        "id": "score-002",
+        "timestamp": "2026-10-12T09:15:00Z",
+        "exercise_id": "overhead_reach",
+        "exercise_name": "ยกแขนขึ้นเหนือศีรษะ (Overhead Reach)",
+        "mode": "minigame",
+        "score": 88,
+        "max_angle": 115,
+        "target_angle": 120,
+        "reps": 10,
+        "accuracy": 91,
+        "duration_seconds": 145
+      }
+    ]
+  },
+  "medical_records": {
+    "diagnosis": "ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder - Subacute Phase)",
+    "chief_complaint": "ปวดไหล่ขวาเรื้อรัง ยกแขนไม่สุด ปวดแปลบตอนเอื้อมหยิบของสูงมา 1 เดือน",
+    "medical_history": "ความดันโลหิตสูงเล็กน้อย (ควบคุมได้ดีด้วยยา), ไม่มีประวัติผ่าตัดใหญ่",
+    "treatment_plan": "เน้นเพิ่มองศาการยกแขนด้านข้าง หลีกเลี่ยงการยกกระตุกเร็ว",
+    "progress_notes": "ROM กางแขนข้างลำตัวเพิ่มจาก 65° เป็น 88°, ความปวดลดลงจาก 6/10 เหลือ 2/10",
+    "responsible_therapist": "กภ. ธนากร วงศ์สวัสดิ์",
+    "assigned_exercises": [
+      {
+        "id": "shoulder_raise",
+        "name": "กางแขนด้านข้าง (Shoulder Abduction)",
+        "target_angle": 90,
+        "hold_seconds": 3,
+        "reps": 10
+      },
+      {
+        "id": "overhead_reach",
+        "name": "ยกแขนขึ้นเหนือศีรษะ (Overhead Reach)",
+        "target_angle": 120,
+        "hold_seconds": 3,
+        "reps": 10
+      },
+      {
+        "id": "elbow_flexion",
+        "name": "งอและเหยียดข้อศอก (Elbow Flexion)",
+        "target_angle": 140,
+        "hold_seconds": 2,
+        "reps": 12
+      }
+    ]
+  },
+  "login_history": []
+}
