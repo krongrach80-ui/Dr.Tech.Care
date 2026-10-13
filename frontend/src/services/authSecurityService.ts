@@ -80,13 +80,15 @@ export async function verifyStaffPassword(
 
   const inputHash = await hashPassword(cleanInput);
 
-  // 1. Direct hash match
+  // 1. Direct cryptographic hash match (standard path)
   if (inputHash === storedHashOrPlain) return true;
 
-  // 2. Standard 1234 fallback match
-  if (inputHash === STANDARD_PASSWORD_HASHES['1234']) return true;
+  // 2. Standard legacy fallback match ONLY IF the stored value is still the unmigrated default hash
+  if (storedHashOrPlain === STANDARD_PASSWORD_HASHES['1234'] && cleanInput === '1234') {
+    return true;
+  }
 
-  // 3. Backward compatibility with legacy plain text entry in existing DB
+  // 3. Backward compatibility if stored value is still plain text matching input
   if (cleanInput === storedHashOrPlain) return true;
 
   return false;

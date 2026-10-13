@@ -7,9 +7,10 @@
     "dev": "vite --host",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "node --experimental-websocket ./scripts/runFailSafeSuite.js && node --experimental-websocket ./scripts/testAuthRbac.js",
+    "test": "node --experimental-websocket ./scripts/runFailSafeSuite.js && node --experimental-websocket ./scripts/testAuthRbac.js && node --experimental-websocket ./scripts/testSecurityAndKioskSuite.js",
     "test:failsafe": "node --experimental-websocket ./scripts/runFailSafeSuite.js",
-    "test:rbac": "node --experimental-websocket ./scripts/testAuthRbac.js"
+    "test:rbac": "node --experimental-websocket ./scripts/testAuthRbac.js",
+    "test:security": "node --experimental-websocket ./scripts/testSecurityAndKioskSuite.js"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.14",

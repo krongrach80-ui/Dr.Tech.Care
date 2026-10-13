@@ -85,6 +85,7 @@ const INITIAL_USERS: UserAccount[] = [
     status: 'active',
     code: 'ADM-01',
     password: DEFAULT_PASSWORD_HASH,
+    must_change_password: true,
     phone: '02-555-0199',
     email: 'director@strongcare.hospital',
     created_at: '2026-01-10',
@@ -98,6 +99,7 @@ const INITIAL_USERS: UserAccount[] = [
     status: 'active',
     code: 'T-003',
     password: DEFAULT_PASSWORD_HASH,
+    must_change_password: true,
     phone: '081-456-7890',
     email: 'thanakorn.w@strongcare.hospital',
     created_at: '2026-01-15',
@@ -111,6 +113,7 @@ const INITIAL_USERS: UserAccount[] = [
     status: 'active',
     code: 'T-007',
     password: DEFAULT_PASSWORD_HASH,
+    must_change_password: true,
     phone: '089-765-4321',
     email: 'pimchanok.s@strongcare.hospital',
     created_at: '2026-01-20',
@@ -786,7 +789,13 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       ]);
 
       if (profiles && profiles.length > 0) {
-        set({ users: profiles });
+        const migratedProfiles = profiles.map((p) => {
+          if (!p.password || p.password === DEFAULT_PASSWORD_HASH || p.password.length < 8) {
+            return { ...p, must_change_password: true };
+          }
+          return p;
+        });
+        set({ users: migratedProfiles });
       }
       if (therapists && therapists.length > 0) {
         set({ therapists });
@@ -830,8 +839,9 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
 
     const user = get().users.find((u) => u.username.toLowerCase() === cleanUsername);
 
+    // Generic error to prevent user enumeration attack
     if (!user) {
-      return { success: false, error: 'ไม่พบบัญชีผู้ใช้นี้ในระบบบุคลากร กรุณาตรวจสอบ Username' };
+      return { success: false, error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง' };
     }
 
     if (user.role !== 'admin' && user.role !== 'therapist') {
@@ -848,8 +858,30 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     // Cryptographic verification against stored SHA-256 hash or fallback seeds
     const isMatch = await verifyStaffPassword(cleanPassword, user.password || '');
 
+    // Generic error to prevent user enumeration attack
     if (!isMatch) {
-      return { success: false, error: 'รหัสผ่าน (Password) ไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง' };
+      return { success: false, error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง' };
+    }
+
+    // Policy: Any password with length < 8, or user holding legacy DEFAULT_PASSWORD_HASH,
+    // or user having must_change_password flag set MUST change password immediately.
+    const isWeakPassword = cleanPassword.length < 8 || user.password === DEFAULT_PASSWORD_HASH;
+    const shouldChangePassword = Boolean(user.must_change_password || isWeakPassword);
+
+    if (shouldChangePassword) {
+      if (!user.must_change_password) {
+        set((state) => ({
+          users: state.users.map((u) =>
+            u.id === user.id ? { ...u, must_change_password: true } : u
+          ),
+        }));
+      }
+
+      // Return sanitized user object with must_change_password: true
+      return {
+        success: true,
+        user: { ...user, password: '', temp_password: undefined, must_change_password: true },
+      };
     }
 
     set({
@@ -872,7 +904,10 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       });
     }
 
-    return { success: true, user };
+    return {
+      success: true,
+      user: { ...user, password: '', temp_password: undefined, must_change_password: false },
+    };
   },
 
   logoutStaff: () => {
