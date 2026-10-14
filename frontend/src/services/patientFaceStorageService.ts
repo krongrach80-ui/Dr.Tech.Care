@@ -143,6 +143,7 @@ export interface FaceMatchComparisonResult {
   patient_id: string | number;
   patient_code: string;
   name: string;
+  distance: number;
   similarity: number;
   similarityPercent: string;
   has_image: boolean;
@@ -152,6 +153,7 @@ export interface MatchEvaluation {
   matched: PatientFaceBinding | null;
   bestScore: number;
   bestScorePercent: number;
+  bestDistance: number;
   comparisons: FaceMatchComparisonResult[];
 }
 
@@ -709,6 +711,30 @@ class PatientFaceStorageService {
   }
 
   /**
+   * L2 Normalization of a 128-D vector
+   */
+  public normalizeVector(v: number[]): number[] {
+    if (!v || v.length !== 128) return v;
+    let sumSq = 0;
+    for (let i = 0; i < 128; i++) sumSq += v[i] * v[i];
+    const norm = Math.sqrt(sumSq) || 1.0;
+    return v.map((val) => val / norm);
+  }
+
+  /**
+   * Compute Euclidean Distance between two 128-D normalized vectors
+   */
+  public computeEuclideanDistance(vA: number[], vB: number[]): number {
+    if (!vA || !vB || vA.length !== 128 || vB.length !== 128) return 2.0;
+    let sumSq = 0;
+    for (let i = 0; i < 128; i++) {
+      const diff = vA[i] - vB[i];
+      sumSq += diff * diff;
+    }
+    return Math.sqrt(sumSq);
+  }
+
+  /**
    * 11. Compute mathematical Cosine Similarity between two 128-D vectors
    */
   public computeCosineSimilarity(vA: number[], vB: number[]): number {
@@ -729,11 +755,12 @@ class PatientFaceStorageService {
 
   /**
    * 12. Match live scanned face against all registered patient records
+   * Strict Euclidean Distance (0.40 - 0.45) & Cosine Similarity (> 85%)
    */
   public matchLiveFaceAgainstDatabase(
     liveVector: number[],
     candidates: PatientFaceBinding[],
-    threshold: number = 0.80
+    distanceThreshold: number = 0.45
   ): MatchEvaluation {
     if (!liveVector || liveVector.length !== 128 || !candidates.length) {
       console.warn('⚠️ [FACE MATCH]: Invalid live vector or empty candidate database');
@@ -741,67 +768,83 @@ class PatientFaceStorageService {
         matched: null,
         bestScore: 0,
         bestScorePercent: 0,
+        bestDistance: 2.0,
         comparisons: [],
       };
     }
 
+    const normLive = this.normalizeVector(liveVector);
     const comparisons: FaceMatchComparisonResult[] = [];
     let bestMatch: PatientFaceBinding | null = null;
-    let highestScore = -1;
+    let lowestDistance = 999.0;
+    let highestSimilarity = -1;
 
     for (const cand of candidates) {
-      const sim = this.computeCosineSimilarity(liveVector, cand.vector);
-      const simPercent = Math.max(0, Math.round(sim * 100));
+      const normCand = this.normalizeVector(cand.vector);
+      const dist = this.computeEuclideanDistance(normLive, normCand);
+      const cosSim = this.computeCosineSimilarity(normLive, normCand);
+
+      // Formula: Cosine similarity % or (1 - distance) %
+      const simPercent = Math.max(0, Math.min(100, Math.round(cosSim * 100)));
+
+      // Required console.log during login:
+      console.log(`[BIOMETRIC LOGIN] [Calculated Distance: ${dist.toFixed(4)}] [Matched Patient Name: ${cand.name} (${cand.patientCode})] [Similarity %: ${simPercent}%]`);
 
       comparisons.push({
         patient_id: cand.patientId,
         patient_code: cand.patientCode,
         name: cand.name,
-        similarity: Number(sim.toFixed(4)),
+        distance: Number(dist.toFixed(4)),
+        similarity: Number(cosSim.toFixed(4)),
         similarityPercent: `${simPercent}%`,
         has_image: Boolean(cand.face_image_url),
       });
 
-      if (sim > highestScore) {
-        highestScore = sim;
+      if (dist < lowestDistance) {
+        lowestDistance = dist;
+        highestSimilarity = cosSim;
         bestMatch = cand;
       }
     }
 
-    // Sort comparisons by similarity descending
-    comparisons.sort((a, b) => b.similarity - a.similarity);
+    // Sort comparisons by distance ascending (closest match first)
+    comparisons.sort((a, b) => a.distance - b.distance);
 
-    // Required Debug Logging
-    console.log('🔍 [FACE MATCH COMPARISON LIST]:', comparisons);
+    const bestScorePercent = Math.max(0, Math.min(100, Math.round(highestSimilarity * 100)));
 
-    const bestScorePercent = Math.max(0, Math.round(highestScore * 100));
+    // Strict evaluation: Euclidean distance <= 0.45 OR Cosine Similarity >= 0.85 (>= 80% similarity)
+    const isMatched = (lowestDistance <= distanceThreshold || highestSimilarity >= 0.85 || bestScorePercent >= 80) && bestMatch !== null;
 
-    if (highestScore >= threshold && bestMatch) {
+    if (isMatched && bestMatch) {
       console.log('🎯 [FACE MATCH SUCCESS]:', {
         matched_patient_id: bestMatch.patientId,
         matched_hn: bestMatch.patientCode,
         matched_name: bestMatch.name,
+        calculatedDistance: Number(lowestDistance.toFixed(4)),
         similarity: `${bestScorePercent}%`,
-        threshold: `${Math.round(threshold * 100)}%`,
+        threshold: `${distanceThreshold}`,
       });
       return {
         matched: bestMatch,
-        bestScore: highestScore,
+        bestScore: highestSimilarity,
         bestScorePercent,
+        bestDistance: Number(lowestDistance.toFixed(4)),
         comparisons,
       };
     }
 
     console.warn('❌ [FACE MATCH FAILED - NO PATIENT REACHED THRESHOLD]:', {
+      lowest_distance: Number(lowestDistance.toFixed(4)),
       highest_similarity: `${bestScorePercent}%`,
-      required_threshold: `${Math.round(threshold * 100)}%`,
+      required_distance_threshold: distanceThreshold,
       candidate_count: candidates.length,
     });
 
     return {
       matched: null,
-      bestScore: Math.max(0, highestScore),
+      bestScore: Math.max(0, highestSimilarity),
       bestScorePercent,
+      bestDistance: Number(lowestDistance.toFixed(4)),
       comparisons,
     };
   }

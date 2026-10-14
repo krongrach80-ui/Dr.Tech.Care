@@ -154,6 +154,13 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     upsertPatientFromSupabase,
   } = useHospitalStore();
 
+  // Toast notification
+  const [toast, setToast] = useState<string | null>(null);
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3500);
+  };
+
   // Load from Supabase on mount and listen to Realtime changes
   useEffect(() => {
     // 1. Initial fetch
@@ -198,6 +205,13 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       .on('broadcast', { event: 'patient_update' }, (payload) => {
         console.info('[SUPABASE REALTIME] broadcast patient_update:', payload);
         handleIncomingPatient(payload.payload);
+      })
+      .on('broadcast', { event: 'patient_login' }, (payload) => {
+        console.info('[SUPABASE REALTIME] broadcast patient_login:', payload);
+        const data = payload?.payload;
+        if (data) {
+          showToast(`👤 คนไข้เข้าใช้งานตู้ Kiosk: ${data.name || data.patient_code} (${data.patient_code}) [ความคล้ายคลึง: ${data.similarity || '-'}]`);
+        }
       })
       .subscribe((status, err) => {
         if (err) {
@@ -291,13 +305,6 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       clearInterval(idleChecker);
     };
   }, [isStaffAuthenticated]);
-
-  // Toast notification
-  const [toast, setToast] = useState<string | null>(null);
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3200);
-  };
 
   // Staff Logout Handler
   const handleStaffLogout = () => {

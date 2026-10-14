@@ -100,3 +100,6 @@ begin
   end if;
 end;
 $$;
+
+-- 10. Add face_vector column for 128-D embedding float array
+alter table public.patients add column if not exists face_vector jsonb;

@@ -43,6 +43,7 @@ create table if not exists public.patients (
   pin_hash text,
   chief_complaint text,
   medical_history text,
+  face_vector jsonb,
   treatment_outcome text,
   therapist_notes text,
   responsible_therapist_id uuid references public.profiles(id),
