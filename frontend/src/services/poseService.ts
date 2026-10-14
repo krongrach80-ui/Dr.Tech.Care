@@ -10,6 +10,7 @@ import {
 import { PoseLandmarks, HolisticDetectionResult } from '../types/pose';
 import { LandmarkSmoother } from '../algorithms/smoothing';
 import { asset } from '../utils/asset';
+import { cameraOrientationService } from './cameraOrientationService';
 
 function resolveAssetUrl(relPath: string): string {
   return asset(relPath);
@@ -298,6 +299,8 @@ export class PoseService {
       return null;
     }
 
+    const inputSource: HTMLVideoElement | HTMLCanvasElement = (isVideo ? cameraOrientationService.getUprightCanvas(video) : null) || video;
+
     this.frameCount++;
 
     // 1. Pose detection (Runs every frame for real-time exercise state machine & repetition tracking)
@@ -310,7 +313,7 @@ export class PoseService {
       }
       this.lastPoseTimestamp = poseTime;
 
-      const result: PoseLandmarkerResult = this.landmarker.detectForVideo(video, poseTime);
+      const result: PoseLandmarkerResult = this.landmarker.detectForVideo(inputSource, poseTime);
       if (result && result.landmarks && result.landmarks.length > 0) {
         const rawLandmarks = result.landmarks[0] as PoseLandmarks;
         poseLandmarks = this.smoother.smooth(rawLandmarks, poseTime);
@@ -337,7 +340,7 @@ export class PoseService {
           }
           this.lastHandTimestamp = handTime;
 
-          const handRes: HandLandmarkerResult = this.handLandmarker.detectForVideo(video, handTime);
+          const handRes: HandLandmarkerResult = this.handLandmarker.detectForVideo(inputSource, handTime);
           if (handRes && handRes.landmarks && handRes.landmarks.length > 0) {
             handLandmarks = handRes.landmarks as PoseLandmarks[];
             this.lastHandResult = handLandmarks;
@@ -363,7 +366,7 @@ export class PoseService {
           }
           this.lastFaceTimestamp = faceTime;
 
-          const faceRes: FaceLandmarkerResult = this.faceLandmarker.detectForVideo(video, faceTime);
+          const faceRes: FaceLandmarkerResult = this.faceLandmarker.detectForVideo(inputSource, faceTime);
           if (faceRes && faceRes.faceLandmarks && faceRes.faceLandmarks.length > 0) {
             faceLandmarks = faceRes.faceLandmarks[0] as PoseLandmarks;
             this.lastFaceResult = faceLandmarks;
