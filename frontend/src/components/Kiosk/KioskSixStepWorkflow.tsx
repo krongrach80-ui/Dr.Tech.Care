@@ -59,6 +59,9 @@ import { LivenessScanHUD } from '../Biometrics/LivenessScanHUD';
 import { LivenessFrameData, LivenessChallenge } from '../../types/biometrics';
 import { patientSyncService } from '../../services/patientSyncService';
 import { patientFaceStorageService, PatientFaceBinding } from '../../services/patientFaceStorageService';
+import { asset } from '../../utils/asset';
+import logoImg from '../../assets/logo.png';
+import logoIconImg from '../../assets/logo_icon.png';
 
 // ============================================================================
 // Hook 1: useKioskCountdown
@@ -2335,28 +2338,19 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
               {/* วงแหวนโลโก้และเป้าเล็งใบหน้า */}
               <div
-                className={`w-44 h-44 sm:w-52 sm:h-52 rounded-full border-4 shadow-xl overflow-hidden flex flex-col items-center justify-center relative transform group-hover:scale-105 transition-all duration-300 ${
+                className={`w-44 h-44 sm:w-52 sm:h-52 rounded-full border-4 shadow-xl overflow-hidden flex flex-col items-center justify-center relative transform group-hover:scale-105 transition-all duration-300 p-2 sm:p-3 ${
                   isPersonDetected
-                    ? 'border-emerald-500 bg-gradient-to-b from-[#E8F8F1] via-[#DCF6EB] to-[#B8EDD7] shadow-emerald-500/25 ring-4 ring-emerald-300/40'
-                    : 'border-emerald-300 bg-gradient-to-b from-[#E8FAF3] via-[#DCF6EB] to-[#B8EDD7]'
+                    ? 'border-emerald-500 bg-white shadow-emerald-500/25 ring-4 ring-emerald-300/40'
+                    : 'border-emerald-300 bg-white'
                 }`}
               >
-                {/* SVG Medical & Health Tech Emblem */}
-                <svg className="w-20 h-20 sm:w-24 sm:h-24 text-[#1E8A4C]" viewBox="0 0 100 100" fill="none">
-                  <circle cx="50" cy="50" r="44" stroke="#A7E8CD" strokeWidth="2" strokeDasharray="4 3" />
-                  <rect x="42" y="18" width="16" height="64" rx="8" fill="#1E8A4C" />
-                  <rect x="18" y="42" width="64" height="16" rx="8" fill="#1E8A4C" />
-                  <circle cx="50" cy="50" r="14" fill="#FFFFFF" />
-                  <path d="M38 50 L46 50 L48 42 L52 58 L54 50 L62 50" stroke="#1E8A4C" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
+                <img
+                  src={logoImg}
+                  alt="Dr. Tech Care"
+                  className="w-full h-full object-contain select-none pointer-events-none drop-shadow-xs"
+                />
 
-                <div className="absolute bottom-3.5 inset-x-0 text-center">
-                  <span className="font-extrabold text-[10px] sm:text-[11px] tracking-wider text-[#0B2B2B] uppercase">
-                    SMART REHAB
-                  </span>
-                </div>
-
-                <div className="absolute inset-0 rounded-full border-2 border-white/60 pointer-events-none" />
+                <div className="absolute inset-0 rounded-full border-2 border-emerald-100/50 pointer-events-none" />
               </div>
 
               {/* วงแหวนนับถอยหลังรอบนอก (Circular Progress Ring 3 วินาที) */}
@@ -2964,8 +2958,8 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               {/* 1. Header Bar (Image 2 Top Bar) */}
               <div className="flex items-center justify-between gap-2 pb-2 border-b border-emerald-100 flex-shrink-0">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-10 h-10 rounded-2xl bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-700 shadow-2xs">
-                    <Heart className="w-5 h-5 fill-emerald-600 text-emerald-600" />
+                  <div className="w-10 h-10 rounded-2xl bg-white border border-emerald-300 flex items-center justify-center p-1.5 shadow-2xs overflow-hidden">
+                    <img src={logoIconImg} alt="Dr. Tech Care" className="w-full h-full object-contain" />
                   </div>
                   <div>
                     <h2 className="text-xs sm:text-sm font-black text-[#0B2B2B] tracking-wide">

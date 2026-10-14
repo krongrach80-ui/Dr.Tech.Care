@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { Patient } from '../../types/patient';
 import { TreatmentPlan, PhysicalTherapist } from '../../types/hospital';
+import logoIconImg from '../../assets/logo_icon.png';
 
 interface PatientHomeScreenProps {
   patient: Patient;
@@ -131,8 +132,8 @@ export const PatientHomeScreen: React.FC<PatientHomeScreenProps> = ({
       {/* 1. Header Bar: Date & Logout */}
       <div className="w-full flex items-center justify-between pb-3 border-b border-emerald-200">
         <div className="flex items-center gap-2">
-          <div className="w-10 h-10 rounded-full bg-emerald-100 border border-emerald-400 flex items-center justify-center text-[#1E8A4C]">
-            <HeartPulse className="w-5 h-5" />
+          <div className="w-10 h-10 rounded-full bg-white border border-emerald-300 flex items-center justify-center p-1 overflow-hidden shadow-2xs">
+            <img src={logoIconImg} alt="Dr. Tech Care" className="w-full h-full object-contain" />
           </div>
           <div>
             <div className="text-[11px] font-black text-emerald-800 tracking-wide uppercase">
