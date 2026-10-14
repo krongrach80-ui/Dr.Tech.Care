@@ -101,5 +101,7 @@ begin
 end;
 $$;
 
--- 10. Add face_vector column for 128-D embedding float array
+-- 10. Add face_vector and face_image_url columns for isolated 128-D embedding float array & photo URL
 alter table public.patients add column if not exists face_vector jsonb;
+alter table public.patients add column if not exists face_image_url text;
+alter table public.patients add column if not exists photo text;

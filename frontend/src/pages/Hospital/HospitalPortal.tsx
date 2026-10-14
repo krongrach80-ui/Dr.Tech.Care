@@ -71,6 +71,7 @@ import { EditTreatmentPlanModal } from '../../components/Hospital/EditTreatmentP
 import { NetworkSyncModal } from '../../components/Hospital/NetworkSyncModal';
 import { PatientFaceEnrollModal } from '../../components/Hospital/PatientFaceEnrollModal';
 import { patientFaceStorageService } from '../../services/patientFaceStorageService';
+import { faceRegistryService } from '../../services/faceRegistryService';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 
 const THAI_MONTH_NAMES = [
@@ -509,13 +510,65 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   // Add User Modal State
   const [isAddUserModalOpen, setIsAddUserModalOpen] = useState<boolean>(false);
 
-  const handleAddUser = (
+  const handleAddUser = async (
     userData: Omit<UserAccount, 'id' | 'created_at'>,
     therapistExtra?: Omit<PhysicalTherapist, 'id'>
   ) => {
-    addUser(userData);
+    const createdUser = addUser(userData);
     if (therapistExtra) {
       addTherapist(therapistExtra);
+    }
+
+    if (userData.role === 'patient') {
+      const code = createdUser.code || userData.code || `P-${Math.floor(1000 + Math.random() * 9000)}`;
+      patientFaceStorageService.savePatientRecord(code, {
+        patient_profile: {
+          patient_id: code,
+          id: createdUser.id,
+          full_name: userData.name.trim(),
+          first_name: userData.name.trim().split(' ')[0] || userData.name.trim(),
+          last_name: userData.name.trim().split(' ').slice(1).join(' ') || '',
+          age: Number(userData.age) || 65,
+          gender: userData.gender || 'male',
+          contact: userData.phone?.trim(),
+          phone: userData.phone?.trim(),
+          status: 'active',
+        },
+        medical_records: {
+          diagnosis: userData.chiefComplaint || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
+          chief_complaint: userData.chiefComplaint,
+          treatment_plan: userData.patientBackground,
+        },
+      });
+
+      try {
+        await supabase.from('patients').upsert({
+          patient_code: code,
+          full_name: userData.name.trim(),
+          age: Number(userData.age) || 65,
+          gender: userData.gender || 'male',
+          phone: userData.phone?.trim() || null,
+          chief_complaint: userData.chiefComplaint || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
+          medical_history: userData.patientBackground || 'ลงทะเบียนผู้ป่วยใหม่ผ่านระบบแอดมิน',
+          status: 'active',
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'patient_code' });
+
+        await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
+          type: 'broadcast',
+          event: 'new_patient',
+          payload: {
+            patient_code: code,
+            full_name: userData.name.trim(),
+            name: userData.name.trim(),
+            age: Number(userData.age) || 65,
+            gender: userData.gender,
+            status: 'active',
+          },
+        });
+      } catch (sbErr) {
+        console.warn('[SUPABASE] handleAddUser sync error:', sbErr);
+      }
     }
   };
 
@@ -4942,13 +4995,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
           }
 
           // Direct Supabase Update & Cross-Device Broadcast to Kiosk
-          const targetCode = patientDetailModal?.code || (typeof patientId === 'string' && patientId.startsWith('P-') ? patientId : undefined);
+          const targetUser = users.find((u) => String(u.id) === String(patientId)) || patientDetailModal;
+          const targetCode = targetUser?.code || (targetUser as any)?.patient_code || (data as any)?.code || (data as any)?.patient_code || patientDetailModal?.code || (typeof patientId === 'string' && patientId.startsWith('P-') ? patientId : undefined);
           if (targetCode) {
             try {
               // 1. Fetch current row to preserve biometric face vectors/photos
               const { data: curDbPatient } = await supabase
                 .from('patients')
-                .select('medical_history')
+                .select('*')
                 .eq('patient_code', targetCode)
                 .maybeSingle();
 
@@ -4968,8 +5022,12 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                 }
               }
 
-              // 2. Direct Supabase Update
-              await supabase.from('patients').update({
+              const preservedVector = curDbPatient?.face_vector || (targetUser as any)?.face_vector || (targetUser as any)?.biometricVector;
+              const preservedPhoto = curDbPatient?.photo || curDbPatient?.avatar_url || (targetUser as any)?.face_image_url || patientFaceStorageService.getProfileFaceImage(targetCode);
+
+              // 2. Direct Supabase Upsert
+              await supabase.from('patients').upsert({
+                patient_code: targetCode,
                 full_name: data.name?.trim(),
                 age: Number(data.age) || 65,
                 gender: data.gender || 'male',
@@ -4978,9 +5036,44 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                 medical_history: medHist,
                 therapist_notes: cleanNotes,
                 status: 'active',
-              }).eq('patient_code', targetCode);
+                face_vector: preservedVector,
+                photo: preservedPhoto,
+                face_image_url: preservedPhoto,
+                updated_at: new Date().toISOString(),
+              }, { onConflict: 'patient_code' });
 
-              // 3. Multi-event Realtime Broadcast to Kiosk (across devices)
+              // 3. Update isolated local dossier in patientFaceStorageService
+              patientFaceStorageService.savePatientRecord(targetCode, {
+                patient_profile: {
+                  patient_id: targetCode,
+                  id: patientId,
+                  full_name: data.name?.trim(),
+                  first_name: data.name?.trim().split(' ')[0] || data.name?.trim(),
+                  last_name: data.name?.trim().split(' ').slice(1).join(' ') || '',
+                  age: Number(data.age) || 65,
+                  gender: data.gender || 'male',
+                  contact: data.phone?.trim() || undefined,
+                  phone: data.phone?.trim() || undefined,
+                  status: 'active',
+                },
+                medical_records: {
+                  diagnosis: cleanComplaint,
+                  chief_complaint: cleanComplaint,
+                  treatment_plan: data.patientBackground?.trim() || undefined,
+                  progress_notes: cleanNotes,
+                },
+              });
+
+              // 4. Update Face Registry profile name
+              const regProf = faceRegistryService.getAllProfiles().find((p: any) => p.patientCode && p.patientCode.toUpperCase() === targetCode.toUpperCase());
+              if (regProf) {
+                faceRegistryService.saveProfile({
+                  ...regProf,
+                  name: data.name?.trim() || regProf.name,
+                });
+              }
+
+              // 5. Multi-event Realtime Broadcast to Kiosk (across devices)
               const broadcastPayload = {
                 patient_code: targetCode,
                 full_name: data.name?.trim(),
@@ -4991,6 +5084,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                 chief_complaint: cleanComplaint,
                 status: 'active',
                 isCompleted: true,
+                face_image_url: preservedPhoto,
               };
 
               await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({

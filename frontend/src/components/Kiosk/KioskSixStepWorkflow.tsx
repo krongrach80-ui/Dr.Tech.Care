@@ -1048,6 +1048,9 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             medical_history: medHistory,
             therapist_notes: 'ลงทะเบียนข้อมูลครบถ้วน',
             status: 'active',
+            face_vector: faceVec,
+            photo: faceImg,
+            face_image_url: faceImg,
           }, { onConflict: 'patient_code' })
           .select();
 
@@ -1069,6 +1072,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 chief_complaint: patientComplaint,
                 status: 'active',
                 face_image_url: faceImg,
+                face_vector: faceVec,
               },
             });
           } catch (broadcastErr) {
@@ -1094,6 +1098,12 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           status: 'active',
           created_at: new Date().toISOString().split('T')[0],
         },
+        biometric_data: {
+          face_vector: faceVec && Array.isArray(faceVec) ? faceVec : [],
+          registered_face_url: faceImg || `/uploads/patients/${pendingEnrolledUser.code}/profile_face.jpg`,
+          enrolled_at: new Date().toISOString(),
+          model_version: 'face-resnet34-v2',
+        },
         medical_records: {
           diagnosis: patientComplaint,
           chief_complaint: patientComplaint,
@@ -1103,6 +1113,25 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             { id: 'elbow_flexion', name: 'งอและเหยียดข้อศอก (Elbow Flexion)', target_angle: 140, hold_seconds: 2, reps: 12 },
           ],
         },
+      }, faceImg);
+
+      // Save to Face Registry Service
+      faceRegistryService.saveProfile({
+        patientId: Number(pendingEnrolledUser.id),
+        patientCode: patientCode,
+        name: fullPatientName,
+        age: patientAge,
+        gender: kioskFormGender,
+        embeddings: faceVec && Array.isArray(faceVec) ? [faceVec] : [],
+        face_image_url: faceImg || undefined,
+        enrolledAt: new Date().toISOString(),
+      });
+
+      // [CONSOLE LOGS & DEBUGGING]: Log patient_id, saved face_image_url, and vector length upon successful registration
+      console.log('[REGISTRATION] Success:', {
+        patient_id: patientCode,
+        saved_face_image_url: faceImg,
+        vector_length: faceVec && Array.isArray(faceVec) ? faceVec.length : 0,
       });
 
       const updated = completePendingPatientInfo(pendingEnrolledUser.id, {
@@ -1128,10 +1157,17 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         status: 'active',
         diagnosis: patientComplaint,
         chief_complaint: patientComplaint,
+        face_vector: faceVec,
+        image_data_url: faceImg,
       }).catch(() => {});
 
       if (updated) {
-        handleRegistrationCompleted(updated);
+        handleRegistrationCompleted({
+          ...updated,
+          face_vector: Array.isArray(faceVec) ? faceVec : undefined,
+          biometricVector: Array.isArray(faceVec) ? faceVec : undefined,
+          face_image_url: faceImg || undefined,
+        });
       }
     } catch (err) {
       console.error('Kiosk form submit error:', err);
@@ -1513,24 +1549,17 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               if (!p.patient_code) continue;
               const code = p.patient_code.toUpperCase();
 
-              // Extract 128-d vector from face_vector or medical_history
-              let vec128: number[] | null = null;
-              if (p.face_vector && Array.isArray(p.face_vector) && p.face_vector.length === 128) {
-                vec128 = p.face_vector;
-              } else if (typeof p.medical_history === 'string' && p.medical_history.includes('FACE_EMB:')) {
+              // Extract 128-d vector using robust parseVector
+              let vec128: number[] | null = patientFaceStorageService.parseVector(p.face_vector);
+              if (!vec128 && typeof p.medical_history === 'string' && p.medical_history.includes('FACE_EMB:')) {
                 const match = p.medical_history.match(/FACE_EMB:(\[.*?\])/);
                 if (match) {
-                  try {
-                    const parsed = JSON.parse(match[1]);
-                    if (Array.isArray(parsed) && parsed.length === 128) {
-                      vec128 = parsed;
-                    }
-                  } catch {}
+                  vec128 = patientFaceStorageService.parseVector(match[1]);
                 }
               }
 
               if (vec128) {
-                let photo = p.photo || p.avatar_url;
+                let photo = p.photo || p.avatar_url || p.face_image_url;
                 if (!photo && typeof p.medical_history === 'string' && p.medical_history.includes('FACE_PHOTO:')) {
                   const pMatch = p.medical_history.match(/FACE_PHOTO:(data:image\/[^\s\n]+)/);
                   if (pMatch) photo = pMatch[1];
@@ -1554,7 +1583,39 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           console.warn('[KIOSK] Supabase candidates fetch warning:', fetchErr);
         }
 
-        // 2. Scan users in hospitalStore
+        // 2. Scan patientFaceStorageService local isolated records
+        const localRecords = patientFaceStorageService.getAllPatientRecords();
+        localRecords.forEach((r) => {
+          const code = r.patient_profile.patient_id.toUpperCase();
+          const parsed = patientFaceStorageService.parseVector(r.biometric_data.face_vector);
+          if (parsed) {
+            const savedImg =
+              r.biometric_data.registered_face_url ||
+              patientFaceStorageService.getProfileFaceImage(code);
+
+            if (!candidateMap.has(code)) {
+              candidateMap.set(code, {
+                patientId: r.patient_profile.id,
+                patientCode: r.patient_profile.patient_id,
+                name: r.patient_profile.full_name,
+                vector: parsed,
+                face_image_url: savedImg || undefined,
+                age: r.patient_profile.age,
+                gender: r.patient_profile.gender,
+                diagnosis: r.medical_records.diagnosis,
+                status: r.patient_profile.status,
+              });
+            } else {
+              // If already in map with placeholder name, prioritize real name from dossier
+              const existing = candidateMap.get(code)!;
+              if (existing.name.startsWith('ผู้รับบริการใหม่') && !r.patient_profile.full_name.startsWith('ผู้รับบริการใหม่')) {
+                existing.name = r.patient_profile.full_name;
+              }
+            }
+          }
+        });
+
+        // 3. Scan users in hospitalStore
         users.forEach((u) => {
           if (u.role === 'patient') {
             const rawVec = u.face_vector || u.biometricVector;
@@ -1578,12 +1639,18 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   diagnosis: u.diagnosis || u.chiefComplaint,
                   status: u.status,
                 });
+              } else {
+                // If candidate has placeholder name, update with real name from store
+                const existing = candidateMap.get(code)!;
+                if (existing.name.startsWith('ผู้รับบริการใหม่') && u.name && !u.name.startsWith('ผู้รับบริการใหม่')) {
+                  existing.name = u.name;
+                }
               }
             }
           }
         });
 
-        // 3. Scan faceRegistryService profiles
+        // 4. Scan faceRegistryService profiles
         const registryProfiles = faceRegistryService.getAllProfiles();
         registryProfiles.forEach((p) => {
           if (!p.patientCode) return;
@@ -1609,66 +1676,135 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
         const candidates = Array.from(candidateMap.values());
 
-        // b & c) Strict Euclidean Distance (0.40 - 0.45) & Cosine Similarity (> 85%) Matching
-        const evaluation = patientFaceStorageService.matchLiveFaceAgainstDatabase(vector128, candidates, 0.45);
+        // b & c) Cosine Similarity (threshold >= 80% / 0.80) Matching Logic
+        const evaluation = patientFaceStorageService.matchLiveFaceAgainstDatabase(vector128, candidates, 0.80);
 
         // Required Console Logging
-        console.log('[BIOMETRIC LOGIN MATCH]:', {
+        console.log('[BIOMETRIC LOGIN MATCH RESULT]:', {
           calculatedDistance: evaluation.bestDistance,
           matchedPatientName: evaluation.matched?.name || 'None',
           matchedHN: evaluation.matched?.patientCode || 'None',
           similarity: `${evaluation.bestScorePercent}%`,
-          isPassed: Boolean(evaluation.matched),
+          isPassed: Boolean(evaluation.matched && evaluation.bestScorePercent >= 80),
         });
 
-        // d) If matched successfully (Strict: Distance <= 0.45 AND Cosine Similarity >= 88%):
-        if (evaluation.matched && evaluation.bestDistance <= 0.45 && evaluation.bestScore >= 0.88) {
+        // d) If matched successfully (Cosine Similarity >= 80%):
+        if (evaluation.matched && evaluation.bestScorePercent >= 80) {
           const matchedCandidate = evaluation.matched;
+          const targetHN = matchedCandidate.patientCode;
+
+          // [DATA FETCHING]: Fetch fresh exact patient row from Supabase Cloud to avoid placeholders
+          let dbExactPatient: any = null;
+          try {
+            const { data: exactRow } = await supabase
+              .from('patients')
+              .select('*')
+              .eq('patient_code', targetHN)
+              .maybeSingle();
+            if (exactRow) {
+              dbExactPatient = exactRow;
+            }
+          } catch (fetchErr) {
+            console.warn('[KIOSK] Supabase exact patient fetch error:', fetchErr);
+          }
+
           const matchedUser = users.find(
             (u) =>
-              (u.code && u.code.toLowerCase() === matchedCandidate.patientCode.toLowerCase()) ||
+              (u.code && u.code.toLowerCase() === targetHN.toLowerCase()) ||
               String(u.id) === String(matchedCandidate.patientId)
           );
 
           const matchedPatientRecord = patients.find(
             (p) =>
-              (p.patient_code && p.patient_code.toLowerCase() === matchedCandidate.patientCode.toLowerCase()) ||
+              (p.patient_code && p.patient_code.toLowerCase() === targetHN.toLowerCase()) ||
               String(p.id) === String(matchedCandidate.patientId)
           );
 
-          const realHN = matchedCandidate.patientCode || matchedUser?.code || matchedPatientRecord?.patient_code || 'P-0000';
-          let realName = matchedCandidate.name || matchedUser?.name || matchedPatientRecord?.name || `ผู้รับบริการ (${realHN})`;
-          if (realName.startsWith('ผู้รับบริการใหม่') && matchedUser?.name && !matchedUser.name.startsWith('ผู้รับบริการใหม่')) {
-            realName = matchedUser.name;
+          // [ISOLATED PATIENT STORAGE]: Retrieve complete dossier from patient_record.json
+          const patientDossier = patientFaceStorageService.getPatientRecord(targetHN);
+
+          // [DATA FETCHING & RESOLUTION]: Resolve real First Name and Surname, never placeholder
+          let realName = '';
+          // 1. Check Supabase full_name
+          if (dbExactPatient?.full_name && !dbExactPatient.full_name.startsWith('ผู้รับบริการใหม่') && !dbExactPatient.full_name.includes('รอลงข้อมูล')) {
+            realName = dbExactPatient.full_name.trim();
+          }
+          // 2. Check hospitalStore user name
+          if (!realName && matchedUser?.name && !matchedUser.name.startsWith('ผู้รับบริการใหม่') && !matchedUser.name.includes('รอลงข้อมูล')) {
+            realName = matchedUser.name.trim();
+          }
+          // 3. Check isolated patient dossier
+          if (!realName && patientDossier?.patient_profile?.full_name && !patientDossier.patient_profile.full_name.startsWith('ผู้รับบริการใหม่')) {
+            realName = patientDossier.patient_profile.full_name.trim();
+          }
+          if (!realName && patientDossier?.patient_profile?.first_name && !patientDossier.patient_profile.first_name.startsWith('ผู้รับบริการใหม่') && patientDossier.patient_profile.first_name !== 'ผู้รับบริการ') {
+            realName = `${patientDossier.patient_profile.first_name} ${patientDossier.patient_profile.last_name || ''}`.trim();
+          }
+          // 4. Check matchedPatientRecord
+          if (!realName && matchedPatientRecord?.name && !matchedPatientRecord.name.startsWith('ผู้รับบริการใหม่')) {
+            realName = matchedPatientRecord.name.trim();
+          }
+          // 5. Match by phone if linked
+          if (!realName && dbExactPatient?.phone) {
+            const byPhone = users.find((u) => u.phone && u.phone === dbExactPatient.phone && !u.name.startsWith('ผู้รับบริการใหม่'));
+            if (byPhone) realName = byPhone.name.trim();
+          }
+          // 6. Look up in users by code
+          if (!realName) {
+            const userByCode = users.find((u) => u.code && u.code.toLowerCase() === targetHN.toLowerCase() && !u.name.startsWith('ผู้รับบริการใหม่') && !u.name.includes('รอลงข้อมูล'));
+            if (userByCode) realName = userByCode.name.trim();
+          }
+          // 7. Look up in faceRegistryService
+          if (!realName) {
+            const regProf = faceRegistryService.getAllProfiles().find((p) => p.patientCode.toLowerCase() === targetHN.toLowerCase() && !p.name.startsWith('ผู้รับบริการใหม่') && !p.name.includes('รอลงข้อมูล'));
+            if (regProf) realName = regProf.name.trim();
+          }
+          // Fallback if no real name was ever entered anywhere: never show "ผู้รับบริการใหม่" if a face match was confirmed
+          if (!realName) {
+            const candName = dbExactPatient?.full_name || matchedCandidate.name || matchedUser?.name || '';
+            if (candName && !candName.startsWith('ผู้รับบริการใหม่') && !candName.includes('รอลงข้อมูล')) {
+              realName = candName.trim();
+            } else {
+              realName = `ผู้รับบริการ (${targetHN})`;
+            }
           }
 
-          const realAge = matchedUser?.age || matchedPatientRecord?.age || matchedCandidate.age || 68;
-          const realGender = (matchedUser?.gender || matchedPatientRecord?.gender || matchedCandidate.gender || 'male') as any;
-          const realDiagnosis =
-            matchedUser?.diagnosis ||
-            matchedUser?.chiefComplaint ||
-            matchedPatientRecord?.notes ||
+          const realAge = Number(dbExactPatient?.age || matchedUser?.age || patientDossier?.patient_profile?.age || matchedCandidate.age || 65);
+          const realGender = (dbExactPatient?.gender || matchedUser?.gender || patientDossier?.patient_profile?.gender || matchedCandidate.gender || 'male') as any;
+          
+          let realDiagnosis =
+            (dbExactPatient?.chief_complaint || '')
+              .replace(/\[PENDING_INFO\]/g, '')
+              .replace(/รอลงข้อมูลส่วนตัว/g, '')
+              .trim() ||
+            (matchedUser?.diagnosis || matchedUser?.chiefComplaint || '')
+              .replace(/\[PENDING_INFO\]/g, '')
+              .trim() ||
+            patientDossier?.medical_records?.diagnosis ||
             matchedCandidate.diagnosis ||
             'ตรวจประเมินกายภาพบำบัด';
 
-          // [ISOLATED PATIENT STORAGE]: Retrieve complete dossier from patient_record.json
-          const patientDossier = patientFaceStorageService.getPatientRecord(realHN);
+          if (realDiagnosis.includes('ยืนยันอัตลักษณ์ชีวมิติ') || realDiagnosis.includes('Cosine Match')) {
+            realDiagnosis = 'ตรวจประเมินกายภาพบำบัด';
+          }
 
           // [LOGIN HISTORY]: Save snapshot image taken during login verification into login_history/
           if (liveJpg) {
-            patientFaceStorageService.saveLoginSnapshot(realHN, liveJpg, evaluation.bestScore);
+            patientFaceStorageService.saveLoginSnapshot(targetHN, liveJpg, evaluation.bestScore);
           }
 
           const faceImg =
-            patientFaceStorageService.getProfileFaceImage(realHN) ||
+            patientFaceStorageService.getProfileFaceImage(targetHN) ||
+            dbExactPatient?.photo ||
+            dbExactPatient?.avatar_url ||
             matchedCandidate.face_image_url ||
             matchedUser?.face_image_url ||
             matchedPatientRecord?.face_image_url ||
-            `/uploads/patients/${realHN}/profile_face.jpg`;
+            `/uploads/patients/${targetHN}/profile_face.jpg`;
 
           const targetPatient: Patient = {
-            id: matchedUser ? Number(matchedUser.id) : (matchedPatientRecord ? Number(matchedPatientRecord.id) : Number(matchedCandidate.patientId)),
-            patient_code: realHN,
+            id: dbExactPatient?.id || (matchedUser ? Number(matchedUser.id) : (matchedPatientRecord ? Number(matchedPatientRecord.id) : Number(matchedCandidate.patientId))),
+            patient_code: targetHN,
             name: realName,
             age: realAge,
             gender: realGender,
@@ -1680,7 +1816,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           // Fetch treatment plan or load assigned_exercises directly from isolated patient_record.json
           let exactPlan = treatmentPlans.find(
             (plan) =>
-              (plan.patientCode && plan.patientCode.toLowerCase() === realHN.toLowerCase()) ||
+              (plan.patientCode && plan.patientCode.toLowerCase() === targetHN.toLowerCase()) ||
               (plan.patientId && String(plan.patientId) === String(targetPatient.id)) ||
               (plan.patientName && realName.includes(plan.patientName))
           );
@@ -1739,7 +1875,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               type: 'broadcast',
               event: 'patient_login',
               payload: {
-                patient_code: realHN,
+                patient_code: targetHN,
                 name: realName,
                 distance: evaluation.bestDistance,
                 similarity: `${matchPercent}%`,
@@ -1755,7 +1891,8 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           }, 1200);
           biometricTimersRef.current.push(t4);
         } else {
-          // [NO MATCH FOUND - DISTANCE > 0.45]:
+          // [NO MATCH FOUND - SIMILARITY < 80%]:
+          // Strict: Do NOT proceed to login. Display warning modal with redirection to registration.
           setIsScanning(false);
           setBiometricPhase(0);
           setBiometricProgress(0);
@@ -1789,6 +1926,9 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         const autoCode = `P-${randNum}`;
         const autoName = `ผู้รับบริการใหม่ (${autoCode})`;
         const newTime = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+        const timestamp = Date.now();
+        const photoFileName = `face_${autoCode}_${timestamp}.jpg`;
+        const facePhotoUrl = liveJpg || `/uploads/faces/${photoFileName}`;
 
         // 1. Create dedicated isolated directory: /public/uploads/patients/{patient_id}/
         patientFaceStorageService.createPatientDirectory(autoCode);
@@ -1810,7 +1950,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             },
             biometric_data: {
               face_vector: finalVector128,
-              registered_face_url: `/uploads/patients/${autoCode}/profile_face.jpg`,
+              registered_face_url: facePhotoUrl,
               enrolled_at: new Date().toISOString(),
               model_version: 'face-resnet34-v2',
             },
@@ -1826,6 +1966,13 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           liveJpg
         );
 
+        // [CONSOLE LOGS & DEBUGGING]: Log patient_id, saved face_image_url, and vector length upon successful registration
+        console.log('[REGISTRATION] Success:', {
+          patient_id: autoCode,
+          saved_face_image_url: facePhotoUrl,
+          vector_length: finalVector128.length,
+        });
+
         const createdUser = addUser({
           username: `kiosk_${autoCode.toLowerCase()}`,
           name: autoName,
@@ -1837,7 +1984,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           pendingInfoNote: 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว',
           biometricVector: finalVector128,
           face_vector: finalVector128,
-          face_image_url: liveJpg || savedRecord.biometric_data.registered_face_url,
+          face_image_url: facePhotoUrl,
           faceRegisteredAt: newTime,
         });
 
@@ -1860,7 +2007,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           age: 65,
           gender: 'male',
           embeddings: [finalVector128],
-          face_image_url: liveJpg || savedRecord.biometric_data.registered_face_url,
+          face_image_url: facePhotoUrl,
           enrolledAt: new Date().toISOString(),
         });
 
@@ -1877,7 +2024,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           status: 'pending_info',
           pendingInfoNote: 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว',
           face_vector: finalVector128,
-          image_data_url: liveJpg || savedRecord.biometric_data.registered_face_url,
+          image_data_url: facePhotoUrl,
           diagnosis: 'รอตรวจประเมินกายภาพบำบัด',
           chief_complaint: 'รอตรวจประเมินกายภาพบำบัด',
           created_at: new Date().toISOString().split('T')[0],
@@ -1888,7 +2035,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         // [SUPABASE IMMEDIATE SYNC]: Insert pending patient record so Admin Dashboard sees it instantly
         (async () => {
           try {
-            const facePhoto = liveJpg || savedRecord.biometric_data.registered_face_url;
+            const facePhoto = facePhotoUrl;
             let medHist = '[PENDING_INFO] รอลงข้อมูลส่วนตัว';
             if (finalVector128 && Array.isArray(finalVector128)) {
               medHist += `\nFACE_EMB:${JSON.stringify(finalVector128)}`;
@@ -1907,6 +2054,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               therapist_notes: '[PENDING_INFO] บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว',
               status: 'active',
               face_vector: finalVector128,
+              photo: facePhoto,
             }, { onConflict: 'patient_code' }).select();
 
             if (error) {
@@ -1925,6 +2073,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                     status: 'pending_info',
                     face_image_url: facePhoto,
                     chief_complaint: 'รอลงข้อมูลส่วนตัว',
+                    face_vector: finalVector128,
                   },
                 });
               } catch {}

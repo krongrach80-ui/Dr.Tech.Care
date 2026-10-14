@@ -650,8 +650,9 @@ class PatientFaceStorageService {
     imageDataUrl: string | null
   ): { face_image_url: string; imageFileName: string } {
     const code = this.normalizePatientId(patientCode || patientId);
-    const dirPath = this.getPatientDirPath(code);
-    const profileFacePath = `${dirPath}profile_face.jpg`;
+    const timestamp = Date.now();
+    const imageFileName = `face_${code}_${timestamp}.jpg`;
+    const profileFacePath = `/uploads/faces/${imageFileName}`;
 
     const record = this.savePatientRecord(
       code,
@@ -677,9 +678,18 @@ class PatientFaceStorageService {
       imageDataUrl
     );
 
+    const savedImgUrl = imageDataUrl || record.biometric_data.registered_face_url || profileFacePath;
+
+    // [CONSOLE LOGS & DEBUGGING]: Log patient_id, saved face_image_url, and vector length upon successful registration
+    console.log('[REGISTRATION] Success:', {
+      patient_id: code,
+      saved_face_image_url: savedImgUrl,
+      vector_length: vector.length,
+    });
+
     return {
-      face_image_url: imageDataUrl || record.biometric_data.registered_face_url || profileFacePath,
-      imageFileName: 'profile_face.jpg',
+      face_image_url: savedImgUrl,
+      imageFileName,
     };
   }
 
@@ -688,24 +698,23 @@ class PatientFaceStorageService {
    */
   public parseVector(raw: any): number[] | null {
     if (!raw) return null;
-    if (Array.isArray(raw)) {
-      const flat = raw.length === 1 && Array.isArray(raw[0]) ? raw[0] : raw;
-      const nums = flat.map(Number);
-      if (nums.length === 128 && nums.every((n) => !isNaN(n))) {
-        return nums;
-      }
-    }
-    if (typeof raw === 'string') {
+    let data = raw;
+    if (typeof data === 'string') {
       try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          const flat = parsed.length === 1 && Array.isArray(parsed[0]) ? parsed[0] : parsed;
-          const nums = flat.map(Number);
-          if (nums.length === 128 && nums.every((n) => !isNaN(n))) {
-            return nums;
-          }
-        }
+        data = JSON.parse(data);
       } catch {}
+    }
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      if (Array.isArray(data.face_vector)) data = data.face_vector;
+      else if (Array.isArray(data.vector)) data = data.vector;
+      else if (Array.isArray(data.embeddings?.[0])) data = data.embeddings[0];
+    }
+    if (Array.isArray(data)) {
+      const flat = data.length === 1 && Array.isArray(data[0]) ? data[0] : data;
+      const nums = flat.map(Number);
+      if (nums.length === 128 && nums.every((n) => !isNaN(n) && isFinite(n))) {
+        return this.normalizeVector(nums);
+      }
     }
     return null;
   }
@@ -755,12 +764,12 @@ class PatientFaceStorageService {
 
   /**
    * 12. Match live scanned face against all registered patient records
-   * Strict Euclidean Distance (0.40 - 0.45) & Cosine Similarity (> 85%)
+   * Strict Cosine Similarity >= 80% (0.80)
    */
   public matchLiveFaceAgainstDatabase(
     liveVector: number[],
     candidates: PatientFaceBinding[],
-    distanceThreshold: number = 0.45
+    similarityThreshold: number = 0.80
   ): MatchEvaluation {
     if (!liveVector || liveVector.length !== 128 || !candidates.length) {
       console.warn('⚠️ [FACE MATCH]: Invalid live vector or empty candidate database');
@@ -783,12 +792,10 @@ class PatientFaceStorageService {
       const normCand = this.normalizeVector(cand.vector);
       const dist = this.computeEuclideanDistance(normLive, normCand);
       const cosSim = this.computeCosineSimilarity(normLive, normCand);
-
-      // Formula: Cosine similarity % or (1 - distance) %
       const simPercent = Math.max(0, Math.min(100, Math.round(cosSim * 100)));
 
       // Required console.log during login:
-      console.log(`[BIOMETRIC LOGIN] [Calculated Distance: ${dist.toFixed(4)}] [Matched Patient Name: ${cand.name} (${cand.patientCode})] [Similarity %: ${simPercent}%]`);
+      console.log(`[BIOMETRIC LOGIN] Comparing with [HN: ${cand.patientCode}] [Name: ${cand.name}] -> Distance: ${dist.toFixed(4)}, Similarity: ${simPercent}%`);
 
       comparisons.push({
         patient_id: cand.patientId,
@@ -800,53 +807,86 @@ class PatientFaceStorageService {
         has_image: Boolean(cand.face_image_url),
       });
 
-      if (dist < lowestDistance) {
-        lowestDistance = dist;
+      if (cosSim > highestSimilarity) {
         highestSimilarity = cosSim;
+        lowestDistance = dist;
         bestMatch = cand;
       }
     }
 
-    // Sort comparisons by distance ascending (closest match first)
-    comparisons.sort((a, b) => a.distance - b.distance);
+    // Sort comparisons by highest similarity first
+    comparisons.sort((a, b) => b.similarity - a.similarity);
 
-    const bestScorePercent = Math.max(0, Math.min(100, Math.round(highestSimilarity * 100)));
+    // [CONSOLE LOGS & DEBUGGING]: Log the list of compared patients and resulting similarity percentage scores
+    console.log('[BIOMETRIC LOGIN] Candidate Comparisons Table:');
+    console.table(
+      comparisons.map((c) => ({
+        HN: c.patient_code,
+        Name: c.name,
+        Distance: c.distance,
+        CosineSimilarity: c.similarity,
+        SimilarityPercent: c.similarityPercent,
+      }))
+    );
 
-    // Strict evaluation: Must satisfy BOTH low Euclidean distance (<= 0.45) AND high Cosine Similarity (>= 0.88)
-    // Under NO circumstances should distance > 0.45 or similarity < 0.88 match someone else!
-    const isStrictDistanceValid = lowestDistance <= distanceThreshold;
-    const isStrictSimilarityValid = highestSimilarity >= 0.88;
-    const isMatched = isStrictDistanceValid && isStrictSimilarityValid && bestMatch !== null;
+    // Filter valid matches meeting threshold (>= 80% / 0.80)
+    const validMatches = comparisons.filter((c) => c.similarity >= similarityThreshold);
 
-    if (isMatched && bestMatch) {
-      console.log('🎯 [FACE MATCH SUCCESS]:', {
-        matched_patient_id: bestMatch.patientId,
-        matched_hn: bestMatch.patientCode,
-        matched_name: bestMatch.name,
-        calculatedDistance: Number(lowestDistance.toFixed(4)),
-        similarity: `${bestScorePercent}%`,
-        threshold: `${distanceThreshold}`,
-      });
-      return {
-        matched: bestMatch,
-        bestScore: highestSimilarity,
-        bestScorePercent,
-        bestDistance: Number(lowestDistance.toFixed(4)),
-        comparisons,
-      };
+    if (validMatches.length > 0) {
+      // STRICT REQUIREMENT: Prioritize actual registered patient profiles over placeholder accounts
+      // ("ผู้รับบริการใหม่" or "รอลงข้อมูล") so users never get placeholder profiles if an actual profile exists
+      const realPatientMatches = validMatches.filter(
+        (c) =>
+          c.name &&
+          !c.name.startsWith('ผู้รับบริการใหม่') &&
+          !c.name.includes('ผู้รับบริการใหม่') &&
+          !c.name.includes('รอลงข้อมูล') &&
+          !c.name.includes('ผู้ลงทะเบียนใหม่')
+      );
+
+      const chosenMatchResult = realPatientMatches.length > 0 ? realPatientMatches[0] : validMatches[0];
+      const matchedCand =
+        candidates.find(
+          (c) => c.patientCode.toUpperCase() === chosenMatchResult.patient_code.toUpperCase()
+        ) || bestMatch;
+
+      if (matchedCand) {
+        const finalScore = chosenMatchResult.similarity;
+        const finalPercent = Math.max(0, Math.min(100, Math.round(finalScore * 100)));
+
+        console.log('🎯 [FACE MATCH SUCCESS]:', {
+          matched_patient_id: matchedCand.patientId,
+          matched_hn: matchedCand.patientCode,
+          matched_name: matchedCand.name,
+          calculatedDistance: chosenMatchResult.distance,
+          similarity: `${finalPercent}%`,
+          threshold: `${Math.round(similarityThreshold * 100)}%`,
+          isRealPatient: realPatientMatches.length > 0,
+        });
+
+        return {
+          matched: matchedCand,
+          bestScore: finalScore,
+          bestScorePercent: finalPercent,
+          bestDistance: chosenMatchResult.distance,
+          comparisons,
+        };
+      }
     }
+
+    const highestPercent = Math.max(0, Math.min(100, Math.round(highestSimilarity * 100)));
 
     console.warn('❌ [FACE MATCH FAILED - NO PATIENT REACHED THRESHOLD]:', {
       lowest_distance: Number(lowestDistance.toFixed(4)),
-      highest_similarity: `${bestScorePercent}%`,
-      required_distance_threshold: distanceThreshold,
+      highest_similarity: `${highestPercent}%`,
+      required_threshold: `${Math.round(similarityThreshold * 100)}%`,
       candidate_count: candidates.length,
     });
 
     return {
       matched: null,
       bestScore: Math.max(0, highestSimilarity),
-      bestScorePercent,
+      bestScorePercent: highestPercent,
       bestDistance: Number(lowestDistance.toFixed(4)),
       comparisons,
     };

@@ -15,6 +15,7 @@ import { livenessEngine } from '../../services/livenessEngine';
 import { patientFaceStorageService } from '../../services/patientFaceStorageService';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 import { useHospitalStore } from '../../store/hospitalStore';
+import { faceRegistryService } from '../../services/faceRegistryService';
 import { UserAccount } from '../../types/hospital';
 
 interface PatientFaceEnrollModalProps {
@@ -204,11 +205,7 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
           }
         }
 
-        // Fallback: If direct descriptor is not available from file, generate normalized landmark vector
-        const fallbackVec = new Array(128).fill(0).map(() => (Math.random() - 0.5) * 0.1);
-        const norm = patientFaceStorageService.normalizeVector(fallbackVec);
-        setCapturedVector(norm);
-        setStatusMessage('✅ บันทึกเวกเตอร์ใบหน้าจากภาพถ่ายสำเร็จ');
+        throw new Error('ไม่พบใบหน้าหน้าตรงที่ชัดเจนในภาพที่เลือก กรุณาเลือกภาพถ่ายหน้าตรงที่สว่างคมชัด หรือใช้การสแกนผ่านกล้อง 10 ช็อต');
       } catch (err: any) {
         setErrorMessage(err?.message || 'ไม่พบใบหน้าชัดเจนในภาพที่เลือก กรุณาเลือกภาพหน้าตรงที่สว่าง');
       }
@@ -224,7 +221,10 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
     setErrorMessage(null);
 
     const hn = patient.code || (patient as any).patient_code || String(patient.id);
+    const timestamp = Date.now();
+    const photoFileName = `face_${hn}_${timestamp}.jpg`;
     const photo = capturedPhoto || undefined;
+    const distinctPhotoUrl = photo || `/uploads/faces/${photoFileName}`;
 
     try {
       // 1. Prepare payload with FACE_EMB & FACE_PHOTO in medical_history for cross-platform fallback
@@ -237,56 +237,100 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
       
       const newMedHistory = `${updatedMedHistory}\nFACE_EMB:${vectorJsonStr}${photo ? `\nFACE_PHOTO:${photo}` : ''}`.trim();
 
-      // 2. Update Supabase Cloud Table
-      const updatePayload: any = {
-        medical_history: newMedHistory,
-        updated_at: new Date().toISOString(),
-      };
-
-      // Try saving face_vector JSONB directly as well
+      // 2. Strict Per-Patient Save to Supabase Cloud Table using UPSERT
       try {
-        const { error: vecErr } = await supabase
+        const { error: sbErr } = await supabase
           .from('patients')
-          .update({ face_vector: capturedVector, medical_history: newMedHistory })
-          .or(`patient_code.eq.${hn},id.eq.${patient.id}`);
-        
-        if (vecErr) {
-          // If column face_vector doesn't exist, update medical_history only
+          .upsert({
+            patient_code: hn,
+            full_name: patient.name,
+            age: Number(patient.age) || 65,
+            gender: patient.gender || 'male',
+            phone: patient.phone || null,
+            chief_complaint: patient.chiefComplaint || patient.diagnosis || 'ลงทะเบียนด้วยใบหน้า Face Enrollment',
+            face_vector: capturedVector,
+            photo: photo || null,
+            face_image_url: distinctPhotoUrl,
+            medical_history: newMedHistory,
+            status: 'active',
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'patient_code' });
+
+        if (sbErr) {
+          console.warn('[SUPABASE] PatientFaceEnrollModal upsert retry with base columns:', sbErr);
           await supabase
             .from('patients')
-            .update(updatePayload)
-            .or(`patient_code.eq.${hn},id.eq.${patient.id}`);
+            .upsert({
+              patient_code: hn,
+              full_name: patient.name,
+              age: Number(patient.age) || 65,
+              gender: patient.gender || 'male',
+              phone: patient.phone || null,
+              chief_complaint: patient.chiefComplaint || patient.diagnosis || 'ลงทะเบียนด้วยใบหน้า Face Enrollment',
+              face_vector: capturedVector,
+              photo: photo || null,
+              medical_history: newMedHistory,
+              status: 'active',
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'patient_code' });
         }
-      } catch {}
+      } catch (sbEx) {
+        console.warn('[SUPABASE] PatientFaceEnrollModal exception:', sbEx);
+      }
+
+      // [CONSOLE LOGS & DEBUGGING]: Log patient_id, saved face_image_url, and vector length upon successful registration
+      console.log('[REGISTRATION] Success:', {
+        patient_id: hn,
+        saved_face_image_url: distinctPhotoUrl,
+        vector_length: capturedVector.length,
+      });
 
       // 3. Save to Isolated Local Storage Dossier
+      patientFaceStorageService.savePatientFaceData(hn, hn, capturedVector, photo || null);
       patientFaceStorageService.savePatientRecord(
         hn,
         {
           patient_profile: {
             patient_id: hn,
             id: patient.id,
-            first_name: patient.name,
+            first_name: patient.name.split(' ')[0] || patient.name,
+            last_name: patient.name.split(' ').slice(1).join(' ') || '',
             full_name: patient.name,
             age: Number(patient.age) || 65,
             gender: patient.gender || 'male',
+            phone: patient.phone,
             status: 'active',
           },
           biometric_data: {
             face_vector: capturedVector,
-            registered_face_url: photo || `/uploads/patients/${hn}/profile_face.jpg`,
+            registered_face_url: distinctPhotoUrl,
             enrolled_at: new Date().toISOString(),
             model_version: 'face-resnet34-10snap-v1',
+          },
+          medical_records: {
+            diagnosis: patient.chiefComplaint || patient.diagnosis || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
           },
         },
         photo
       );
 
+      // Save to Face Registry Service for fast kiosk lookup
+      faceRegistryService.saveProfile({
+        patientId: patient.id,
+        patientCode: hn,
+        name: patient.name,
+        age: Number(patient.age) || 65,
+        gender: patient.gender || 'male',
+        embeddings: [capturedVector],
+        face_image_url: distinctPhotoUrl,
+        enrolledAt: new Date().toISOString(),
+      });
+
       // 4. Update Hospital Store State
       updateUser(patient.id, {
         biometricVector: capturedVector,
         face_vector: capturedVector,
-        face_image_url: photo,
+        face_image_url: distinctPhotoUrl,
         status: 'active',
         pendingInfoNote: undefined,
       });
@@ -297,6 +341,7 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
         name: patient.name,
         face_vector: capturedVector,
         photo,
+        face_image_url: distinctPhotoUrl,
         medical_history: newMedHistory,
       });
 
@@ -308,8 +353,23 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
           payload: {
             patient_code: hn,
             name: patient.name,
+            full_name: patient.name,
             face_vector: capturedVector,
             photo,
+            face_image_url: distinctPhotoUrl,
+            status: 'active',
+          },
+        });
+        await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
+          type: 'broadcast',
+          event: 'patient_registered',
+          payload: {
+            patient_code: hn,
+            name: patient.name,
+            full_name: patient.name,
+            face_vector: capturedVector,
+            photo,
+            face_image_url: distinctPhotoUrl,
             status: 'active',
           },
         });

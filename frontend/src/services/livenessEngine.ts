@@ -381,14 +381,41 @@ export class LivenessEngine {
         const canvas = this.offscreenCanvas;
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
         if (ctx) {
-          // Crop face centered square
           const vw = video.videoWidth || 640;
           const vh = video.videoHeight || 480;
-          const size = Math.min(vw, vh);
-          const sx = (vw - size) / 2;
-          const sy = (vh - size) / 2;
+          const defaultSize = Math.min(vw, vh);
 
-          ctx.drawImage(video, sx, sy, size, size, 0, 0, 160, 160);
+          let cropX = (vw - defaultSize) / 2;
+          let cropY = (vh - defaultSize) / 2;
+          let cropW = defaultSize;
+          let cropH = defaultSize;
+
+          // If facial landmarks are detected, tightly frame the face with 35% margin
+          if (this.lastLandmarks && this.lastLandmarks.length >= 468) {
+            let minX = 1;
+            let maxX = 0;
+            let minY = 1;
+            let maxY = 0;
+            for (let i = 0; i < this.lastLandmarks.length; i++) {
+              const pt = this.lastLandmarks[i];
+              if (pt.x < minX) minX = pt.x;
+              if (pt.x > maxX) maxX = pt.x;
+              if (pt.y < minY) minY = pt.y;
+              if (pt.y > maxY) maxY = pt.y;
+            }
+            const boxW = (maxX - minX) * vw;
+            const boxH = (maxY - minY) * vh;
+            const cx = ((minX + maxX) / 2) * vw;
+            const cy = ((minY + maxY) / 2) * vh;
+            const faceDim = Math.max(boxW, boxH) * 1.35;
+            cropW = Math.min(vw, Math.max(120, faceDim));
+            cropH = Math.min(vh, Math.max(120, faceDim));
+            cropX = Math.max(0, Math.min(vw - cropW, cx - cropW / 2));
+            cropY = Math.max(0, Math.min(vh - cropH, cy - cropH / 2));
+          }
+
+          ctx.clearRect(0, 0, 160, 160);
+          ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, 160, 160);
 
           if (faceapi && faceapi.nets?.faceRecognitionNet?.isLoaded) {
             try {
