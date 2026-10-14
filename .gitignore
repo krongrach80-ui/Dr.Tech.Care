@@ -83,4 +83,6 @@ antigravity-ide/
 !frontend/src/config/
 GEMINI.md
 .agents/
+supabase/.temp/
+
 

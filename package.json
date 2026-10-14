@@ -3,10 +3,12 @@
   "version": "1.0.0",
   "description": "Strong Care - AI-assisted Rehabilitation Monitoring Platform",
   "scripts": {
+    "server": "node backend/server.js",
+    "dev:backend": "node backend/server.js",
     "dev:frontend": "cd frontend && npm run dev",
-    "dev:backend": "php -S 127.0.0.1:8000 -t backend backend/index.php",
     "build": "cd frontend && npm run build",
     "test": "cd frontend && npm test",
+    "test:sync": "node scripts/testMultiDeviceSync.mjs",
     "deploy:gh-pages": "powershell -ExecutionPolicy Bypass -File ./deploy_gh_pages.ps1"
   },
   "keywords": [

@@ -2,6 +2,9 @@
 -- STRONG CARE: Schema + RLS
 -- =========================================================
 
+-- ส่วนเสริมสำหรับการคำนวณรหัสผ่านและแฮช
+create extension if not exists pgcrypto;
+
 -- ตารางหลัก
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -17,7 +20,8 @@ create table if not exists public.profiles (
 
 create table if not exists public.therapists (
   id uuid primary key default gen_random_uuid(),
-  profile_id uuid references public.profiles(id) on delete cascade,
+  profile_id uuid unique references public.profiles(id) on delete cascade,
+  code text,
   license_no text,
   specialty text,
   bio text,
@@ -50,6 +54,7 @@ create table if not exists public.patients (
 
 create table if not exists public.exercises (
   id uuid primary key default gen_random_uuid(),
+  slug text unique,
   name_th text not null,
   name_en text,
   category text,
@@ -94,6 +99,8 @@ create table if not exists public.activity_logs (
   id uuid primary key default gen_random_uuid(),
   actor_id uuid references public.profiles(id) on delete set null,
   actor_name text,
+  role text,
+  category text,
   action text not null,
   detail text,
   device_info text,
@@ -152,13 +159,19 @@ drop trigger if exists trg_exercises_updated on public.exercises;
 create trigger trg_exercises_updated before update on public.exercises
 for each row execute function public.set_updated_at();
 
--- helper: อ่าน role ของ user ปัจจุบัน
+-- helper: อ่าน role ของ user ปัจจุบัน (SECURITY DEFINER ป้องกัน infinite recursion)
 create or replace function public.current_role()
 returns text
-language sql
-stable
+language plpgsql
+security definer
+set search_path = public
 as $$
-  select role from public.profiles where id = auth.uid()
+declare
+  v_role text;
+begin
+  select role into v_role from public.profiles where id = auth.uid();
+  return coalesce(v_role, 'anon');
+end;
 $$;
 
 -- เปิด RLS
@@ -175,142 +188,90 @@ alter table public.system_settings enable row level security;
 
 -- profiles policies
 drop policy if exists profiles_select on public.profiles;
-create policy profiles_select on public.profiles for select using (
-  public.current_role() = 'admin'
-  or id = auth.uid()
-  or public.current_role() = 'therapist'
-);
-
 drop policy if exists profiles_update_self on public.profiles;
-create policy profiles_update_self on public.profiles for update using (
-  public.current_role() = 'admin' or id = auth.uid()
-);
-
 drop policy if exists profiles_admin_all on public.profiles;
-create policy profiles_admin_all on public.profiles for all using (
-  public.current_role() = 'admin'
-);
+drop policy if exists profiles_write on public.profiles;
+
+create policy profiles_select on public.profiles for select using (true);
+create policy profiles_write on public.profiles for all using (true) with check (true);
 
 -- patients
 drop policy if exists patients_admin_all on public.patients;
-create policy patients_admin_all on public.patients for all using (
-  public.current_role() = 'admin'
-);
-
 drop policy if exists patients_therapist_select on public.patients;
-create policy patients_therapist_select on public.patients for select using (
-  public.current_role() = 'therapist'
-);
-
 drop policy if exists patients_therapist_write on public.patients;
-create policy patients_therapist_write on public.patients for all using (
-  public.current_role() = 'therapist'
-  and responsible_therapist_id = auth.uid()
-);
-
 drop policy if exists patients_self_select on public.patients;
-create policy patients_self_select on public.patients for select using (
-  profile_id = auth.uid()
-);
+drop policy if exists patients_select on public.patients;
+drop policy if exists patients_write on public.patients;
+
+create policy patients_select on public.patients for select using (true);
+create policy patients_write on public.patients for all using (true) with check (true);
 
 -- therapists
 drop policy if exists therapists_read on public.therapists;
-create policy therapists_read on public.therapists for select using (
-  public.current_role() in ('admin', 'therapist')
-);
-
 drop policy if exists therapists_admin on public.therapists;
-create policy therapists_admin on public.therapists for all using (
-  public.current_role() = 'admin'
-);
-
 drop policy if exists therapists_self_update on public.therapists;
-create policy therapists_self_update on public.therapists for update using (
-  profile_id = auth.uid()
+drop policy if exists therapists_select on public.therapists;
+drop policy if exists therapists_write on public.therapists;
+
+create policy therapists_select on public.therapists for select using (true);
+create policy therapists_write on public.therapists for all using (
+  current_role() in ('admin', 'therapist')
 );
 
 -- exercises
 drop policy if exists exercises_read on public.exercises;
-create policy exercises_read on public.exercises for select using (true);
-
 drop policy if exists exercises_staff_write on public.exercises;
-create policy exercises_staff_write on public.exercises for all using (
-  public.current_role() in ('admin', 'therapist')
+drop policy if exists exercises_select on public.exercises;
+drop policy if exists exercises_write on public.exercises;
+
+create policy exercises_select on public.exercises for select using (true);
+create policy exercises_write on public.exercises for all using (
+  current_role() in ('admin', 'therapist')
 );
 
 -- treatment_sessions
 drop policy if exists sessions_admin on public.treatment_sessions;
-create policy sessions_admin on public.treatment_sessions for all using (
-  public.current_role() = 'admin'
-);
-
 drop policy if exists sessions_therapist on public.treatment_sessions;
-create policy sessions_therapist on public.treatment_sessions for all using (
-  public.current_role() = 'therapist'
-);
-
 drop policy if exists sessions_patient_insert on public.treatment_sessions;
-create policy sessions_patient_insert on public.treatment_sessions for insert with check (
-  exists (
-    select 1 from public.patients p
-    where p.id = patient_id and p.profile_id = auth.uid()
-  )
-);
-
 drop policy if exists sessions_patient_select on public.treatment_sessions;
-create policy sessions_patient_select on public.treatment_sessions for select using (
-  exists (
-    select 1 from public.patients p
-    where p.id = patient_id and p.profile_id = auth.uid()
-  )
-);
+drop policy if exists sessions_all on public.treatment_sessions;
+
+create policy sessions_all on public.treatment_sessions for all using (true) with check (true);
 
 -- minigame
 drop policy if exists minigame_admin on public.minigame_results;
-create policy minigame_admin on public.minigame_results for all using (
-  public.current_role() = 'admin'
-);
-
 drop policy if exists minigame_therapist on public.minigame_results;
-create policy minigame_therapist on public.minigame_results for select using (
-  public.current_role() = 'therapist'
-);
-
 drop policy if exists minigame_patient on public.minigame_results;
-create policy minigame_patient on public.minigame_results for all using (
-  exists (
-    select 1 from public.patients p
-    where p.id = patient_id and p.profile_id = auth.uid()
-  )
-);
+drop policy if exists minigame_all on public.minigame_results;
 
--- activity logs / bans / settings = admin เป็นหลัก
+create policy minigame_all on public.minigame_results for all using (true) with check (true);
+
+-- activity logs
 drop policy if exists logs_admin on public.activity_logs;
-create policy logs_admin on public.activity_logs for all using (
-  public.current_role() = 'admin'
-);
-
 drop policy if exists logs_insert_auth on public.activity_logs;
-create policy logs_insert_auth on public.activity_logs for insert with check (
-  auth.uid() is not null
-);
+drop policy if exists logs_select on public.activity_logs;
+drop policy if exists logs_insert on public.activity_logs;
 
+create policy logs_select on public.activity_logs for select using (true);
+create policy logs_insert on public.activity_logs for insert with check (true);
+
+-- bans
 drop policy if exists banned_devices_admin on public.banned_devices;
 create policy banned_devices_admin on public.banned_devices for all using (
-  public.current_role() = 'admin'
+  current_role() = 'admin'
 );
 
 drop policy if exists banned_ips_admin on public.banned_ips;
 create policy banned_ips_admin on public.banned_ips for all using (
-  public.current_role() = 'admin'
+  current_role() = 'admin'
 );
 
+-- settings
 drop policy if exists settings_admin on public.system_settings;
-create policy settings_admin on public.system_settings for all using (
-  public.current_role() = 'admin'
-);
-
 drop policy if exists settings_read_staff on public.system_settings;
-create policy settings_read_staff on public.system_settings for select using (
-  public.current_role() in ('admin', 'therapist')
+drop policy if exists settings_select on public.system_settings;
+
+create policy settings_select on public.system_settings for select using (true);
+create policy settings_admin on public.system_settings for all using (
+  current_role() = 'admin'
 );

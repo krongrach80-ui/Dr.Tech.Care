@@ -16,6 +16,7 @@ import { supabaseService } from '../services/supabaseService';
 import { faceRegistryService } from '../services/faceRegistryService';
 import { patientSyncService } from '../services/patientSyncService';
 import { patientFaceStorageService } from '../services/patientFaceStorageService';
+import { api } from '../services/api';
 import { usePatientStore } from './patientStore';
 import initialExercisesData from '../data/exercises.json';
 import initialModpacksData from '../data/modpacks.json';
@@ -820,10 +821,12 @@ interface HospitalState {
   symptomReports: PatientSymptomReport[];
   aiSettings: AiSystemSettings;
   isSupabaseConnected: boolean;
+  isCentralBackendConnected: boolean;
   isLoadingFromDb: boolean;
 
-  // Supabase Sync
+  // Database Sync
   initializeFromSupabase: () => Promise<void>;
+  fetchPatientsFromCentralApi: () => Promise<void>;
 
   // Role & Authentication
   setCurrentRole: (role: UserRole) => void;
@@ -902,6 +905,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   bannedIps: ['198.51.100.44', '203.0.113.19'],
   symptomReports: INITIAL_SYMPTOM_REPORTS,
   isSupabaseConnected: supabaseService.isConfigured(),
+  isCentralBackendConnected: false,
   isLoadingFromDb: false,
   aiSettings: {
     similarityThreshold: 0.80,
@@ -917,56 +921,104 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     strictLivenessChallenge: true,
   },
 
-  initializeFromSupabase: async () => {
-    if (!supabaseService.isConfigured()) {
-      set({ isSupabaseConnected: false });
-      return;
-    }
-    set({ isLoadingFromDb: true });
+  fetchPatientsFromCentralApi: async () => {
     try {
-      const [profiles, therapists, exercises, logs, settings, bannedDevices, bannedIps] = await Promise.all([
-        supabaseService.fetchProfiles(),
-        supabaseService.fetchTherapists(),
-        supabaseService.fetchExercises(),
-        supabaseService.fetchActivityLogs(),
-        supabaseService.fetchSystemSettings(),
-        supabaseService.fetchBannedDevices(),
-        supabaseService.fetchBannedIps(),
-      ]);
+      const centralPatients = await api.getPatients();
+      if (centralPatients && centralPatients.length > 0) {
+        const staffUsers = get().users.filter((u) => u.role !== 'patient');
+        const deletedSet = getDeletedUserCodes();
 
-      if (profiles && profiles.length > 0) {
-        const migratedProfiles = profiles.map((p) => {
-          if (!p.password || p.password === DEFAULT_PASSWORD_HASH || p.password.length < 8) {
-            return { ...p, must_change_password: true };
-          }
-          return p;
-        });
-        set({ users: migratedProfiles });
+        const patientUsers: UserAccount[] = centralPatients
+          .filter((p) => {
+            const idStr = String(p.id).trim().toUpperCase();
+            const codeStr = String(p.patient_code || '').trim().toUpperCase();
+            return !deletedSet.has(idStr) && !deletedSet.has(codeStr);
+          })
+          .map((p) => ({
+            id: p.id,
+            code: p.patient_code,
+            username: `user_${(p.patient_code || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`,
+            name: p.name,
+            role: 'patient',
+            status: (p.status as any) || 'active',
+            age: p.age,
+            gender: p.gender,
+            phone: p.phone,
+            diagnosis: p.notes,
+            chiefComplaint: p.notes,
+            assignedTherapistName: (p as any).assigned_therapist_name || 'กภ. ธนากร วงศ์สวัสดิ์',
+            assignedTherapistId: 1,
+            face_image_url: (p as any).face_image_url,
+            created_at: (p as any).created_at || new Date().toISOString().split('T')[0],
+            last_active: (p as any).last_active || 'พร้อมรับบริการ',
+          }));
+
+        const mergedUsers = [...staffUsers, ...patientUsers];
+        set({ users: mergedUsers, isCentralBackendConnected: true, isLoadingFromDb: false });
+        persistUsers(mergedUsers);
+        console.info(`✓ HospitalStore loaded ${patientUsers.length} patients from Central Synchronized Database.`);
       }
-      if (therapists && therapists.length > 0) {
-        set({ therapists });
-      }
-      if (exercises && exercises.length > 0) {
-        set({ exercises });
-      }
-      if (logs && logs.length > 0) {
-        set({ activityLogs: logs });
-      }
-      if (settings) {
-        set({ aiSettings: { ...get().aiSettings, ...settings } });
-      }
-      if (bannedDevices && bannedDevices.length > 0) {
-        set({ bannedDevices });
-      }
-      if (bannedIps && bannedIps.length > 0) {
-        set({ bannedIps });
-      }
-      set({ isSupabaseConnected: true, isLoadingFromDb: false });
-      console.info('✓ HospitalStore synced with live Supabase database');
-    } catch (err) {
-      console.warn('initializeFromSupabase warning:', err);
-      set({ isLoadingFromDb: false });
+    } catch (err: any) {
+      console.warn('HospitalStore fetchPatientsFromCentralApi warning:', err.message);
     }
+  },
+
+  initializeFromSupabase: async () => {
+    set({ isLoadingFromDb: true });
+
+    // 1. Fetch from Central Node.js Server (Single Source of Truth across devices)
+    await get().fetchPatientsFromCentralApi();
+
+    // 2. Fetch from Supabase Cloud if configured
+    if (supabaseService.isConfigured()) {
+      try {
+        const [profiles, therapists, exercises, logs, settings, bannedDevices, bannedIps] = await Promise.all([
+          supabaseService.fetchProfiles(),
+          supabaseService.fetchTherapists(),
+          supabaseService.fetchExercises(),
+          supabaseService.fetchActivityLogs(),
+          supabaseService.fetchSystemSettings(),
+          supabaseService.fetchBannedDevices(),
+          supabaseService.fetchBannedIps(),
+        ]);
+
+        if (profiles && profiles.length > 0) {
+          const migratedProfiles = profiles.map((p) => {
+            if (!p.password || p.password === DEFAULT_PASSWORD_HASH || p.password.length < 8) {
+              return { ...p, must_change_password: true };
+            }
+            return p;
+          });
+          set({ users: migratedProfiles });
+        }
+        if (therapists && therapists.length > 0) {
+          set({ therapists });
+        }
+        if (exercises && exercises.length > 0) {
+          set({ exercises });
+        }
+        if (logs && logs.length > 0) {
+          set({ activityLogs: logs });
+        }
+        if (settings) {
+          set({ aiSettings: { ...get().aiSettings, ...settings } });
+        }
+        if (bannedDevices && bannedDevices.length > 0) {
+          set({ bannedDevices });
+        }
+        if (bannedIps && bannedIps.length > 0) {
+          set({ bannedIps });
+        }
+        set({ isSupabaseConnected: true });
+        console.info('✓ HospitalStore synced with live Supabase database');
+      } catch (err) {
+        console.warn('initializeFromSupabase warning:', err);
+      }
+    } else {
+      set({ isSupabaseConnected: false });
+    }
+
+    set({ isLoadingFromDb: false });
   },
 
   setCurrentRole: (role) => set({ currentRole: role }),
@@ -1133,6 +1185,25 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       }
     }
 
+    // Central Backend Database Sync (Multi-Device Single Source of Truth)
+    if (newUser.role === 'patient') {
+      api.saveCentralPatientRecord({
+        patient_code: newUser.code,
+        code: newUser.code,
+        id: newUser.id,
+        name: newUser.name,
+        age: newUser.age,
+        gender: newUser.gender,
+        phone: newUser.phone,
+        status: newUser.status,
+        pendingInfoNote: newUser.pendingInfoNote,
+        diagnosis: newUser.diagnosis || newUser.chiefComplaint,
+        chief_complaint: newUser.chiefComplaint || newUser.diagnosis,
+        face_vector: (newUser as any).biometricVector || (newUser as any).face_vector,
+        image_data_url: newUser.face_image_url,
+      }).catch((e) => console.warn('Central DB sync addUser warning:', e));
+    }
+
     return newUser;
   },
 
@@ -1168,6 +1239,17 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     // ส่งสัญญาณ Broadcast ทันที เพื่อให้หน้าจอ Kiosk และหน้าอื่นๆ รับทราบและเปลี่ยนสถานะทันที
     patientSyncService.broadcastInfoCompleted(updatedUser);
 
+    // Central Backend Database Sync
+    api.updatePatient(updatedUser.code || id, {
+      name: updatedUser.name,
+      age: updatedUser.age,
+      gender: updatedUser.gender,
+      phone: updatedUser.phone,
+      status: 'active',
+      diagnosis: updatedUser.diagnosis,
+      chief_complaint: updatedUser.chiefComplaint,
+    }).catch((e) => console.warn('Central DB sync completePendingPatientInfo warning:', e));
+
     get().addActivityLog(
       'ลงทะเบียนคนไข้สำเร็จ',
       'PATIENT',
@@ -1199,6 +1281,11 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       patientSyncService.broadcastInfoCompleted(updatedUser);
     }
 
+    // Central Backend Database Sync
+    if (updatedUser?.code || id) {
+      api.updatePatient(updatedUser?.code || id, data).catch((e) => console.warn('Central DB updateUser warning:', e));
+    }
+
     get().addActivityLog('แก้ไขข้อมูลผู้ใช้งาน', 'AUTH', `อัปเดตข้อมูลผู้ใช้งาน ID: ${id}`);
 
     if (supabaseService.isConfigured()) {
@@ -1211,6 +1298,11 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     const updatedUsers = get().users.filter((u) => u.id !== id);
     set({ users: updatedUsers });
     persistUsers(updatedUsers);
+
+    // Central Backend Database Sync
+    if (user?.code || id) {
+      api.deletePatient(user?.code || id).catch((e) => console.warn('Central DB deletePatient warning:', e));
+    }
 
     // Add to persistent blacklist so it NEVER restores on page reload
     if (user) {
@@ -1611,23 +1703,76 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   },
 }));
 
-// Cross-tab / Cross-window Sync Listener
+// Multi-Device Real-Time Sync Listener (Cross-Device via Central SSE & Local Broadcast)
 if (typeof window !== 'undefined') {
   patientSyncService.subscribe((event) => {
-    if (event.type === 'INFO_COMPLETED') {
-      useHospitalStore.setState((state) => ({
-        users: state.users.map((u) =>
-          u.id === event.user.id || u.code === event.user.code ? event.user : u
-        ),
-      }));
-    } else if (event.type === 'ENROLLED_PENDING') {
+    const rawUser = event.user || event.patient;
+    if (!rawUser && event.type !== 'PATIENT_DELETED') return;
+
+    if (event.type === 'PATIENT_DELETED') {
+      const targetId = event.id;
+      const targetCode = event.code;
+      useHospitalStore.setState((state) => {
+        const remaining = state.users.filter(
+          (u) => u.id !== targetId && String(u.code).toUpperCase() !== String(targetCode).toUpperCase()
+        );
+        persistUsers(remaining);
+        return { users: remaining };
+      });
+      return;
+    }
+
+    const userObj: UserAccount = {
+      id: rawUser.id || Date.now(),
+      code: rawUser.code || rawUser.patient_code || 'P-0000',
+      username: rawUser.username || `user_${(rawUser.code || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`,
+      name: rawUser.name || 'ผู้รับบริการ',
+      role: (rawUser.role as any) || 'patient',
+      status: (rawUser.status as any) || 'active',
+      age: rawUser.age || 65,
+      gender: rawUser.gender || 'male',
+      phone: rawUser.phone,
+      diagnosis: rawUser.diagnosis || rawUser.chief_complaint || 'ตรวจประเมินกายภาพบำบัด',
+      chiefComplaint: rawUser.chiefComplaint || rawUser.chief_complaint,
+      assignedTherapistName: rawUser.assignedTherapistName || (rawUser as any).assigned_therapist_name || 'กภ. ธนากร วงศ์สวัสดิ์',
+      assignedTherapistId: rawUser.assignedTherapistId || 1,
+      face_image_url: rawUser.face_image_url,
+      face_vector: rawUser.face_vector,
+      pendingInfoNote: rawUser.pendingInfoNote,
+      created_at: rawUser.created_at || new Date().toISOString().split('T')[0],
+      last_active: rawUser.last_active || (event.type === 'ENROLLED_PENDING' ? 'สแกนหน้าแล้ว รอลงข้อมูล' : 'เพิ่งลงทะเบียน'),
+    };
+
+    if (event.type === 'INFO_COMPLETED' || event.type === 'PATIENT_UPDATED') {
+      useHospitalStore.setState((state) => {
+        const updated = state.users.map((u) =>
+          u.id === userObj.id || u.code === userObj.code ? { ...u, ...userObj } : u
+        );
+        persistUsers(updated);
+        return { users: updated };
+      });
+    } else if (event.type === 'ENROLLED_PENDING' || event.type === 'PATIENT_ENROLLED') {
       useHospitalStore.setState((state) => {
         const exists = state.users.some(
-          (u) => u.id === event.user.id || u.code === event.user.code
+          (u) => u.id === userObj.id || u.code === userObj.code
         );
-        if (exists) return state;
-        return { users: [event.user, ...state.users] };
+        let updatedUsers: UserAccount[];
+        if (exists) {
+          updatedUsers = state.users.map((u) =>
+            u.id === userObj.id || u.code === userObj.code ? { ...u, ...userObj } : u
+          );
+        } else {
+          updatedUsers = [userObj, ...state.users];
+        }
+        persistUsers(updatedUsers);
+        return { users: updatedUsers };
       });
+
+      useHospitalStore.getState().addActivityLog(
+        'คนไข้ใหม่สแกนหน้าจาก Kiosk (เรียลไทม์)',
+        'PATIENT',
+        `ได้รับข้อมูลคนไข้ ${userObj.name} (${userObj.code}) ซิงค์จากสถานี Kiosk อัตโนมัติ`
+      );
     }
   });
 }

@@ -847,7 +847,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     if (!isPendingRegistrationActive || !pendingEnrolledUser || isRegistrationSuccess) return;
 
     const unsubscribe = patientSyncService.subscribe((event) => {
-      if (event.type === 'INFO_COMPLETED') {
+      if (event.type === 'INFO_COMPLETED' && event.user) {
         if (
           event.user.id === pendingEnrolledUser.id ||
           event.user.code === pendingEnrolledUser.code
@@ -924,6 +924,22 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         chiefComplaint: kioskFormComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด',
         diagnosis: kioskFormComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด',
       });
+
+      // Synchronize completed profile with Central Database
+      patientSyncService.syncPatientToBackend({
+        patient_code: pendingEnrolledUser.code,
+        code: pendingEnrolledUser.code,
+        id: pendingEnrolledUser.id,
+        name: fullPatientName,
+        first_name: kioskFormFirstName.trim(),
+        last_name: kioskFormLastName.trim(),
+        age: Number(kioskFormAge) || 65,
+        gender: kioskFormGender,
+        phone: kioskFormPhone.trim() || undefined,
+        status: 'active',
+        diagnosis: kioskFormComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด',
+        chief_complaint: kioskFormComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด',
+      }).catch(() => {});
 
       if (updated) {
         handleRegistrationCompleted(updated);
@@ -1592,6 +1608,28 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           embeddings: [vector128],
           face_image_url: liveJpg || savedRecord.biometric_data.registered_face_url,
           enrolledAt: new Date().toISOString(),
+        });
+
+        // [CENTRAL DATABASE IMMEDIATE SYNC]: Send HTTP POST to central backend
+        // This ensures the Doctor's dashboard on another physical machine receives the new patient instantly via SSE!
+        patientSyncService.syncPatientToBackend({
+          patient_code: createdUser.code,
+          code: createdUser.code,
+          id: createdUser.id,
+          name: createdUser.name,
+          first_name: 'ผู้รับบริการใหม่',
+          last_name: `(${createdUser.code})`,
+          age: 65,
+          gender: 'male',
+          status: 'pending_info',
+          pendingInfoNote: 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว',
+          face_vector: vector128,
+          image_data_url: liveJpg || savedRecord.biometric_data.registered_face_url,
+          diagnosis: 'รอตรวจประเมินกายภาพบำบัด',
+          chief_complaint: 'รอตรวจประเมินกายภาพบำบัด',
+          created_at: new Date().toISOString().split('T')[0],
+        }).catch((err) => {
+          console.warn('⚠️ Kiosk direct central DB sync error:', err);
         });
 
         setPendingEnrolledUser(createdUser);

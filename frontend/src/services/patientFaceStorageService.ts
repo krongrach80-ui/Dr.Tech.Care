@@ -12,6 +12,7 @@
  */
 
 import { FaceRegistryService } from './faceRegistryService';
+import { resolveDefaultApiUrl } from '../config/apiConfig';
 
 export interface PatientProfileData {
   patient_id: string; // e.g. P-6022, P-0012
@@ -374,6 +375,37 @@ class PatientFaceStorageService {
       } catch (err) {
         console.warn('⚠️ LocalStorage quota warning when saving patient record:', err);
       }
+    }
+
+    // Synchronize to Central Backend API (Multi-Device Single Source of Truth)
+    if (typeof window !== 'undefined') {
+      try {
+        const baseUrl = resolveDefaultApiUrl();
+        if (baseUrl) {
+          fetch(`${baseUrl}/patients/register-face`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              patient_code: code,
+              code: code,
+              id: fullRecord.patient_profile.id,
+              name: fullRecord.patient_profile.full_name,
+              first_name: fullRecord.patient_profile.first_name,
+              last_name: fullRecord.patient_profile.last_name,
+              age: fullRecord.patient_profile.age,
+              gender: fullRecord.patient_profile.gender,
+              phone: fullRecord.patient_profile.phone || fullRecord.patient_profile.contact,
+              status: fullRecord.patient_profile.status,
+              diagnosis: fullRecord.medical_records?.diagnosis,
+              chief_complaint: fullRecord.medical_records?.chief_complaint,
+              medical_history: fullRecord.medical_records?.medical_history,
+              assigned_exercises: fullRecord.medical_records?.assigned_exercises,
+              face_vector: fullRecord.biometric_data?.face_vector,
+              image_data_url: profileFaceDataUrl || fullRecord.biometric_data?.registered_face_url || null,
+            }),
+          }).catch(() => {});
+        }
+      } catch {}
     }
 
     // Required Debug Logging

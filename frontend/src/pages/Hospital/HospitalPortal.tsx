@@ -48,6 +48,7 @@ import {
   ShieldCheck,
   Copy,
   PackagePlus,
+  Server,
 } from 'lucide-react';
 import { useHospitalStore } from '../../store/hospitalStore';
 import { validatePasswordStrength } from '../../services/authSecurityService';
@@ -66,6 +67,7 @@ import { EditTherapistModal } from '../../components/Hospital/EditTherapistModal
 import { ConfirmActionModal } from '../../components/Hospital/ConfirmActionModal';
 import { BannedManagementModal } from '../../components/Hospital/BannedManagementModal';
 import { EditTreatmentPlanModal } from '../../components/Hospital/EditTreatmentPlanModal';
+import { NetworkSyncModal } from '../../components/Hospital/NetworkSyncModal';
 import { patientFaceStorageService } from '../../services/patientFaceStorageService';
 
 const THAI_MONTH_NAMES = [
@@ -382,6 +384,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
   // Reception Onboarding Modal
   const [isReceptionOpen, setIsReceptionOpen] = useState<boolean>(false);
+  const [isNetworkSyncModalOpen, setIsNetworkSyncModalOpen] = useState<boolean>(false);
 
   // Responsive Collapsible Sidebar state (optimizes screen space on portrait/vertical kiosks)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
@@ -1435,6 +1438,17 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             >
               <Sparkles className="w-3.5 h-3.5" />
               <span>+ ต้อนรับ & สแกนหน้า</span>
+            </button>
+
+            {/* Central DB Sync Status Badge */}
+            <button
+              onClick={() => setIsNetworkSyncModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold transition cursor-pointer shadow-2xs"
+              title="ตั้งค่าเชื่อมต่อเซิร์ฟเวอร์กลาง & ซิงค์ข้อมูลข้ามเครื่อง (Multi-Device Sync)"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <Server className="w-3.5 h-3.5 text-emerald-700" />
+              <span className="hidden xl:inline font-mono text-[11px]">เซิร์ฟเวอร์กลาง</span>
             </button>
 
             {/* User Profile Badge (Real user + role) */}
@@ -5093,6 +5107,15 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             setDeletingPlan(null);
           }
         }}
+      />
+
+      {/* ==================================================================== */}
+      {/* 21. NETWORK & CENTRAL DATABASE SYNC MODAL                            */}
+      {/* ==================================================================== */}
+      <NetworkSyncModal
+        isOpen={isNetworkSyncModalOpen}
+        onClose={() => setIsNetworkSyncModalOpen(false)}
+        onSuccessToast={showToast}
       />
     </div>
   );

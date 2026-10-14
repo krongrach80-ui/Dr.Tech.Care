@@ -8,11 +8,14 @@
       // Single Page Application Fallback for GitHub Pages
       // Encodes path and query parameters into hash route to prevent 404 on page refresh
       (function() {
-        var repoName = '/Strong-Care';
         var path = window.location.pathname;
         var search = window.location.search;
         var hash = window.location.hash;
 
+        var repoName = '/Dr.Tech.Care';
+        if (path.indexOf('/Strong-Care') === 0) {
+          repoName = '/Strong-Care';
+        }
         var subPath = path;
         if (subPath.indexOf(repoName) === 0) {
           subPath = subPath.substring(repoName.length);

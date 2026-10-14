@@ -3,6 +3,8 @@
 -- AI-assisted Rehabilitation Monitoring Platform
 -- ============================================================================
 
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- 1. SEED SYSTEM SETTINGS
 INSERT INTO public.system_settings (key, value)
 VALUES 

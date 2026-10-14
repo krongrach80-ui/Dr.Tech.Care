@@ -4,6 +4,7 @@ export interface Patient {
   name: string;
   age: number;
   gender: 'male' | 'female' | 'other';
+  status?: 'active' | 'suspended' | 'pending_info';
   photo?: string;
   avatar_url?: string;
   face_image_url?: string;
