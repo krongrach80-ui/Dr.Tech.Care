@@ -812,8 +812,11 @@ class PatientFaceStorageService {
 
     const bestScorePercent = Math.max(0, Math.min(100, Math.round(highestSimilarity * 100)));
 
-    // Strict evaluation: Euclidean distance <= 0.45 OR Cosine Similarity >= 0.85 (>= 80% similarity)
-    const isMatched = (lowestDistance <= distanceThreshold || highestSimilarity >= 0.85 || bestScorePercent >= 80) && bestMatch !== null;
+    // Strict evaluation: Must satisfy BOTH low Euclidean distance (<= 0.45) AND high Cosine Similarity (>= 0.88)
+    // Under NO circumstances should distance > 0.45 or similarity < 0.88 match someone else!
+    const isStrictDistanceValid = lowestDistance <= distanceThreshold;
+    const isStrictSimilarityValid = highestSimilarity >= 0.88;
+    const isMatched = isStrictDistanceValid && isStrictSimilarityValid && bestMatch !== null;
 
     if (isMatched && bestMatch) {
       console.log('🎯 [FACE MATCH SUCCESS]:', {

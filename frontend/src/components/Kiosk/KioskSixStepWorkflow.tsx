@@ -524,6 +524,13 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   const [showNoAccountModal, setShowNoAccountModal] = useState<boolean>(false);
   const [lastMatchScore, setLastMatchScore] = useState<number>(0);
 
+  // Link Face to Existing Account Modal
+  const [showLinkAccountModal, setShowLinkAccountModal] = useState<boolean>(false);
+  const [linkSearchQuery, setLinkSearchQuery] = useState<string>('');
+  const [foundAccountForLink, setFoundAccountForLink] = useState<any | null>(null);
+  const [isLinkingAccount, setIsLinkingAccount] = useState<boolean>(false);
+  const [linkSearchError, setLinkSearchError] = useState<string | null>(null);
+
   // Kiosk Touch Form (ทางเลือก A) State
   const [kioskFormTitle, setKioskFormTitle] = useState<string>('นาย');
   const [kioskFormFirstName, setKioskFormFirstName] = useState<string>('');
@@ -549,7 +556,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   });
   const [activePlan, setActivePlan] = useState<TreatmentPlan | null>(null);
 
-  const { treatmentPlans, users, addUser, completePendingPatientInfo } = useHospitalStore();
+  const { treatmentPlans, users, addUser, updateUser, completePendingPatientInfo } = useHospitalStore();
   const { selectPatient, selectedPatient, patients } = usePatientStore();
 
   useEffect(() => {
@@ -1614,8 +1621,8 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           isPassed: Boolean(evaluation.matched),
         });
 
-        // d) If matched successfully (Distance <= 0.45 OR Cosine Similarity >= 80%):
-        if (evaluation.matched && (evaluation.bestScore >= 0.80 || evaluation.bestDistance <= 0.45)) {
+        // d) If matched successfully (Strict: Distance <= 0.45 AND Cosine Similarity >= 88%):
+        if (evaluation.matched && evaluation.bestDistance <= 0.45 && evaluation.bestScore >= 0.88) {
           const matchedCandidate = evaluation.matched;
           const matchedUser = users.find(
             (u) =>
@@ -2012,6 +2019,174 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   const handleUsePinInstead = () => {
     setShowNoAccountModal(false);
     setShowPinModal(true);
+  };
+
+  // Search account created by Admin to bind face
+  const handleSearchAccountToLink = async () => {
+    const q = linkSearchQuery.trim().toLowerCase();
+    if (!q) {
+      setLinkSearchError('กรุณากรอกรหัส HN หรือเบอร์โทรศัพท์');
+      return;
+    }
+    setLinkSearchError(null);
+
+    // Search local store
+    let matched = users.find(
+      (u) =>
+        u.role === 'patient' &&
+        ((u.code && u.code.toLowerCase().includes(q)) ||
+         (u.phone && u.phone.includes(q)) ||
+         (u.name && u.name.toLowerCase().includes(q)))
+    );
+
+    // Search Supabase patients table if not found locally
+    if (!matched) {
+      try {
+        const { data } = await supabase
+          .from('patients')
+          .select('*')
+          .or(`patient_code.ilike.%${q}%,phone.ilike.%${q}%,full_name.ilike.%${q}%`)
+          .limit(1);
+        if (data && data.length > 0) {
+          const row = data[0];
+          matched = {
+            id: row.id,
+            code: row.patient_code,
+            name: row.full_name,
+            age: row.age,
+            gender: row.gender,
+            phone: row.phone,
+            diagnosis: row.chief_complaint,
+            medical_history: row.medical_history,
+            role: 'patient',
+            status: row.status || 'active',
+          } as any;
+        }
+      } catch (err) {
+        console.warn('Supabase search link account error:', err);
+      }
+    }
+
+    if (matched) {
+      setFoundAccountForLink(matched);
+      setLinkSearchError(null);
+    } else {
+      setFoundAccountForLink(null);
+      setLinkSearchError(`ไม่พบข้อมูลคนไข้ที่ตรงกับ "${linkSearchQuery}" กรุณาตรวจสอบรหัส HN หรือเบอร์โทร`);
+    }
+  };
+
+  // Confirm link face: captures 10 snapshots and binds to patient
+  const handleConfirmLinkAndScan = async () => {
+    if (!foundAccountForLink || !videoRef.current) return;
+    setIsLinkingAccount(true);
+    setLinkSearchError(null);
+
+    try {
+      const snapResult = await livenessEngine.captureTenSnapAveragedEmbedding(
+        videoRef.current,
+        10,
+        0.85,
+        (captured, total) => {
+          setScanStatusMessage(`📸 สแกนใบหน้าผูกบัญชี ${captured}/${total} ช็อต...`);
+        }
+      );
+
+      if (!snapResult || !snapResult.vector || snapResult.vector.length !== 128) {
+        throw new Error('ไม่สามารถบันทึกเวกเตอร์ใบหน้าได้ กรุณามองตรงที่กล้อง');
+      }
+
+      const vec = snapResult.vector;
+      const hn = foundAccountForLink.code || foundAccountForLink.patient_code || String(foundAccountForLink.id);
+      
+      // Capture live photo snapshot
+      const canvas = document.createElement('canvas');
+      canvas.width = 320;
+      canvas.height = 320;
+      const ctx = canvas.getContext('2d');
+      let livePhoto: string | undefined;
+      if (ctx && videoRef.current) {
+        const vw = videoRef.current.videoWidth || 640;
+        const vh = videoRef.current.videoHeight || 480;
+        const size = Math.min(vw, vh);
+        const sx = (vw - size) / 2;
+        const sy = (vh - size) / 2;
+        ctx.drawImage(videoRef.current, sx, sy, size, size, 0, 0, 320, 320);
+        livePhoto = canvas.toDataURL('image/jpeg', 0.85);
+      }
+
+      // Update Supabase
+      const vectorJsonStr = JSON.stringify(vec);
+      let updatedMedHistory = foundAccountForLink.medical_history || '';
+      updatedMedHistory = updatedMedHistory.replace(/FACE_EMB:\[.*?\]/g, '').trim();
+      updatedMedHistory = `${updatedMedHistory}\nFACE_EMB:${vectorJsonStr}${livePhoto ? `\nFACE_PHOTO:${livePhoto}` : ''}`.trim();
+
+      try {
+        await supabase
+          .from('patients')
+          .update({ face_vector: vec, medical_history: updatedMedHistory })
+          .or(`patient_code.eq.${hn},id.eq.${foundAccountForLink.id}`);
+      } catch {}
+
+      // Update local storage & store
+      patientFaceStorageService.savePatientRecord(hn, {
+        patient_profile: {
+          patient_id: hn,
+          id: foundAccountForLink.id,
+          first_name: foundAccountForLink.name,
+          full_name: foundAccountForLink.name,
+          age: Number(foundAccountForLink.age) || 65,
+          gender: foundAccountForLink.gender || 'male',
+          status: 'active',
+        },
+        biometric_data: {
+          face_vector: vec,
+          registered_face_url: livePhoto || `/uploads/patients/${hn}/profile_face.jpg`,
+          enrolled_at: new Date().toISOString(),
+          model_version: 'face-resnet34-10snap-v1',
+        },
+      }, livePhoto);
+
+      updateUser(foundAccountForLink.id, {
+        biometricVector: vec,
+        face_vector: vec,
+        face_image_url: livePhoto,
+        status: 'active',
+      });
+
+      // Target Patient
+      const targetPatient: Patient = {
+        id: Number(foundAccountForLink.id) || 1,
+        patient_code: hn,
+        name: foundAccountForLink.name,
+        age: Number(foundAccountForLink.age) || 65,
+        gender: (foundAccountForLink.gender as any) || 'male',
+        notes: foundAccountForLink.diagnosis || 'กายภาพบำบัดฟื้นฟู',
+        face_image_url: livePhoto,
+        photo: livePhoto,
+      };
+
+      const exactPlan = treatmentPlans.find(
+        (p) => (p.patientCode && p.patientCode.toLowerCase() === hn.toLowerCase()) || (p.patientName && targetPatient.name.includes(p.patientName))
+      );
+
+      setActivePatient(targetPatient);
+      selectPatient(targetPatient);
+      if (exactPlan) setActivePlan(exactPlan);
+      if (onLoginComplete) onLoginComplete(targetPatient);
+
+      setShowLinkAccountModal(false);
+      audioFeedback.playRepSuccess();
+      try {
+        voiceAssistant.speak(`บันทึกและผูกใบหน้าเข้ากับบัญชีคุณ ${targetPatient.name} สำเร็จเรียบร้อยค่ะ`, { level: 'system' });
+      } catch {}
+
+      changeStep(5);
+    } catch (err: any) {
+      setLinkSearchError(err?.message || 'การสแกนใบหน้าล้มเหลว กรุณาลองใหม่อีกครั้ง');
+    } finally {
+      setIsLinkingAccount(false);
+    }
   };
 
   // Step 4: Register New Face manually
@@ -3829,6 +4004,22 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 <ArrowRight className="w-4 h-4 text-emerald-200" />
               </button>
 
+              {/* Button: ผูกใบหน้ากับบัญชีที่มีอยู่แล้วในระบบ (เช่น กรอกในแอดมินไว้แล้ว) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNoAccountModal(false);
+                  setShowLinkAccountModal(true);
+                  setFoundAccountForLink(null);
+                  setLinkSearchError(null);
+                  setLinkSearchQuery('');
+                }}
+                className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 hover:bg-emerald-100 text-emerald-900 border-2 border-emerald-300 font-extrabold text-xs shadow-xs active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <UserCheck className="w-4 h-4 text-emerald-700" />
+                <span>🔗 ผูกใบหน้ากับบัญชีในระบบ (ค้นหาด้วย HN / เบอร์โทร)</span>
+              </button>
+
               {/* Secondary Options: ลองสแกนอีกครั้ง & ใช้ PIN */}
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <button
@@ -3885,6 +4076,131 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 </button>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* โมดอล: ผูกใบหน้ากับบัญชีคนไข้ที่มีอยู่แล้ว (สร้างจากแอดมิน) */}
+      {showLinkAccountModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[9999] flex items-center justify-center p-3 sm:p-4 animate-fadeIn">
+          <div className="w-full max-w-md bg-white rounded-[32px] p-6 shadow-2xl border-2 border-emerald-400 relative flex flex-col animate-scaleUp">
+            <button
+              onClick={() => setShowLinkAccountModal(false)}
+              className="absolute top-4 right-4 p-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                <UserCheck className="w-6 h-6" />
+              </div>
+              <div className="text-left">
+                <h3 className="text-lg font-black text-slate-800">ผูกใบหน้ากับบัญชีในระบบ</h3>
+                <p className="text-xs text-slate-500 font-medium">ค้นหาด้วยรหัสคนไข้ (HN) หรือเบอร์โทรศัพท์</p>
+              </div>
+            </div>
+
+            {!foundAccountForLink ? (
+              <div className="space-y-3 text-left">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    รหัสประจำตัวคนไข้ (HN) หรือ เบอร์โทรศัพท์
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={linkSearchQuery}
+                      onChange={(e) => setLinkSearchQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSearchAccountToLink()}
+                      placeholder="เช่น P-4204 หรือ 0641077684"
+                      className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSearchAccountToLink}
+                      className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition cursor-pointer shadow-sm active:scale-95"
+                    >
+                      ค้นหา
+                    </button>
+                  </div>
+                </div>
+
+                {linkSearchError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-bold flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{linkSearchError}</span>
+                  </div>
+                )}
+
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500">
+                  💡 เหมาะสำหรับคนไข้ที่เจ้าหน้าที่โรงพยาบาลกรอกข้อมูลไว้ในระบบแล้ว และต้องการบันทึกใบหน้าที่ตู้ Kiosk เพื่อล็อกอินสแกนหน้าในครั้งต่อไป
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4 text-left">
+                {/* Found Patient Info Card */}
+                <div className="p-4 bg-emerald-50/80 border border-emerald-200 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-xs font-bold text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full">
+                      HN: {foundAccountForLink.code || foundAccountForLink.patient_code}
+                    </span>
+                    <span className="text-xs text-slate-500 font-medium">
+                      อายุ {foundAccountForLink.age || 65} ปี
+                    </span>
+                  </div>
+                  <h4 className="text-base font-black text-slate-900">{foundAccountForLink.name}</h4>
+                  <p className="text-xs text-slate-600">
+                    โทร: {foundAccountForLink.phone || 'ยังไม่ได้ระบุ'} • {foundAccountForLink.diagnosis || 'รอตรวจประเมินกายภาพบำบัด'}
+                  </p>
+                </div>
+
+                <div className="text-center space-y-1">
+                  <p className="text-xs font-bold text-emerald-800">
+                    {isLinkingAccount ? '📸 กำลังจับภาพใบหน้า 10 ช็อต... กรุณามองตรงที่กล้อง' : 'กรุณานั่งมองตรงที่กล้อง แล้วกดปุ่มเพื่อเริ่มบันทึกใบหน้า'}
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    ระบบจะบันทึกเวกเตอร์ 128 มิติเฉลี่ย 10 เฟรม เพื่อให้จดจำใบหน้านี้ได้แม่นยำสูงสุด
+                  </p>
+                </div>
+
+                {linkSearchError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-bold flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{linkSearchError}</span>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFoundAccountForLink(null)}
+                    disabled={isLinkingAccount}
+                    className="flex-1 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+                  >
+                    ค้นหาคนอื่น
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmLinkAndScan}
+                    disabled={isLinkingAccount}
+                    className="flex-2 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 text-white font-extrabold text-xs shadow-md shadow-emerald-500/25 active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {isLinkingAccount ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>กำลังสแกน 10 ช็อต...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Camera className="w-4 h-4" />
+                        <span>📸 สแกนใบหน้าผูกบัญชีนี้ทันที</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
