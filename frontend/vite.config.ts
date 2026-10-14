@@ -16,6 +16,7 @@ const apiProxy = {
 };
 
 export default defineConfig({
+  root: path.resolve(__dirname),
   base: '/Dr.Tech.Care/',
   plugins: [react()],
   resolve: {
