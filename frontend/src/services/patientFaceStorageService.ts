@@ -193,8 +193,22 @@ class PatientFaceStorageService {
     const code = this.normalizePatientId(patientId);
     let name = patientName;
     if (!name) {
-      const existing = this.getPatientRecord(code);
+      // SAFE LOOKUP: Read directly from memory or localStorage without calling getPatientRecord
+      // to strictly prevent infinite mutual recursion
+      const existing = this.memoryRecords.get(code);
       name = existing?.patient_profile?.full_name || existing?.patient_profile?.first_name;
+
+      if (!name && typeof window !== 'undefined' && window.localStorage) {
+        try {
+          const raw =
+            localStorage.getItem(`patient_record_${code}`) ||
+            localStorage.getItem(`fs:/public/uploads/patients/${code}/patient_record.json`);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            name = parsed?.patient_profile?.full_name || parsed?.patient_profile?.first_name;
+          }
+        } catch {}
+      }
     }
     if (name && typeof name === 'string') {
       const clean = name

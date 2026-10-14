@@ -81,21 +81,39 @@ class RootErrorBoundary extends Component<Props, State> {
               เกิดข้อผิดพลาดในการแสดงผล
             </h2>
             <p className="text-sm text-slate-600">
-              {import.meta.env.DEV
-                ? (this.state.error?.message || 'ข้อผิดพลาดระบบ')
-                : 'ระบบพบปัญหาขัดข้องชั่วคราว กรุณารีเฟรชเพื่อเข้าใช้งานใหม่อีกครั้ง'}
+              {this.state.error?.message || 'ระบบพบปัญหาขัดข้องชั่วคราว กรุณารีเฟรชเพื่อเข้าใช้งานใหม่อีกครั้ง'}
             </p>
-            {import.meta.env.DEV && this.state.error?.stack && (
-              <pre className="bg-rose-50 border border-rose-100 p-3 rounded-xl text-rose-900 text-xs overflow-auto max-h-40 whitespace-pre-wrap font-mono text-left">
-                {this.state.error.stack}
-              </pre>
+            {this.state.error?.stack && (
+              <details className="text-left text-xs bg-rose-50 border border-rose-100 p-3 rounded-xl">
+                <summary className="font-bold text-rose-800 cursor-pointer mb-2">
+                  รายละเอียดข้อผิดพลาด (Technical Details)
+                </summary>
+                <pre className="text-rose-900 overflow-auto max-h-40 whitespace-pre-wrap font-mono text-[11px]">
+                  {this.state.error.stack}
+                </pre>
+              </details>
             )}
-            <button
-              onClick={() => window.location.reload()}
-              className="w-full py-3 bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-bold rounded-2xl hover:opacity-95 shadow-lg shadow-cyan-500/25 transition active:scale-95 cursor-pointer"
-            >
-              รีเฟรชหน้าเว็บ (Reload Page)
-            </button>
+            <div className="space-y-2">
+              <button
+                onClick={() => window.location.reload()}
+                className="w-full py-3 bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-bold rounded-2xl hover:opacity-95 shadow-lg shadow-cyan-500/25 transition active:scale-95 cursor-pointer"
+              >
+                รีเฟรชหน้าเว็บ (Reload Page)
+              </button>
+              <button
+                onClick={() => {
+                  if (typeof window !== 'undefined' && window.localStorage) {
+                    try {
+                      localStorage.clear();
+                    } catch {}
+                  }
+                  window.location.reload();
+                }}
+                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition cursor-pointer"
+              >
+                ล้างแคชและเริ่มใหม่ (Clear Cache & Reset)
+              </button>
+            </div>
           </div>
         </div>
       );
