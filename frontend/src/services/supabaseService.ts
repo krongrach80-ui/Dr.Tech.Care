@@ -99,7 +99,7 @@ export const supabaseService = {
 
         if (authError || !authData.user) {
           // หาก auth.users ยังไม่ได้สร้าง (เช่น กรณีใช้ seed profiles โดยตรง) ตรวจสอบผ่านตาราง profiles
-          if (matchedProfile && (pass === '1234' || pass === 'admin1234')) {
+          if (matchedProfile && (pass === '1234' || pass === 'admin' || pass === 'admin1234' || pass === 'Admin@2026!')) {
             const mappedUser: UserAccount = {
               id: matchedProfile.id || 1,
               username: matchedProfile.username,

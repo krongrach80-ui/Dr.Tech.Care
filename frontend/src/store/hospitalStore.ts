@@ -94,7 +94,7 @@ const INITIAL_USERS: UserAccount[] = [
     status: 'active',
     code: 'ADM-01',
     password: DEFAULT_PASSWORD_HASH,
-    must_change_password: true,
+    must_change_password: false,
     phone: '02-555-0199',
     email: 'director@strongcare.hospital',
     created_at: '2026-01-10',
@@ -108,7 +108,7 @@ const INITIAL_USERS: UserAccount[] = [
     status: 'active',
     code: 'T-003',
     password: DEFAULT_PASSWORD_HASH,
-    must_change_password: true,
+    must_change_password: false,
     phone: '081-456-7890',
     email: 'thanakorn.w@strongcare.hospital',
     created_at: '2026-01-15',
@@ -122,7 +122,7 @@ const INITIAL_USERS: UserAccount[] = [
     status: 'active',
     code: 'T-007',
     password: DEFAULT_PASSWORD_HASH,
-    must_change_password: true,
+    must_change_password: false,
     phone: '089-765-4321',
     email: 'pimchanok.s@strongcare.hospital',
     created_at: '2026-01-20',
@@ -1061,10 +1061,10 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       return { success: false, error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง' };
     }
 
-    // Policy: Any password with length < 8, or user holding legacy DEFAULT_PASSWORD_HASH,
-    // or user having must_change_password flag set MUST change password immediately.
-    const isWeakPassword = cleanPassword.length < 8 || user.password === DEFAULT_PASSWORD_HASH;
-    const shouldChangePassword = Boolean(user.must_change_password || isWeakPassword);
+    // Policy: Demo passes (1234, admin, admin1234) can enter directly
+    const isDemoPassword = cleanPassword === '1234' || cleanPassword === 'admin' || cleanPassword === 'admin1234';
+    const isWeakPassword = !isDemoPassword && cleanPassword.length < 8;
+    const shouldChangePassword = Boolean(!isDemoPassword && (user.must_change_password || isWeakPassword));
 
     if (shouldChangePassword) {
       if (!user.must_change_password) {
