@@ -608,7 +608,7 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
               </button>
               <button
                 type="submit"
-                className="px-6 py-2.5 rounded-full bg-gradient-to-r from-[#10B981] to-[#059669] text-white text-sm font-bold shadow-lg shadow-emerald-600/20 hover:opacity-95 transition flex items-center gap-2"
+                className="px-6 py-2.5 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-sm font-bold shadow-lg shadow-cyan-500/25 hover:opacity-95 transition flex items-center gap-2 active:scale-95"
               >
                 <span>ขั้นตอนถัดไป: สแกนใบหน้าคนไข้</span>
                 <ArrowRight className="w-4 h-4" />
@@ -736,7 +736,7 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
                   type="button"
                   disabled={!detection?.detected || isProcessing}
                   onClick={() => handleCaptureAngle(scanStage)}
-                  className="px-6 py-2.5 rounded-full bg-[#10B981] text-white text-xs sm:text-sm font-bold shadow-lg shadow-emerald-600/25 hover:bg-emerald-600 transition disabled:opacity-50 flex items-center gap-2"
+                  className="px-6 py-2.5 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs sm:text-sm font-bold shadow-lg shadow-cyan-500/25 hover:opacity-95 transition disabled:opacity-50 flex items-center gap-2 active:scale-95"
                 >
                   <Camera className="w-4 h-4" />
                   <span>
@@ -822,7 +822,7 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
                     onSuccessNavigateToKiosk(createdPatientData);
                     onClose();
                   }}
-                  className="w-full sm:w-auto px-6 py-3 rounded-full bg-gradient-to-r from-[#10B981] to-[#059669] text-white text-sm font-bold shadow-lg shadow-emerald-600/30 hover:opacity-95 transition flex items-center justify-center gap-2"
+                  className="w-full sm:w-auto px-6 py-3 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-sm font-bold shadow-lg shadow-cyan-500/25 hover:opacity-95 transition flex items-center justify-center gap-2 active:scale-95"
                 >
                   <Sparkles className="w-4 h-4" />
                   <span>ทดสอบเข้าสู่ระบบตู้ทันที (Test Kiosk Face Login)</span>

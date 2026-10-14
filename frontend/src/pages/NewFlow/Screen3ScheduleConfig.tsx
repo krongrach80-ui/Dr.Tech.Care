@@ -622,7 +622,7 @@ export const Screen3ScheduleConfig: React.FC<Screen3ScheduleConfigProps> = ({
             className={`w-full min-h-[56px] py-3.5 px-6 rounded-full text-white font-extrabold text-base sm:text-lg shadow-lg flex items-center justify-center gap-2.5 transition-all outline-none focus-visible:ring-4 focus-visible:ring-emerald-400 ${
               category === 'stretch' && selectedStretchIds.length === 0
                 ? 'bg-stone-300 text-stone-500 cursor-not-allowed shadow-none'
-                : 'bg-gradient-to-r from-[#6FD67F] to-[#1E8A4C] shadow-emerald-600/25 hover:opacity-95 hover:shadow-emerald-600/35 active:scale-[0.98] cursor-pointer'
+                : 'bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] shadow-cyan-500/25 hover:opacity-95 hover:shadow-cyan-500/35 active:scale-[0.98] cursor-pointer'
             }`}
             id="btnPrimaryScheduleAction"
           >

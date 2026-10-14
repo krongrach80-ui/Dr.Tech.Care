@@ -3,31 +3,32 @@
 @tailwind utilities;
 
 /* ==========================================================================
-   CSS Variables & Strong Care Mint Design System
+   CSS Variables & Strong Care Green-White-Blue Gradient Design System
    ========================================================================== */
 :root {
-  /* Theme Background Gradients: Mint (#E8F8F1) -> White (#FFFFFF) -> Soft Blue (#E4F0FC) */
-  --bg-gradient-start: #E8F8F1;
+  /* Theme Background Gradients: Mint (#E6FBF2) -> White (#FFFFFF) -> Sky Blue (#E0F2FE) */
+  --bg-gradient-start: #E6FBF2;
   --bg-gradient-mid: #FFFFFF;
-  --bg-gradient-end: #E4F0FC;
-  --bg-app-gradient: linear-gradient(180deg, var(--bg-gradient-start) 0%, var(--bg-gradient-mid) 50%, var(--bg-gradient-end) 100%);
+  --bg-gradient-end: #E0F2FE;
+  --bg-app-gradient: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-mid) 48%, var(--bg-gradient-end) 100%);
 
-  /* Primary Button (#2FB39A -> #1E8A4C) */
-  --primary-green-start: #2FB39A;
-  --primary-green-end: #1E8A4C;
-  --primary-shadow: rgba(30, 138, 76, 0.35);
-  --primary-shadow-hover: rgba(30, 138, 76, 0.48);
+  /* Primary Button Gradient (Green #10B981 -> Cyan #06B6D4 -> Blue #2563EB) */
+  --primary-green-start: #10B981;
+  --primary-cyan-mid: #06B6D4;
+  --primary-blue-end: #2563EB;
+  --primary-shadow: rgba(16, 185, 129, 0.35);
+  --primary-shadow-hover: rgba(37, 99, 235, 0.45);
 
-  /* Secondary Button (Glassmorphism + 1.5px green border) */
-  --secondary-bg: rgba(255, 255, 255, 0.86);
-  --secondary-border: #1E8A4C;
-  --secondary-border-subtle: rgba(30, 138, 76, 0.28);
+  /* Secondary Button (Glassmorphism + 1.5px cyan/blue border) */
+  --secondary-bg: rgba(255, 255, 255, 0.90);
+  --secondary-border: #0284C7;
+  --secondary-border-subtle: rgba(2, 132, 199, 0.28);
 
   /* Typography Colors (High Contrast WCAG AA / AAA - Deep Green #0B2B2B / Deep Navy #1F3A4D) */
   --text-main: #0B2B2B;          /* Deep dark green-black (>7:1 contrast) */
   --text-navy: #1F3A4D;          /* Deep medical navy */
-  --text-muted: #22473E;
-  --text-subtle: #41695F;
+  --text-muted: #1E3A40;
+  --text-subtle: #335C67;
   --text-white: #FFFFFF;
 
   /* Cards & Accents */
@@ -35,9 +36,11 @@
   --card-border: #0B2B2B;        /* Thin black/dark border per specification */
   --card-radius: 28px;
   --radius-capsule: 9999px;
-  --accent-mint: #2FB39A;
-  --accent-mint-soft: #E8F8F1;
-  --accent-blue-soft: #E4F0FC;
+  --accent-mint: #10B981;
+  --accent-cyan: #06B6D4;
+  --accent-blue: #2563EB;
+  --accent-mint-soft: #E6FBF2;
+  --accent-blue-soft: #E0F2FE;
   --danger-color: #E63946;
 
   /* Fonts */
@@ -62,7 +65,7 @@
     width: 100%;
     font-family: var(--font-th);
     color: var(--text-main);
-    background: linear-gradient(180deg, var(--bg-gradient-start) 0%, var(--bg-gradient-mid) 50%, var(--bg-gradient-end) 100%);
+    background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-mid) 48%, var(--bg-gradient-end) 100%);
     background-attachment: fixed;
     background-repeat: no-repeat;
     background-size: cover;
@@ -72,24 +75,24 @@
 
 /* Keyboard Focus Ring */
 :focus-visible {
-  outline: 3px solid var(--primary-green-end);
+  outline: 3px solid var(--accent-cyan);
   outline-offset: 3px;
 }
 
-/* Custom modern light green scrollbar */
+/* Custom modern green-white-blue scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: rgba(232, 248, 241, 0.6);
+  background: rgba(230, 251, 242, 0.7);
 }
 ::-webkit-scrollbar-thumb {
-  background: #2FB39A;
+  background: linear-gradient(180deg, #10B981 0%, #06B6D4 50%, #2563EB 100%);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #1E8A4C;
+  background: linear-gradient(180deg, #059669 0%, #0891B2 50%, #1D4ED8 100%);
 }
 
 /* ==========================================================================
@@ -100,7 +103,7 @@
   max-width: 420px;
   min-height: var(--btn-min-height);
   padding: 14px 28px;
-  background: linear-gradient(135deg, var(--primary-green-start) 0%, var(--primary-green-end) 100%);
+  background: linear-gradient(135deg, #10B981 0%, #06B6D4 50%, #2563EB 100%);
   color: var(--text-white);
   font-family: var(--font-th);
   font-size: var(--btn-font-size);
@@ -210,8 +213,8 @@
   height: 4.5px;
   margin: 6px auto 0 auto;
   border-radius: 999px;
-  background: linear-gradient(90deg, #6FD67F, #1E8A4C);
-  box-shadow: 0 2px 6px rgba(30, 138, 76, 0.25);
+  background: linear-gradient(90deg, #10B981 0%, #06B6D4 50%, #2563EB 100%);
+  box-shadow: 0 2px 8px rgba(6, 182, 212, 0.35);
 }
 
 /* Keyframes & Smooth Hardware-Accelerated Animation Classes */

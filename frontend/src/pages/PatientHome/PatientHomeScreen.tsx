@@ -240,16 +240,16 @@ export const PatientHomeScreen: React.FC<PatientHomeScreenProps> = ({
         {/* Main Physical Therapy Workout Button */}
         <button
           onClick={() => onStartExercise('physio')}
-          className="w-full min-h-[68px] sm:min-h-[78px] py-4 px-6 rounded-[24px] bg-gradient-to-r from-[#2FB39A] via-[#1E8A4C] to-[#166534] text-white font-black text-lg sm:text-xl shadow-lg hover:shadow-xl hover:scale-[1.01] active:scale-95 transition flex items-center justify-between cursor-pointer border border-emerald-400"
+          className="w-full min-h-[68px] sm:min-h-[78px] py-4 px-6 rounded-[24px] bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-black text-lg sm:text-xl shadow-xl shadow-cyan-500/25 hover:shadow-2xl hover:scale-[1.01] active:scale-95 transition flex items-center justify-between cursor-pointer border-2 border-white/60"
           id="btnStartPrescribedPhysio"
         >
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
+            <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0 shadow-inner">
               <Play className="w-7 h-7 fill-white ml-0.5" />
             </div>
             <div className="text-left">
               <div>เริ่มต้นฝึกกายภาพบำบัด</div>
-              <div className="text-xs font-bold text-emerald-100 opacity-90">
+              <div className="text-xs font-bold text-cyan-100 opacity-95">
                 พร้อม AI วิเคราะห์ท่าและตรวจสอบความปลอดภัย
               </div>
             </div>
@@ -260,11 +260,11 @@ export const PatientHomeScreen: React.FC<PatientHomeScreenProps> = ({
         {/* Brain Minigame Training Button */}
         <button
           onClick={() => onStartExercise('minigame')}
-          className="w-full min-h-[56px] sm:min-h-[64px] py-3 px-5 rounded-[20px] bg-white hover:bg-emerald-50 border-2 border-emerald-400 text-[#0B2B2B] font-black text-sm sm:text-base shadow-sm active:scale-95 transition flex items-center justify-between cursor-pointer"
+          className="w-full min-h-[56px] sm:min-h-[64px] py-3 px-5 rounded-[20px] bg-white hover:bg-cyan-50/50 border-2 border-cyan-400 text-[#0B2B2B] font-black text-sm sm:text-base shadow-sm active:scale-95 transition flex items-center justify-between cursor-pointer"
           id="btnStartMinigameOption"
         >
           <div className="flex items-center gap-2.5">
-            <Gamepad2 className="w-5 h-5 text-emerald-600" />
+            <Gamepad2 className="w-5 h-5 text-cyan-600" />
             <span>มินิเกมฝึกสมองและการตอบสนอง (Interactive Quiz)</span>
           </div>
           <span className="text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
@@ -295,7 +295,7 @@ export const PatientHomeScreen: React.FC<PatientHomeScreenProps> = ({
 
             <button
               onClick={resetIdle}
-              className="w-full min-h-[64px] py-3.5 px-6 rounded-2xl bg-gradient-to-r from-[#2FB39A] to-[#1E8A4C] text-white font-black text-base shadow-lg hover:shadow-xl active:scale-95 transition cursor-pointer"
+              className="w-full min-h-[64px] py-3.5 px-6 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-black text-base shadow-lg shadow-cyan-500/25 hover:shadow-xl active:scale-95 transition cursor-pointer"
               id="btnStayLoggedIn"
             >
               ฉันยังอยู่ตรงนี้ (แตะเพื่อใช้งานต่อ)

@@ -977,7 +977,7 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
     return (
       <div className="w-full max-w-[540px] mx-auto flex flex-col items-center animate-fadeIn relative z-10 py-4 px-2">
         <div className="w-full bg-white/95 backdrop-blur-xl border border-emerald-300 rounded-[32px] p-6 sm:p-8 shadow-xl text-center space-y-6">
-          <div className="w-20 h-20 bg-gradient-to-tr from-[#1E8A4C] to-[#6FD67F] rounded-full mx-auto flex items-center justify-center text-white shadow-lg shadow-emerald-600/30">
+          <div className="w-20 h-20 bg-gradient-to-tr from-[#10B981] via-[#06B6D4] to-[#2563EB] rounded-full mx-auto flex items-center justify-center text-white shadow-lg shadow-cyan-500/25">
             <Sparkles className="w-10 h-10" />
           </div>
 
@@ -1663,7 +1663,7 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
             {/* Progress Bar Line */}
             <div className="w-full bg-white/20 rounded-full h-2.5 overflow-hidden p-0.5">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-[#6FD67F] to-[#1E8A4C] transition-all duration-300"
+                className="h-full rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] transition-all duration-300"
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
@@ -1751,7 +1751,7 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
             const poseName = `ท่าที่ ${currentIndex + 1}: ${currentExerciseConfig.name}`;
             onOpenTherapistModal(liveScore, poseName, rom);
           }}
-          className="h-full rounded-2xl bg-gradient-to-r from-[#6FD67F] to-[#1E8A4C] hover:brightness-105 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1 shadow-md active:scale-95 transition cursor-pointer"
+          className="h-full rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1 shadow-md shadow-cyan-500/25 active:scale-95 transition cursor-pointer"
           id="btnNotifyTherapist"
           title="ส่งผลให้นักกายภาพ"
         >

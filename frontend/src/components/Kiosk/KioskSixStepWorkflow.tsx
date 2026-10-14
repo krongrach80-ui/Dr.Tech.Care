@@ -2280,7 +2280,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   <button
                     type="button"
                     onClick={startCamera}
-                    className="w-full min-h-[46px] py-2.5 px-4 rounded-xl bg-gradient-to-r from-[#2FB39A] to-[#1E8A4C] hover:from-[#259b84] hover:to-[#166534] text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shadow-md"
+                    className="w-full min-h-[46px] py-2.5 px-4 rounded-xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shadow-md shadow-cyan-500/20"
                   >
                     <RefreshCw className="w-4 h-4" />
                     <span>ลองเปิดกล้องอีกครั้ง</span>
@@ -2310,7 +2310,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 </div>
                 <div className="w-full h-2.5 bg-white rounded-full overflow-hidden border border-emerald-300/80 shadow-inner">
                   <div
-                    className="h-full bg-gradient-to-r from-[#2FB39A] to-[#1E8A4C] transition-all duration-100 rounded-full"
+                    className="h-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] transition-all duration-100 rounded-full"
                     style={{ width: `${presenceProgress}%` }}
                   />
                 </div>
@@ -2399,7 +2399,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                     voiceAssistant.speak('ยินดีต้อนรับค่ะ คุณมีบัญชีผู้ป่วยแล้วหรือยังคะ? ถ้ามีให้ยกมือขวา ถ้าไม่มีให้ยกมือซ้าย หรือแตะปุ่มบนหน้าจอได้เลยค่ะ', { level: 'system' });
                   } catch {}
                 }}
-                className="w-full min-h-[64px] sm:min-h-[70px] py-3.5 sm:py-4 px-6 rounded-2xl bg-gradient-to-r from-[#2FB39A] via-[#1E8A4C] to-[#15803D] hover:from-[#259b84] hover:to-[#166534] text-white font-black text-base sm:text-lg shadow-xl hover:shadow-2xl active:scale-95 transition flex items-center justify-center gap-2.5 cursor-pointer border-2 border-emerald-300"
+                className="w-full min-h-[64px] sm:min-h-[70px] py-3.5 sm:py-4 px-6 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-black text-base sm:text-lg shadow-xl shadow-cyan-500/25 hover:shadow-2xl active:scale-95 transition flex items-center justify-center gap-2.5 cursor-pointer border-2 border-cyan-300"
                 id="btnSitInFrontOfCamera"
               >
                 <span>แตะหน้าจอเพื่อเริ่มต้นใช้งาน</span>
@@ -2756,7 +2756,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                       <button
                         type="submit"
                         disabled={kioskFormSubmitting}
-                        className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-sm shadow-md active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2"
+                        className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-black text-sm shadow-md shadow-cyan-500/25 active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2"
                       >
                         {kioskFormSubmitting ? (
                           <>
@@ -3492,7 +3492,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               <button
                 type="button"
                 onClick={handleGoToRegistration}
-                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-sm shadow-lg active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-black text-sm shadow-lg shadow-cyan-500/25 active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer"
                 id="btnGoToNewRegistration"
               >
                 <UserPlus className="w-5 h-5 text-emerald-200" />
@@ -3827,7 +3827,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   } catch {}
                   triggerSlideUp(4);
                 }}
-                className="min-h-[64px] py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#2FB39A] to-[#1E8A4C] hover:from-[#259b84] hover:to-[#166534] text-white border-2 border-emerald-300 font-black text-base sm:text-lg flex items-center justify-center gap-2 shadow-xl active:scale-95 transition cursor-pointer"
+                className="min-h-[64px] py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white border-2 border-cyan-300 font-black text-base sm:text-lg flex items-center justify-center gap-2 shadow-xl shadow-cyan-500/25 active:scale-95 transition cursor-pointer"
                 id="btnAccountModalYes"
               >
                 <CheckCircle2 className="w-6 h-6 text-white shrink-0" />
@@ -3915,7 +3915,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               <button
                 type="button"
                 onClick={() => setShowNewPatientInfoModal(false)}
-                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#2FB39A] to-[#1E8A4C] hover:from-[#259b84] hover:to-[#166534] text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg transition cursor-pointer"
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/25 transition cursor-pointer"
               >
                 <CheckCircle2 className="w-4 h-4 text-white" />
                 <span>เข้าใจแล้ว (กลับหน้าแรก)</span>
@@ -4080,7 +4080,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   } catch {}
                   triggerSlideUp();
                 }}
-                className="min-h-[64px] py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#2FB39A] to-[#1E8A4C] hover:from-[#259b84] hover:to-[#166534] text-white border-2 border-emerald-300 font-black text-base sm:text-lg flex items-center justify-center gap-2 shadow-xl active:scale-95 transition cursor-pointer"
+                className="min-h-[64px] py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white border-2 border-cyan-300 font-black text-base sm:text-lg flex items-center justify-center gap-2 shadow-xl shadow-cyan-500/25 active:scale-95 transition cursor-pointer"
                 id="btnPresenceModalYes"
               >
                 <CheckCircle2 className="w-6 h-6 text-white shrink-0" />

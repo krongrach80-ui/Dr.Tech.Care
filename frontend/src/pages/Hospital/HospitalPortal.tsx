@@ -1085,17 +1085,17 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
     // Sub-view B: Standard Staff Login Form
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-b from-[#E8F8F1] via-[#FFFFFF] to-[#E4F0FC] p-4 animate-fadeIn overflow-y-auto">
-        <div className="bg-white rounded-[32px] sm:rounded-[36px] border-2 border-emerald-300 p-6 sm:p-8 max-w-lg w-full shadow-2xl space-y-6 text-center my-auto">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-[#E6FBF2] via-[#FFFFFF] to-[#E0F2FE] p-4 animate-fadeIn overflow-y-auto">
+        <div className="bg-white rounded-[32px] sm:rounded-[36px] border-2 border-cyan-300 ring-4 ring-emerald-100/60 p-6 sm:p-8 max-w-lg w-full shadow-2xl space-y-6 text-center my-auto">
           {/* Header Banner */}
           <div className="space-y-3">
-            <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-[#10B981] to-[#059669] text-white mx-auto flex items-center justify-center shadow-lg shadow-emerald-600/30">
+            <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white mx-auto flex items-center justify-center shadow-xl shadow-cyan-500/30">
               <Shield className="w-8 h-8" />
             </div>
 
             <div>
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold mb-2">
-                <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-emerald-50 via-white to-sky-50 text-emerald-900 border border-cyan-200 text-xs font-bold mb-2 shadow-2xs">
+                <Sparkles className="w-3.5 h-3.5 text-cyan-600" />
                 <span>Dr.Tech.Care • Hospital Staff Portal</span>
               </div>
               <h2 className="text-xl sm:text-2xl font-black text-[#0F2F2B]">
@@ -1114,8 +1114,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
                 Username (ชื่อผู้ใช้) <span className="text-rose-500">*</span>
               </label>
-              <div className="bg-slate-50 rounded-2xl border border-emerald-200 p-3 flex items-center gap-2.5 focus-within:border-[#10B981] focus-within:ring-2 focus-within:ring-emerald-200 transition">
-                <User className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+              <div className="bg-slate-50 rounded-2xl border border-emerald-200 p-3 flex items-center gap-2.5 focus-within:border-cyan-500 focus-within:ring-2 focus-within:ring-cyan-200 transition">
+                <User className="w-5 h-5 text-cyan-600 flex-shrink-0" />
                 <input
                   type="text"
                   value={staffUsernameInput}
@@ -1136,8 +1136,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
                 Password (รหัสผ่าน) <span className="text-rose-500">*</span>
               </label>
-              <div className="bg-slate-50 rounded-2xl border border-emerald-200 p-3 flex items-center gap-2.5 focus-within:border-[#10B981] focus-within:ring-2 focus-within:ring-emerald-200 transition">
-                <Lock className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+              <div className="bg-slate-50 rounded-2xl border border-emerald-200 p-3 flex items-center gap-2.5 focus-within:border-cyan-500 focus-within:ring-2 focus-within:ring-cyan-200 transition">
+                <Lock className="w-5 h-5 text-cyan-600 flex-shrink-0" />
                 <input
                   type={showPassword ? 'text' : 'password'}
                   value={staffPasswordInput}
@@ -1161,7 +1161,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             </div>
 
             {/* Auto-detect role hint */}
-            <div className="text-[11px] text-emerald-800 bg-emerald-50/70 border border-emerald-200/80 rounded-xl px-3 py-2 flex items-center gap-2">
+            <div className="text-[11px] text-slate-700 bg-gradient-to-r from-emerald-50 via-white to-sky-50 border border-cyan-200 rounded-xl px-3 py-2 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
               <span>ระบบจะตรวจสอบสิทธิ์อัตโนมัติ: Admin (7 เมนู) หรือ นักกายภาพ (5 เมนู)</span>
             </div>
@@ -1179,7 +1179,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               <button
                 type="submit"
                 disabled={isLoggingIn}
-                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#2FB39A] via-[#1E8A4C] to-[#166534] text-white font-extrabold text-sm shadow-md shadow-emerald-700/25 hover:brightness-105 transition active:scale-95 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-extrabold text-sm shadow-lg shadow-cyan-500/25 hover:brightness-105 transition active:scale-95 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
                 id="btnStaffLoginSubmit"
               >
                 {isLoggingIn ? (
@@ -1275,31 +1275,28 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex bg-gradient-to-b from-[#E8F8F1] via-[#FFFFFF] to-[#E4F0FC] text-[#0F2F2B] font-sans overflow-hidden animate-fadeIn select-none">
+    <div className="fixed inset-0 z-50 flex bg-gradient-to-br from-[#E6FBF2] via-[#FFFFFF] to-[#E0F2FE] text-[#0F2F2B] font-sans overflow-hidden animate-fadeIn select-none">
       {/* ==================================================================== */}
-      {/* 1. LEFT SIDEBAR (Medical Emerald Theme)                              */}
-      {/* ==================================================================== */}
-      {/* ==================================================================== */}
-      {/* 1. LEFT SIDEBAR (Medical Emerald Theme)                              */}
+      {/* 1. LEFT SIDEBAR (Green-to-Blue Deep Medical Gradient Theme)           */}
       {/* ==================================================================== */}
       <aside
         className={`${
           isSidebarCollapsed ? 'w-16 sm:w-18 p-2.5 items-center' : 'w-56 sm:w-60 p-3.5 sm:p-4'
-        } bg-[#0F2F2B] text-white flex flex-col justify-between flex-shrink-0 shadow-2xl transition-all duration-200 z-30 select-none`}
+        } bg-gradient-to-b from-[#064E3B] via-[#0E3A45] to-[#0A2540] text-white flex flex-col justify-between flex-shrink-0 shadow-2xl border-r border-teal-800/40 transition-all duration-200 z-30 select-none`}
       >
         <div className="w-full">
           {/* Brand Logo & Collapse Toggle */}
-          <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center flex-col gap-2' : 'justify-between'} py-1.5 mb-3 border-b border-emerald-900/60`}>
+          <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center flex-col gap-2' : 'justify-between'} py-1.5 mb-3 border-b border-teal-700/50`}>
             <div className="flex items-center gap-2 min-w-0">
-              <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-[#4AE387] flex items-center justify-center shadow-md flex-shrink-0">
-                <HeartPulse className="w-4 h-4 text-[#4AE387]" />
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#10B981] to-[#06B6D4] text-white flex items-center justify-center shadow-md shadow-emerald-500/25 flex-shrink-0">
+                <HeartPulse className="w-4 h-4 text-white" />
               </div>
               {!isSidebarCollapsed && (
                 <div className="min-w-0">
                   <div className="font-extrabold text-sm tracking-tight leading-tight text-white truncate">
                     Dr.Tech.Care
                   </div>
-                  <div className="text-[10px] text-emerald-300/90 font-medium truncate">
+                  <div className="text-[10px] text-cyan-200/90 font-medium truncate">
                     {currentRole === 'admin' ? 'แอดมิน (Admin)' : 'นักกายภาพ (PT)'}
                   </div>
                 </div>
@@ -1308,7 +1305,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
             <button
               onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-              className="p-1 rounded-lg text-emerald-300 hover:text-white hover:bg-emerald-900/60 transition cursor-pointer flex-shrink-0"
+              className="p-1 rounded-lg text-cyan-200 hover:text-white hover:bg-white/10 transition cursor-pointer flex-shrink-0"
               title={isSidebarCollapsed ? 'ขยายเมนู' : 'ย่อเมนูเพื่อเพิ่มพื้นที่'}
             >
               {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
@@ -1329,16 +1326,16 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     isSidebarCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2'
                   } rounded-xl font-semibold text-xs transition-all text-left cursor-pointer ${
                     isActive
-                      ? 'bg-[#10B981] text-[#0F2F2B] font-extrabold shadow-md shadow-emerald-500/30'
-                      : 'text-emerald-100/75 hover:bg-emerald-950/60 hover:text-white'
+                      ? 'bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-black shadow-lg shadow-cyan-500/30 border border-white/20'
+                      : 'text-emerald-100/80 hover:bg-white/10 hover:text-white'
                   }`}
                 >
-                  <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-[#0F2F2B]' : 'text-emerald-300'}`} />
+                  <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-white' : 'text-cyan-300'}`} />
                   {!isSidebarCollapsed && <span className="flex-1 truncate">{item.label}</span>}
                   {!isSidebarCollapsed && item.id === 'schedules' && (
                     <span
                       className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${
-                        isActive ? 'bg-[#0F2F2B] text-[#4AE387]' : 'bg-emerald-500/30 text-emerald-200'
+                        isActive ? 'bg-white/25 text-white' : 'bg-cyan-500/30 text-cyan-100'
                       }`}
                     >
                       {treatmentPlans.length}
@@ -1351,11 +1348,11 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         </div>
 
         {/* Bottom Sidebar Info & Logout */}
-        <div className="pt-3 border-t border-emerald-900/60 space-y-1.5 w-full">
+        <div className="pt-3 border-t border-teal-700/50 space-y-1.5 w-full">
           {!isSidebarCollapsed && (
-            <div className="px-2.5 py-1.5 rounded-xl bg-emerald-950/40 border border-emerald-800/40 text-[10px] text-emerald-300/80">
+            <div className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-[#064E3B]/70 to-[#0A2540]/70 border border-cyan-500/30 text-[10px] text-cyan-200/90 shadow-2xs">
               <div className="truncate">ฐานข้อมูล: <span className={isSupabaseConnected ? "text-[#4AE387] font-bold" : "text-amber-400 font-bold"}>{isSupabaseConnected ? "Cloud 🟢" : "Local 🟡"}</span></div>
-              <div className="text-[10px] text-emerald-400/80 truncate">ผู้ใช้: {currentUser?.name?.split(' ')[0] || currentUser?.username}</div>
+              <div className="text-[10px] text-cyan-300/80 truncate">ผู้ใช้: {currentUser?.name?.split(' ')[0] || currentUser?.username}</div>
             </div>
           )}
 
@@ -1375,7 +1372,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             title="กลับหน้าหลักตู้คนไข้"
             className={`w-full flex items-center ${
               isSidebarCollapsed ? 'justify-center p-2' : 'gap-2 px-3 py-1.5'
-            } rounded-xl border border-emerald-800/60 text-emerald-300/80 text-[11px] font-medium hover:bg-emerald-900/50 hover:text-white transition active:scale-95 cursor-pointer`}
+            } rounded-xl border border-cyan-700/60 text-cyan-200/90 text-[11px] font-medium hover:bg-white/10 hover:text-white transition active:scale-95 cursor-pointer`}
           >
             <ArrowLeft className="w-3.5 h-3.5 flex-shrink-0" />
             {!isSidebarCollapsed && <span>กลับหน้าตู้ Kiosk</span>}
@@ -1386,14 +1383,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       {/* ==================================================================== */}
       {/* 2. MAIN CONTENT AREA                                                 */}
       {/* ==================================================================== */}
-      <main className="flex-1 flex flex-col h-full overflow-hidden bg-gradient-to-b from-[#E8F8F1] via-[#FFFFFF] to-[#E4F0FC]">
+      <main className="flex-1 flex flex-col h-full overflow-hidden bg-gradient-to-br from-[#E6FBF2] via-[#FFFFFF] to-[#E0F2FE]">
         {/* Top Header Bar */}
-        <header className="h-16 px-3.5 sm:px-6 border-b border-emerald-100 bg-white/90 backdrop-blur-md flex items-center justify-between flex-shrink-0 gap-2">
+        <header className="h-16 px-3.5 sm:px-6 border-b border-cyan-100/80 bg-gradient-to-r from-white/95 via-[#F0FDF4]/90 to-[#F0F9FF]/95 backdrop-blur-md flex items-center justify-between flex-shrink-0 gap-2">
           {/* Header Title with Mobile Collapse Toggle */}
           <div className="flex items-center gap-2.5 min-w-0">
             <button
               onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-              className="p-1.5 rounded-xl bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200/80 transition cursor-pointer flex-shrink-0"
+              className="p-1.5 rounded-xl bg-gradient-to-r from-emerald-50 to-sky-50 text-emerald-800 hover:text-cyan-800 border border-cyan-200 transition cursor-pointer flex-shrink-0 shadow-2xs"
               title={isSidebarCollapsed ? 'ขยายเมนู' : 'ย่อเมนู'}
             >
               <Menu className="w-4 h-4" />
@@ -1419,14 +1416,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   {activeTab === 'settings' && '(Settings)'}
                 </span>
               </h1>
-              <div className="w-10 sm:w-16 h-1 rounded-full bg-[#10B981] mt-0.5" />
+              <div className="w-10 sm:w-16 h-1 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] mt-0.5 shadow-xs" />
             </div>
           </div>
 
           {/* Right Header Controls */}
           <div className="flex items-center gap-2 flex-shrink-0">
             {/* Supabase Connection Status Indicator */}
-            <div className={`hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${isSupabaseConnected ? 'bg-emerald-50 text-emerald-800 border-emerald-300' : 'bg-amber-50 text-amber-800 border-amber-300'}`}>
+            <div className={`hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${isSupabaseConnected ? 'bg-gradient-to-r from-emerald-50 to-sky-50 text-emerald-800 border-cyan-300' : 'bg-amber-50 text-amber-800 border-amber-300'}`}>
               <span className={`w-2 h-2 rounded-full ${isSupabaseConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
               <span>{isSupabaseConnected ? 'Supabase 🟢' : 'Offline 🟡'}</span>
             </div>
@@ -1434,17 +1431,17 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             {/* Quick Reception Action button */}
             <button
               onClick={() => setIsReceptionOpen(true)}
-              className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-[#10B981] to-[#059669] text-white text-xs font-bold shadow-xs hover:opacity-95 transition cursor-pointer"
+              className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-[#10B981] via-[#0284C7] to-[#2563EB] text-white text-xs font-bold shadow-md shadow-cyan-500/20 hover:opacity-95 transition cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5" />
               <span>+ ต้อนรับ & สแกนหน้า</span>
             </button>
 
             {/* User Profile Badge (Real user + role) */}
-            <div className="flex items-center gap-2 pl-2 border-l border-emerald-200">
+            <div className="flex items-center gap-2 pl-2 border-l border-cyan-200">
               <div
-                className={`w-8 h-8 rounded-full font-extrabold flex items-center justify-center text-xs shadow-xs flex-shrink-0 ${
-                  currentRole === 'admin' ? 'bg-[#0F2F2B] text-amber-300' : 'bg-[#10B981] text-white'
+                className={`w-8 h-8 rounded-full font-extrabold flex items-center justify-center text-xs shadow-md flex-shrink-0 ${
+                  currentRole === 'admin' ? 'bg-[#0A2540] text-amber-300' : 'bg-gradient-to-br from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white'
                 }`}
               >
                 {currentUser?.name?.charAt(0) || (currentRole === 'admin' ? 'ผ' : 'ธ')}
@@ -1506,8 +1503,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
               {/* Top Stats Cards */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5">
-                <div className="bg-white rounded-2xl p-3 sm:p-3.5 border border-emerald-100 shadow-2xs flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
+                <div className="bg-gradient-to-br from-white via-emerald-50/40 to-teal-50/20 rounded-2xl p-3 sm:p-3.5 border border-emerald-200/80 shadow-xs flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-100 to-teal-100 text-emerald-700 flex items-center justify-center flex-shrink-0 shadow-2xs">
                     <Users className="w-5 h-5" />
                   </div>
                   <div className="min-w-0">
@@ -1518,8 +1515,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   </div>
                 </div>
 
-                <div className="bg-white rounded-2xl p-3 sm:p-3.5 border border-emerald-100 shadow-2xs flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
+                <div className="bg-gradient-to-br from-white via-teal-50/40 to-cyan-50/20 rounded-2xl p-3 sm:p-3.5 border border-teal-200/80 shadow-xs flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-100 to-cyan-100 text-teal-700 flex items-center justify-center flex-shrink-0 shadow-2xs">
                     <User className="w-5 h-5" />
                   </div>
                   <div className="min-w-0">
@@ -1530,8 +1527,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   </div>
                 </div>
 
-                <div className="bg-white rounded-2xl p-3 sm:p-3.5 border border-emerald-100 shadow-2xs flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
+                <div className="bg-gradient-to-br from-white via-sky-50/40 to-blue-50/20 rounded-2xl p-3 sm:p-3.5 border border-sky-200/80 shadow-xs flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-100 to-blue-100 text-sky-700 flex items-center justify-center flex-shrink-0 shadow-2xs">
                     <Stethoscope className="w-5 h-5" />
                   </div>
                   <div className="min-w-0">
@@ -1542,8 +1539,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   </div>
                 </div>
 
-                <div className="bg-white rounded-2xl p-3 sm:p-3.5 border border-emerald-100 shadow-2xs flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
+                <div className="bg-gradient-to-br from-white via-blue-50/40 to-indigo-50/20 rounded-2xl p-3 sm:p-3.5 border border-blue-200/80 shadow-xs flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 flex items-center justify-center flex-shrink-0 shadow-2xs">
                     <Shield className="w-5 h-5" />
                   </div>
                   <div className="min-w-0">
@@ -1567,19 +1564,19 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       setUserPage(1);
                     }}
                     placeholder="ค้นหาชื่อ, username, รหัส..."
-                    className="w-full pl-9 pr-3.5 py-1.5 sm:py-2 rounded-full bg-white border border-emerald-200/90 text-xs font-semibold text-[#0F2F2B] placeholder:text-slate-400 shadow-2xs focus:outline-none focus:ring-2 focus:ring-[#10B981]"
+                    className="w-full pl-9 pr-3.5 py-1.5 sm:py-2 rounded-full bg-white border border-cyan-200 text-xs font-semibold text-[#0F2F2B] placeholder:text-slate-400 shadow-2xs focus:outline-none focus:ring-2 focus:ring-[#06B6D4]"
                   />
                 </div>
 
                 <div className="flex items-center gap-2 justify-between sm:justify-end flex-wrap">
-                  <div className="flex items-center gap-1 p-1 rounded-full bg-emerald-50/80 border border-emerald-200/80">
+                  <div className="flex items-center gap-1 p-1 rounded-full bg-gradient-to-r from-emerald-50/80 via-white to-sky-50/80 border border-cyan-200/80 shadow-2xs">
                     <button
                       onClick={() => {
                         setUserRoleFilter('all');
                         setUserPage(1);
                       }}
                       className={`text-xs font-bold px-2.5 sm:px-3 py-1 rounded-full transition cursor-pointer ${
-                        userRoleFilter === 'all' ? 'bg-[#10B981] text-white shadow-xs' : 'text-slate-600 hover:text-emerald-800'
+                        userRoleFilter === 'all' ? 'bg-gradient-to-r from-[#10B981] to-[#0284C7] text-white shadow-xs' : 'text-slate-600 hover:text-cyan-800'
                       }`}
                     >
                       ทั้งหมด
@@ -1590,7 +1587,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         setUserPage(1);
                       }}
                       className={`text-xs font-bold px-2.5 sm:px-3 py-1 rounded-full transition cursor-pointer ${
-                        userRoleFilter === 'patient' ? 'bg-[#10B981] text-white shadow-xs' : 'text-slate-600 hover:text-emerald-800'
+                        userRoleFilter === 'patient' ? 'bg-gradient-to-r from-[#10B981] to-[#0284C7] text-white shadow-xs' : 'text-slate-600 hover:text-cyan-800'
                       }`}
                     >
                       คนไข้
@@ -1601,7 +1598,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         setUserPage(1);
                       }}
                       className={`text-xs font-bold px-2.5 sm:px-3 py-1 rounded-full transition cursor-pointer ${
-                        userRoleFilter === 'therapist' ? 'bg-[#10B981] text-white shadow-xs' : 'text-slate-600 hover:text-emerald-800'
+                        userRoleFilter === 'therapist' ? 'bg-gradient-to-r from-[#10B981] to-[#0284C7] text-white shadow-xs' : 'text-slate-600 hover:text-cyan-800'
                       }`}
                     >
                       นักกายภาพ
@@ -1610,15 +1607,15 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
                   <button
                     onClick={() => setActiveTab('schedules')}
-                    className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold hover:bg-emerald-100 transition cursor-pointer"
+                    className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-emerald-50 to-sky-50 text-slate-700 border border-cyan-200 text-xs font-bold hover:border-cyan-400 transition cursor-pointer"
                   >
-                    <CalendarDays className="w-3.5 h-3.5 text-emerald-600" />
+                    <CalendarDays className="w-3.5 h-3.5 text-cyan-600" />
                     <span>ตารางกายภาพ ({treatmentPlans.length})</span>
                   </button>
 
                   <button
                     onClick={() => setIsAddUserModalOpen(true)}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 sm:py-2 rounded-full bg-[#10B981] text-white text-xs font-bold shadow-xs hover:bg-emerald-600 transition active:scale-95 cursor-pointer whitespace-nowrap"
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 sm:py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-bold shadow-md shadow-cyan-500/25 hover:brightness-105 transition active:scale-95 cursor-pointer whitespace-nowrap"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     <span>{currentRole === 'admin' ? 'เพิ่มบัญชีใหม่' : 'เพิ่มคนไข้'}</span>
@@ -1627,12 +1624,12 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               </div>
 
               {/* Table of Users */}
-              <div className="bg-white rounded-2xl border border-emerald-100 shadow-xs overflow-hidden">
+              <div className="bg-white rounded-2xl border border-cyan-100 shadow-xs overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs sm:text-sm border-collapse">
                     <thead>
-                      <tr className="border-b border-emerald-100 text-slate-600 text-[11px] font-bold uppercase tracking-wider bg-emerald-50/70">
-                        <th className="py-2.5 px-3 sm:px-4 sticky left-0 bg-emerald-50 z-20 shadow-xs border-r border-emerald-100/70 min-w-[160px] sm:min-w-[190px]">
+                      <tr className="border-b border-cyan-100 text-slate-700 text-[11px] font-bold uppercase tracking-wider bg-gradient-to-r from-emerald-50/80 via-white to-sky-50/80">
+                        <th className="py-2.5 px-3 sm:px-4 sticky left-0 bg-gradient-to-r from-emerald-50 to-white z-20 shadow-xs border-r border-cyan-100 min-w-[160px] sm:min-w-[190px]">
                           บัญชี / ชื่อผู้ใช้งาน
                         </th>
                         <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap min-w-[125px]">รหัสผ่าน (Password)</th>
@@ -2042,7 +2039,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
                   <button
                     onClick={() => setIsReceptionOpen(true)}
-                    className="px-4 py-2 rounded-full bg-[#10B981] text-white text-xs font-bold shadow-md hover:bg-emerald-600 transition flex items-center gap-2 cursor-pointer whitespace-nowrap"
+                    className="px-4 py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-bold shadow-md shadow-cyan-500/25 hover:opacity-95 transition flex items-center gap-2 cursor-pointer whitespace-nowrap active:scale-95"
                   >
                     <Plus className="w-4 h-4" />
                     <span>+ ลงทะเบียนคนไข้ใหม่</span>
@@ -2158,7 +2155,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                 showToast(`เลือกคนไข้ ${patient.name} เข้าสู่การฝึกกายภาพที่ตู้`);
                                 onClose();
                               }}
-                              className="px-4 py-2 rounded-full bg-[#10B981] text-white text-xs font-bold hover:bg-emerald-600 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                              className="px-4 py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-bold hover:opacity-95 transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-cyan-500/25 active:scale-95"
                             >
                               <Play className="w-3.5 h-3.5" />
                               <span>เข้าทำกายภาพที่ตู้</span>
@@ -2627,7 +2624,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                             setSelectedPlanForEdit(null);
                             setIsTreatmentPlanModalOpen(true);
                           }}
-                          className="px-3.5 py-1.5 rounded-xl bg-[#10B981] hover:bg-emerald-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+                          className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm shadow-cyan-500/25 transition cursor-pointer active:scale-95"
                         >
                           <Plus className="w-4 h-4" />
                           <span>+ เพิ่มนัดวันนี้</span>
@@ -2736,7 +2733,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                       showToast(`สั่งเปิดตู้ Kiosk เริ่มฝึกตามตารางของ ${p.patientName}`);
                                       onClose();
                                     }}
-                                    className="px-3 py-1.5 rounded-xl bg-[#10B981] hover:bg-emerald-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+                                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm shadow-cyan-500/25 transition cursor-pointer active:scale-95"
                                     title="เปิดตู้ Kiosk ให้คนไข้เข้าฝึกทันที"
                                   >
                                     <Play className="w-3.5 h-3.5 fill-white" />
@@ -3115,7 +3112,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                                       showToast(`เปิดตู้ Kiosk เริ่มฝึกตามตารางของ ${p.patientName}`);
                                                       onClose();
                                                     }}
-                                                    className="px-2 py-0.5 rounded-lg bg-[#10B981] hover:bg-emerald-600 text-white font-bold text-[10px] flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                                                    className="px-2 py-0.5 rounded-lg bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-bold text-[10px] flex items-center gap-1 transition cursor-pointer shadow-2xs active:scale-95"
                                                     title="สั่งเปิดตู้ Kiosk ให้คนไข้เข้าฝึกทันที"
                                                   >
                                                     <Play className="w-2.5 h-2.5 fill-white" />
@@ -3620,7 +3617,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   {currentRole === 'admin' && (
                     <button
                       onClick={() => setIsAddTherapistOpen(true)}
-                      className="px-4 py-2 rounded-full bg-[#10B981] text-white text-xs font-bold shadow-md hover:bg-emerald-600 transition flex items-center gap-2 cursor-pointer whitespace-nowrap"
+                      className="px-4 py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-bold shadow-md shadow-cyan-500/25 hover:opacity-95 transition flex items-center gap-2 cursor-pointer whitespace-nowrap active:scale-95"
                     >
                       <Plus className="w-4 h-4" />
                       <span>+ เพิ่มนักกายภาพ</span>
@@ -3804,7 +3801,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       </div>
                       <button
                         onClick={() => setIsAddExerciseOpen(true)}
-                        className="px-4 py-2 rounded-full bg-[#10B981] hover:bg-emerald-600 text-white text-xs font-bold shadow-md transition flex items-center gap-2 cursor-pointer whitespace-nowrap"
+                        className="px-4 py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white text-xs font-bold shadow-md shadow-cyan-500/25 transition flex items-center gap-2 cursor-pointer whitespace-nowrap active:scale-95"
                       >
                         <Plus className="w-4 h-4" />
                         <span>+ เพิ่มท่าทางใหม่</span>
@@ -3813,7 +3810,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   ) : (
                     <button
                       onClick={() => setIsCreateModpackOpen(true)}
-                      className="px-4 py-2 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md transition flex items-center gap-2 cursor-pointer whitespace-nowrap"
+                      className="px-4 py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white text-xs font-bold shadow-md shadow-cyan-500/25 transition flex items-center gap-2 cursor-pointer whitespace-nowrap active:scale-95"
                     >
                       <PackagePlus className="w-4 h-4" />
                       <span>+ สร้างชุดท่าฝึกใหม่ (Create Modpack)</span>
@@ -3870,7 +3867,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         )}
                         <button
                           onClick={() => setIsAddExerciseOpen(true)}
-                          className="px-4 py-2 rounded-full bg-[#10B981] text-white text-xs font-bold hover:bg-emerald-600 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                          className="px-4 py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-bold hover:opacity-95 transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-cyan-500/25 active:scale-95"
                         >
                           <Plus className="w-3.5 h-3.5" />
                           <span>+ เพิ่มท่าทางใหม่</span>
@@ -4379,7 +4376,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   <button
                     onClick={handleSaveSettings}
                     disabled={isSavingSettings}
-                    className="px-5 py-2 rounded-full bg-[#10B981] text-white text-xs font-bold shadow-md hover:bg-emerald-600 transition cursor-pointer flex items-center gap-1.5 disabled:bg-emerald-300"
+                    className="px-5 py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-bold shadow-md shadow-cyan-500/25 hover:opacity-95 transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50 active:scale-95"
                   >
                     {isSavingSettings ? (
                       <>
@@ -4887,7 +4884,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-full bg-[#10B981] text-white font-bold shadow-md hover:bg-emerald-600 transition cursor-pointer"
+                  className="px-5 py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-bold shadow-md shadow-cyan-500/25 hover:opacity-95 transition cursor-pointer active:scale-95"
                 >
                   ยืนยันเพิ่ม
                 </button>

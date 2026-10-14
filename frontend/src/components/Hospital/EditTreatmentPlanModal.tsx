@@ -537,7 +537,7 @@ export const EditTreatmentPlanModal: React.FC<EditTreatmentPlanModalProps> = ({
         {/* Modal Header */}
         <div className="flex items-start justify-between border-b border-emerald-100 pb-3 flex-shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#10B981] to-[#059669] text-white flex items-center justify-center shadow-md shadow-emerald-500/20">
+            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white flex items-center justify-center shadow-md shadow-cyan-500/25">
               <Calendar className="w-6 h-6" />
             </div>
             <div>
@@ -1197,7 +1197,7 @@ export const EditTreatmentPlanModal: React.FC<EditTreatmentPlanModalProps> = ({
               <button
                 type="button"
                 onClick={step === 1 ? handleStep1Next : handleStep2Next}
-                className="px-5 py-2 rounded-xl bg-gradient-to-r from-[#10B981] to-[#059669] text-white font-bold hover:opacity-95 transition flex items-center gap-1.5 cursor-pointer shadow-md"
+                className="px-5 py-2 rounded-xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-bold hover:opacity-95 transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-cyan-500/25 active:scale-95"
               >
                 <span>ถัดไป</span>
                 <ArrowRight className="w-4 h-4" />
@@ -1207,7 +1207,7 @@ export const EditTreatmentPlanModal: React.FC<EditTreatmentPlanModalProps> = ({
                 type="button"
                 onClick={handleSubmit}
                 disabled={isSubmitting}
-                className="px-5 py-2 rounded-xl bg-gradient-to-r from-[#10B981] to-[#059669] text-white font-bold hover:opacity-95 transition flex items-center gap-2 cursor-pointer shadow-md disabled:opacity-50"
+                className="px-5 py-2 rounded-xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-bold hover:opacity-95 transition flex items-center gap-2 cursor-pointer shadow-md shadow-cyan-500/25 disabled:opacity-50 active:scale-95"
               >
                 <Check className="w-4 h-4" />
                 <span>{isSubmitting ? 'กำลังบันทึก...' : 'บันทึกตารางฝึก'}</span>

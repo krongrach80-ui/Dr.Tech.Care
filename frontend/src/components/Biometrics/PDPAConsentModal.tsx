@@ -68,7 +68,7 @@ export const PDPAConsentModal: React.FC<PDPAConsentModalProps> = ({
         <div className="w-full space-y-3">
           <button
             onClick={onConsent}
-            className="w-full min-h-[64px] sm:min-h-[72px] py-3.5 px-6 rounded-2xl bg-gradient-to-r from-[#2FB39A] via-[#1E8A4C] to-[#166534] text-white font-black text-base sm:text-lg shadow-lg hover:shadow-xl hover:scale-[1.01] active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer border border-emerald-400"
+            className="w-full min-h-[64px] sm:min-h-[72px] py-3.5 px-6 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-black text-base sm:text-lg shadow-xl shadow-cyan-500/25 hover:shadow-2xl hover:scale-[1.01] active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer border-2 border-white/60"
             id="btnPdpaConsent"
           >
             <CheckCircle2 className="w-6 h-6 shrink-0" />

@@ -58,7 +58,7 @@ export const Screen3Menu: React.FC<Screen3MenuProps> = ({
               className="w-12 h-12 rounded-full object-cover border-2 border-emerald-500 shadow-sm flex-shrink-0"
             />
           ) : (
-            <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-[#6FD67F] to-[#1E8A4C] flex items-center justify-center text-white font-bold text-xl shadow-sm flex-shrink-0">
+            <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-[#10B981] via-[#06B6D4] to-[#2563EB] flex items-center justify-center text-white font-bold text-xl shadow-md shadow-cyan-500/25 flex-shrink-0">
               {userName.charAt(0) || 'ส'}
             </div>
           )}

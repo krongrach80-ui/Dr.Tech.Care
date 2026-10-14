@@ -288,9 +288,9 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
         {/* ================================================================= */}
         {/* 1. MODAL HEADER                                                   */}
         {/* ================================================================= */}
-        <div className="px-6 py-4 border-b border-emerald-100 bg-gradient-to-r from-emerald-50/80 via-white to-emerald-50/40 flex items-center justify-between flex-shrink-0">
+        <div className="px-6 py-4 border-b border-cyan-100 bg-gradient-to-r from-emerald-50/90 via-white to-cyan-50/70 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-[#10B981] text-white flex items-center justify-center shadow-md shadow-emerald-500/20">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white flex items-center justify-center shadow-md shadow-cyan-500/25">
               <User className="w-5 h-5" />
             </div>
             <div>
@@ -795,7 +795,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="px-6 py-2.5 rounded-full bg-gradient-to-r from-[#10B981] to-[#059669] hover:brightness-105 text-white font-bold shadow-md shadow-emerald-500/20 transition active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                className="px-6 py-2.5 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-bold shadow-md shadow-cyan-500/25 transition active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
                 <Check className="w-4 h-4" />
                 <span>{isSubmitting ? 'กำลังบันทึก...' : 'บันทึกบัญชี'}</span>

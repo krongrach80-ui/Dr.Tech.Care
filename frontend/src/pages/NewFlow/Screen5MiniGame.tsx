@@ -422,7 +422,7 @@ export const Screen5MiniGame: React.FC<Screen5MiniGameProps> = ({
             </span>
             <div className="w-16 sm:w-24 h-2 rounded-full bg-emerald-100 overflow-hidden hidden sm:block">
               <div
-                className="h-full bg-gradient-to-r from-[#6FD67F] to-[#1E8A4C] rounded-full transition-all duration-300"
+                className="h-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] rounded-full transition-all duration-300"
                 style={{
                   width: `${Math.round(((currentIndex + 1) / totalQuestions) * 100)}%`,
                 }}
@@ -566,7 +566,7 @@ export const Screen5MiniGame: React.FC<Screen5MiniGameProps> = ({
         <div className="w-full max-w-2xl bg-white rounded-3xl p-6 sm:p-8 shadow-2xl border-2 border-emerald-300 flex flex-col items-center text-center animate-fadeIn my-auto">
           
           {/* Header Trophy Icon */}
-          <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-tr from-[#6FD67F] to-[#1E8A4C] flex items-center justify-center text-white shadow-lg mb-4 ring-8 ring-emerald-100 animate-bounce">
+          <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-tr from-[#10B981] via-[#06B6D4] to-[#2563EB] flex items-center justify-center text-white shadow-lg shadow-cyan-500/25 mb-4 ring-8 ring-cyan-100 animate-bounce">
             <Trophy className="w-10 h-10 sm:w-12 sm:h-12 fill-white" />
           </div>
 

@@ -92,7 +92,7 @@ class RootErrorBoundary extends Component<Props, State> {
             )}
             <button
               onClick={() => window.location.reload()}
-              className="w-full py-3 bg-[#1E8A4C] text-white font-bold rounded-2xl hover:bg-[#156C3B] shadow-lg shadow-emerald-700/20 transition active:scale-95"
+              className="w-full py-3 bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-bold rounded-2xl hover:opacity-95 shadow-lg shadow-cyan-500/25 transition active:scale-95 cursor-pointer"
             >
               รีเฟรชหน้าเว็บ (Reload Page)
             </button>

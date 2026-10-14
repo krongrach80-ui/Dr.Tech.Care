@@ -41,8 +41,11 @@ export default {
         },
       },
       backgroundImage: {
-        'elderly-gradient': 'linear-gradient(180deg, #E8F8F1 0%, #FFFFFF 50%, #E4F0FC 100%)',
-        'kiosk-gradient': 'linear-gradient(180deg, #E8F8F1 0%, #FFFFFF 50%, #E4F0FC 100%)',
+        'elderly-gradient': 'linear-gradient(135deg, #E6FBF2 0%, #FFFFFF 48%, #E0F2FE 100%)',
+        'kiosk-gradient': 'linear-gradient(135deg, #E6FBF2 0%, #FFFFFF 48%, #E0F2FE 100%)',
+        'green-white-blue': 'linear-gradient(135deg, #10B981 0%, #FFFFFF 50%, #2563EB 100%)',
+        'green-blue-gradient': 'linear-gradient(135deg, #10B981 0%, #06B6D4 50%, #2563EB 100%)',
+        'admin-sidebar-gradient': 'linear-gradient(180deg, #064E3B 0%, #0E3A45 50%, #0A2540 100%)',
       },
       borderRadius: {
         'card': '18px',

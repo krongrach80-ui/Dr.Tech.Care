@@ -61,7 +61,7 @@ export const Screen1Home: React.FC<Screen1HomeProps> = ({
         <h1 className="font-sans font-extrabold text-[clamp(2.2rem,6vw,3.4rem)] text-[#0B2B2B] tracking-tight leading-none">
           Dr.Tech.Care
         </h1>
-        <div className="w-48 sm:w-64 h-1.5 rounded-full bg-gradient-to-r from-[#6FD67F] to-[#1E8A4C] mt-3 shadow-sm" />
+        <div className="w-48 sm:w-64 h-1.5 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] mt-3 shadow-md shadow-cyan-500/30" />
 
         {/* ใต้ชื่อ: วัน/เดือน/ปี/เวลา ปัจจุบันแบบเรียลไทม์ (รูปแบบไทย, ปี พ.ศ.) */}
         <div className="mt-6 w-full max-w-[340px] bg-white/85 backdrop-blur-md border border-emerald-200/70 rounded-2xl p-4 shadow-sm text-center">
