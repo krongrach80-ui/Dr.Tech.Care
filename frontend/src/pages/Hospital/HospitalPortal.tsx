@@ -69,6 +69,7 @@ import { BannedManagementModal } from '../../components/Hospital/BannedManagemen
 import { EditTreatmentPlanModal } from '../../components/Hospital/EditTreatmentPlanModal';
 import { NetworkSyncModal } from '../../components/Hospital/NetworkSyncModal';
 import { patientFaceStorageService } from '../../services/patientFaceStorageService';
+import { supabase } from '../../lib/supabase';
 
 const THAI_MONTH_NAMES = [
   'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
@@ -152,9 +153,44 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     initializeFromSupabase,
   } = useHospitalStore();
 
-  // Load from Supabase on mount
+  // Load from Supabase on mount and listen to Realtime changes
   useEffect(() => {
+    // 1. Initial fetch
     initializeFromSupabase();
+
+    // 2. Realtime listener on 'patients' table
+    console.info('[SUPABASE REALTIME] Subscribing to public:patients changes in Admin Dashboard...');
+    const channel = supabase
+      .channel('public:patients_portal')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'patients' },
+        (payload) => {
+          console.info('[SUPABASE REALTIME] Postgres change detected on patients table:', payload);
+          initializeFromSupabase();
+        }
+      )
+      .on('broadcast', { event: 'patient_registered' }, (payload) => {
+        console.info('[SUPABASE REALTIME] Broadcast patient event received:', payload);
+        initializeFromSupabase();
+      })
+      .subscribe((status, err) => {
+        if (err) {
+          console.error('[SUPABASE REALTIME] Subscription error:', err);
+        } else {
+          console.info('[SUPABASE REALTIME] Subscription status:', status);
+        }
+      });
+
+    // 3. Fallback polling every 4 seconds to guarantee updates across devices
+    const poller = setInterval(() => {
+      initializeFromSupabase();
+    }, 4000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(poller);
+    };
   }, [initializeFromSupabase]);
 
   // Active Tab

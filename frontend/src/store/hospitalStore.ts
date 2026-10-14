@@ -13,6 +13,7 @@ import {
 } from '../types/hospital';
 import { faceService } from '../services/faceService';
 import { supabaseService } from '../services/supabaseService';
+import { supabase } from '../lib/supabase';
 import { faceRegistryService } from '../services/faceRegistryService';
 import { patientSyncService } from '../services/patientSyncService';
 import { patientFaceStorageService } from '../services/patientFaceStorageService';
@@ -966,13 +967,13 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   initializeFromSupabase: async () => {
     set({ isLoadingFromDb: true });
 
-    // 1. Fetch from Central Node.js Server (Single Source of Truth across devices)
+    // 1. Fetch from Central Node.js Server (Single Source of Truth across devices if available)
     await get().fetchPatientsFromCentralApi();
 
     // 2. Fetch from Supabase Cloud if configured
     if (supabaseService.isConfigured()) {
       try {
-        const [profiles, therapists, exercises, logs, settings, bannedDevices, bannedIps] = await Promise.all([
+        const [profiles, therapists, exercises, logs, settings, bannedDevices, bannedIps, patients] = await Promise.all([
           supabaseService.fetchProfiles(),
           supabaseService.fetchTherapists(),
           supabaseService.fetchExercises(),
@@ -980,17 +981,74 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
           supabaseService.fetchSystemSettings(),
           supabaseService.fetchBannedDevices(),
           supabaseService.fetchBannedIps(),
+          supabaseService.fetchPatients(),
         ]);
 
-        if (profiles && profiles.length > 0) {
-          const migratedProfiles = profiles.map((p) => {
-            if (!p.password || p.password === DEFAULT_PASSWORD_HASH || p.password.length < 8) {
-              return { ...p, must_change_password: true };
-            }
-            return p;
-          });
-          set({ users: migratedProfiles });
-        }
+        const staffUsers: UserAccount[] = (profiles && profiles.length > 0)
+          ? profiles.filter((p) => p.role !== 'patient').map((p) => {
+              if (!p.password || p.password === DEFAULT_PASSWORD_HASH || p.password.length < 8) {
+                return { ...p, must_change_password: true };
+              }
+              return p;
+            })
+          : get().users.filter((u) => u.role !== 'patient');
+
+        const deletedSet = getDeletedUserCodes();
+
+        const patientUsers: UserAccount[] = (patients && patients.length > 0)
+          ? patients
+              .filter((p: any) => {
+                const idStr = String(p.id).trim().toUpperCase();
+                const codeStr = String(p.patient_code || '').trim().toUpperCase();
+                return !deletedSet.has(idStr) && !deletedSet.has(codeStr);
+              })
+              .map((p: any) => {
+                const isPending =
+                  p.status === 'pending_info' ||
+                  (p.chief_complaint && p.chief_complaint.includes('[PENDING_INFO]')) ||
+                  (p.therapist_notes && p.therapist_notes.includes('[PENDING_INFO]')) ||
+                  (p.full_name && p.full_name.includes('รอลงข้อมูล')) ||
+                  (p.full_name && p.full_name.startsWith('ผู้รับบริการใหม่'));
+
+                let rawGender = p.gender || 'male';
+                let normGender: 'male' | 'female' = 'male';
+                if (rawGender === 'หญิง' || rawGender === 'female') normGender = 'female';
+
+                // Clean display complaint without [PENDING_INFO] tag
+                const cleanComplaint = (p.chief_complaint || '')
+                  .replace(/\[PENDING_INFO\]/g, '')
+                  .trim() || (isPending ? 'รอตรวจประเมินกายภาพบำบัด' : 'ตรวจประเมินกายภาพบำบัด');
+
+                return {
+                  id: p.id,
+                  code: p.patient_code,
+                  username: `user_${(p.patient_code || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`,
+                  name: p.full_name,
+                  role: 'patient' as UserRole,
+                  status: isPending ? 'pending_info' : (p.status === 'suspended' ? 'suspended' : 'active'),
+                  pendingInfoNote: isPending ? 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว' : undefined,
+                  age: Number(p.age) || 65,
+                  gender: normGender,
+                  phone: p.phone || '',
+                  diagnosis: cleanComplaint,
+                  chiefComplaint: cleanComplaint,
+                  patientBackground: p.medical_history || '',
+                  treatmentOutcome: p.treatment_outcome || '',
+                  therapistNotes: (p.therapist_notes || '').replace(/\[PENDING_INFO\]/g, '').trim(),
+                  assignedTherapistName: p.profiles?.full_name || 'กภ. ธนากร วงศ์สวัสดิ์',
+                  assignedTherapistId: p.responsible_therapist_id || 1,
+                  face_image_url: p.photo || p.avatar_url,
+                  created_at: p.created_at ? p.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+                  last_active: isPending ? 'รอลงข้อมูลส่วนตัว' : 'พร้อมรับบริการ',
+                };
+              })
+          : get().users.filter((u) => u.role === 'patient');
+
+        const mergedUsers = [...staffUsers, ...patientUsers];
+        set({ users: mergedUsers, isSupabaseConnected: true });
+        persistUsers(mergedUsers);
+        console.info(`✓ HospitalStore loaded ${patientUsers.length} patients and ${staffUsers.length} staff from Supabase`);
+
         if (therapists && therapists.length > 0) {
           set({ therapists });
         }
@@ -1009,10 +1067,9 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
         if (bannedIps && bannedIps.length > 0) {
           set({ bannedIps });
         }
-        set({ isSupabaseConnected: true });
         console.info('✓ HospitalStore synced with live Supabase database');
       } catch (err) {
-        console.warn('initializeFromSupabase warning:', err);
+        console.error('[SUPABASE] initializeFromSupabase error:', err);
       }
     } else {
       set({ isSupabaseConnected: false });
@@ -1257,7 +1314,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     );
 
     if (supabaseService.isConfigured()) {
-      supabaseService.updatePatient(id, {
+      supabaseService.updatePatient(updatedUser.code || id, {
         name: updatedUser.name,
         age: updatedUser.age,
         gender: updatedUser.gender,
@@ -1265,7 +1322,15 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
         chief_complaint: updatedUser.chiefComplaint || updatedUser.diagnosis || '',
         responsible_therapist_id: updatedUser.assignedTherapistId || null,
         status: 'active',
-      }).catch((e) => console.warn('Supabase updatePatient error:', e));
+      }).then(() => {
+        try {
+          supabase.channel('public:patients').send({
+            type: 'broadcast',
+            event: 'patient_registered',
+            payload: { patient_code: updatedUser.code, full_name: updatedUser.name, status: 'active' },
+          }).catch(() => {});
+        } catch {}
+      }).catch((e) => console.error('[SUPABASE] updatePatient error in completePendingPatientInfo:', e));
     }
 
     return updatedUser;
@@ -1336,6 +1401,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
 
     if (supabaseService.isConfigured()) {
       supabaseService.deleteProfile(id).catch((e) => console.warn('Supabase deleteProfile error:', e));
+      supabaseService.deletePatient(user?.code || id).catch((e) => console.error('Supabase deletePatient error:', e));
     }
   },
 

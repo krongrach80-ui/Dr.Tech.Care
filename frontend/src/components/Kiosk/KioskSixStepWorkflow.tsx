@@ -59,6 +59,7 @@ import { LivenessScanHUD } from '../Biometrics/LivenessScanHUD';
 import { LivenessFrameData, LivenessChallenge } from '../../types/biometrics';
 import { patientSyncService } from '../../services/patientSyncService';
 import { patientFaceStorageService, PatientFaceBinding } from '../../services/patientFaceStorageService';
+import { supabase } from '../../lib/supabase';
 import { asset } from '../../utils/asset';
 import logoImg from '../../assets/logo.png';
 import logoIconImg from '../../assets/logo_icon.png';
@@ -874,7 +875,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   }, [users, isPendingRegistrationActive, pendingEnrolledUser, isRegistrationSuccess, handleRegistrationCompleted]);
 
   // Form submit for Choice A (กรอกข้อมูลที่หน้าตู้)
-  const handleKioskFormSubmit = (e?: React.FormEvent) => {
+  const handleKioskFormSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!pendingEnrolledUser) return;
 
@@ -889,6 +890,50 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
     try {
       const fullPatientName = `${kioskFormTitle}${kioskFormFirstName.trim()} ${kioskFormLastName.trim()}`.trim();
+      const patientCode = pendingEnrolledUser.code;
+      const patientAge = Number(kioskFormAge) || 65;
+      const patientGender = (kioskFormGender as string) === 'female' || (kioskFormGender as string) === 'หญิง' ? 'female' : 'male';
+      const patientPhone = kioskFormPhone.trim() || undefined;
+      const patientComplaint = kioskFormComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด';
+
+      // =====================================================================
+      // [CRITICAL SUPABASE INSERTION]: Direct async await insert to 'patients' table
+      // =====================================================================
+      try {
+        console.info(`[SUPABASE] Inserting patient ${patientCode} into table 'patients'...`);
+        const { data: insertedData, error: sbError } = await supabase
+          .from('patients')
+          .upsert({
+            patient_code: patientCode,
+            full_name: fullPatientName,
+            age: patientAge,
+            gender: patientGender,
+            phone: patientPhone || null,
+            chief_complaint: patientComplaint,
+            medical_history: 'ลงทะเบียนผ่านหน้าตู้ Kiosk สำเร็จ',
+            therapist_notes: 'ลงทะเบียนข้อมูลครบถ้วน',
+            status: 'active',
+          }, { onConflict: 'patient_code' })
+          .select();
+
+        if (sbError) {
+          console.error('[SUPABASE] Patient registration insert error:', sbError);
+        } else {
+          console.info('[SUPABASE] Patient inserted successfully:', insertedData);
+          // Broadcast realtime notification to Admin Dashboard
+          try {
+            await supabase.channel('public:patients').send({
+              type: 'broadcast',
+              event: 'patient_registered',
+              payload: { patient_code: patientCode, full_name: fullPatientName, status: 'active' },
+            });
+          } catch (broadcastErr) {
+            console.warn('[SUPABASE] Broadcast channel notification error:', broadcastErr);
+          }
+        }
+      } catch (sbEx) {
+        console.error('[SUPABASE] Exception during patient insert:', sbEx);
+      }
 
       // [ISOLATED PATIENT STORAGE]: Update patient_record.json
       patientFaceStorageService.savePatientRecord(pendingEnrolledUser.code, {
@@ -898,16 +943,16 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           first_name: kioskFormFirstName.trim(),
           last_name: kioskFormLastName.trim(),
           full_name: fullPatientName,
-          age: Number(kioskFormAge) || 65,
+          age: patientAge,
           gender: kioskFormGender,
-          contact: kioskFormPhone.trim() || undefined,
-          phone: kioskFormPhone.trim() || undefined,
+          contact: patientPhone,
+          phone: patientPhone,
           status: 'active',
           created_at: new Date().toISOString().split('T')[0],
         },
         medical_records: {
-          diagnosis: kioskFormComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด',
-          chief_complaint: kioskFormComplaint.trim(),
+          diagnosis: patientComplaint,
+          chief_complaint: patientComplaint,
           assigned_exercises: [
             { id: 'shoulder_raise', name: 'กางแขนด้านข้าง (Shoulder Abduction)', target_angle: 90, hold_seconds: 3, reps: 10 },
             { id: 'overhead_reach', name: 'ยกแขนขึ้นเหนือศีรษะ (Overhead Reach)', target_angle: 120, hold_seconds: 3, reps: 10 },
@@ -918,11 +963,11 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
       const updated = completePendingPatientInfo(pendingEnrolledUser.id, {
         name: fullPatientName,
-        age: Number(kioskFormAge) || 65,
+        age: patientAge,
         gender: kioskFormGender,
-        phone: kioskFormPhone.trim() || undefined,
-        chiefComplaint: kioskFormComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด',
-        diagnosis: kioskFormComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด',
+        phone: patientPhone,
+        chiefComplaint: patientComplaint,
+        diagnosis: patientComplaint,
       });
 
       // Synchronize completed profile with Central Database
@@ -933,12 +978,12 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         name: fullPatientName,
         first_name: kioskFormFirstName.trim(),
         last_name: kioskFormLastName.trim(),
-        age: Number(kioskFormAge) || 65,
+        age: patientAge,
         gender: kioskFormGender,
-        phone: kioskFormPhone.trim() || undefined,
+        phone: patientPhone,
         status: 'active',
-        diagnosis: kioskFormComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด',
-        chief_complaint: kioskFormComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด',
+        diagnosis: patientComplaint,
+        chief_complaint: patientComplaint,
       }).catch(() => {});
 
       if (updated) {
@@ -1631,6 +1676,36 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         }).catch((err) => {
           console.warn('⚠️ Kiosk direct central DB sync error:', err);
         });
+
+        // [SUPABASE IMMEDIATE SYNC]: Insert pending patient record so Admin Dashboard sees it instantly
+        (async () => {
+          try {
+            const { data, error } = await supabase.from('patients').upsert({
+              patient_code: createdUser.code,
+              full_name: `ผู้รับบริการใหม่ (${createdUser.code})`,
+              age: 65,
+              gender: 'male',
+              chief_complaint: '[PENDING_INFO] รอลงข้อมูลส่วนตัว',
+              therapist_notes: '[PENDING_INFO] บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว',
+              status: 'active',
+            }, { onConflict: 'patient_code' }).select();
+
+            if (error) {
+              console.error('[SUPABASE] Error inserting pending patient at Kiosk:', error);
+            } else {
+              console.info('[SUPABASE] Pending patient recorded successfully:', createdUser.code);
+              try {
+                await supabase.channel('public:patients').send({
+                  type: 'broadcast',
+                  event: 'patient_registered',
+                  payload: { patient_code: createdUser.code, status: 'pending_info' },
+                });
+              } catch {}
+            }
+          } catch (err: any) {
+            console.error('[SUPABASE] Exception inserting pending patient:', err);
+          }
+        })();
 
         setPendingEnrolledUser(createdUser);
         setIsPendingRegistrationActive(true);

@@ -420,7 +420,10 @@ export const supabaseService = {
         query = query.eq('responsible_therapist_id', responsibleTherapistId);
       }
       const { data, error } = await query;
-      if (error) throw error;
+      if (error) {
+        console.error('[SUPABASE] fetchPatients error:', error);
+        throw error;
+      }
       return (data || []).map((p: any) => {
         let photo = p.photo || p.avatar_url;
         if (!photo && typeof p.medical_history === 'string' && p.medical_history.includes('FACE_PHOTO:')) {
@@ -434,7 +437,7 @@ export const supabaseService = {
         };
       });
     } catch (e) {
-      console.warn('fetchPatients failed:', e);
+      console.error('[SUPABASE] fetchPatients failed:', e);
       return [];
     }
   },
@@ -447,9 +450,13 @@ export const supabaseService = {
         .select('*')
         .ilike('patient_code', patientCode.trim())
         .maybeSingle();
-      if (error) return null;
+      if (error) {
+        console.error('[SUPABASE] findPatientByCode error:', error);
+        return null;
+      }
       return data;
-    } catch {
+    } catch (e) {
+      console.error('[SUPABASE] findPatientByCode exception:', e);
       return null;
     }
   },
@@ -478,6 +485,19 @@ export const supabaseService = {
       medHistory = 'FACE_PHOTO:' + patientData.photo + (medHistory ? '\n' + medHistory : '');
     }
 
+    const isPending = patientData.status === 'pending_info' || String(patientData.notes || '').includes('รอลงข้อมูล') || String(patientData.chiefComplaint || '').includes('PENDING');
+    const safeStatus = (patientData.status === 'suspended' || patientData.status === 'discharged') ? patientData.status : 'active';
+    let chiefComplaintText = patientData.chiefComplaint || patientData.chief_complaint || patientData.notes || '';
+    let therapistNotesText = patientData.therapistNotes || patientData.therapist_notes || '';
+    if (isPending) {
+      if (!chiefComplaintText.includes('[PENDING_INFO]')) {
+        chiefComplaintText = `[PENDING_INFO] ${chiefComplaintText || 'รอลงข้อมูลส่วนตัว'}`.trim();
+      }
+      if (!therapistNotesText.includes('[PENDING_INFO]')) {
+        therapistNotesText = `[PENDING_INFO] ${therapistNotesText || 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว'}`.trim();
+      }
+    }
+
     const { data, error } = await supabase.from('patients').upsert([
       {
         patient_code: patientCode,
@@ -485,18 +505,18 @@ export const supabaseService = {
         age: Number(patientData.age) || 60,
         gender: genderStr,
         phone: patientData.phone || null,
-        chief_complaint: patientData.chiefComplaint || patientData.chief_complaint || patientData.notes || '',
+        chief_complaint: chiefComplaintText,
         medical_history: medHistory,
         treatment_outcome: patientData.treatmentOutcome || '',
-        therapist_notes: patientData.therapistNotes || '',
+        therapist_notes: therapistNotesText,
         responsible_therapist_id: respTherapist,
-        status: patientData.status || 'active',
+        status: safeStatus,
         pin_hash: pinH,
       },
     ], { onConflict: 'patient_code' }).select().single();
 
     if (error) {
-      console.error('Supabase createPatient error:', error);
+      console.error('[SUPABASE] createPatient error:', error);
       throw error;
     }
 
@@ -535,17 +555,51 @@ export const supabaseService = {
     if (updates.patientBackground !== undefined) payload.medical_history = updates.patientBackground;
     if (updates.treatmentOutcome !== undefined) payload.treatment_outcome = updates.treatmentOutcome;
     if (updates.therapistNotes !== undefined) payload.therapist_notes = updates.therapistNotes;
-    if (updates.status !== undefined) payload.status = updates.status;
+    if (updates.status !== undefined) {
+      payload.status = (updates.status === 'suspended' || updates.status === 'discharged') ? updates.status : 'active';
+    }
     if (updates.pin) payload.pin_hash = await hashPin(updates.pin);
 
-    const { data, error } = await supabase.from('patients').update(payload).eq('id', id).select().single();
-    if (error) throw error;
-    await this.logActivity(
-      'UPDATE_PATIENT',
-      `อัปเดตเวชระเบียนคนไข้: ${data.full_name} (${data.patient_code})`,
-      'PATIENT'
-    );
+    const isUuid = typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    let query = supabase.from('patients').update(payload);
+    if (isUuid) {
+      query = query.eq('id', id);
+    } else {
+      query = query.eq('patient_code', String(id));
+    }
+
+    const { data, error } = await query.select().maybeSingle();
+    if (error) {
+      console.error('[SUPABASE] updatePatient error:', error);
+      throw error;
+    }
+    if (data) {
+      await this.logActivity(
+        'UPDATE_PATIENT',
+        `อัปเดตเวชระเบียนคนไข้: ${data.full_name} (${data.patient_code})`,
+        'PATIENT'
+      );
+    }
     return data;
+  },
+
+  async deletePatient(idOrCode: any): Promise<void> {
+    if (!isSupabaseConfigured() || !idOrCode) return;
+    try {
+      const isUuid = typeof idOrCode === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrCode);
+      let query = supabase.from('patients').delete();
+      if (isUuid) {
+        query = query.eq('id', idOrCode);
+      } else {
+        query = query.eq('patient_code', String(idOrCode));
+      }
+      const { error } = await query;
+      if (error) {
+        console.error('[SUPABASE] deletePatient error:', error);
+      }
+    } catch (e) {
+      console.error('[SUPABASE] deletePatient exception:', e);
+    }
   },
 
   // =========================================================================
