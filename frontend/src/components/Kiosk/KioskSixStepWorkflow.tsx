@@ -41,6 +41,7 @@ import {
   Phone,
   Pencil,
   LogOut,
+  FlipVertical,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Patient } from '../../types/patient';
@@ -59,6 +60,7 @@ import { LivenessScanHUD } from '../Biometrics/LivenessScanHUD';
 import { LivenessFrameData, LivenessChallenge } from '../../types/biometrics';
 import { patientSyncService } from '../../services/patientSyncService';
 import { patientFaceStorageService, PatientFaceBinding } from '../../services/patientFaceStorageService';
+import { cameraOrientationService, CameraOrientation } from '../../services/cameraOrientationService';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 import { asset } from '../../utils/asset';
 import logoImg from '../../assets/logo.png';
@@ -447,6 +449,19 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   const streamRef = useRef<MediaStream | null>(null);
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraOrientation, setCameraOrientation] = useState<CameraOrientation>(
+    cameraOrientationService.getOrientation()
+  );
+
+  useEffect(() => {
+    const handleOrientation = (e: any) => {
+      setCameraOrientation(e.detail?.orientation || cameraOrientationService.getOrientation());
+    };
+    window.addEventListener('strongcare:camera_orientation_changed', handleOrientation);
+    return () => {
+      window.removeEventListener('strongcare:camera_orientation_changed', handleOrientation);
+    };
+  }, []);
 
   // Step 1 Presence State & 3-Second Automatic Face Detection
   const [isPersonDetected, setIsPersonDetected] = useState<boolean>(false);
@@ -2275,12 +2290,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       const ctx = canvas.getContext('2d');
       let livePhoto: string | undefined;
       if (ctx && videoRef.current) {
-        const vw = videoRef.current.videoWidth || 640;
-        const vh = videoRef.current.videoHeight || 480;
-        const size = Math.min(vw, vh);
-        const sx = (vw - size) / 2;
-        const sy = (vh - size) / 2;
-        ctx.drawImage(videoRef.current, sx, sy, size, size, 0, 0, 320, 320);
+        cameraOrientationService.drawUprightFrame(videoRef.current, ctx, 320, 320);
         livePhoto = canvas.toDataURL('image/jpeg', 0.85);
       }
 
@@ -2842,8 +2852,28 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               autoPlay
               playsInline
               muted
-              className="w-full h-full object-cover transform -scale-x-100 opacity-90"
+              className="w-full h-full object-cover opacity-90 transition-transform duration-300"
+              style={{ transform: cameraOrientationService.getCssTransform() }}
             />
+          )}
+
+          {/* Quick Camera Flip & Rotation Toggle Button for Kiosk */}
+          {(currentStep === 2 || currentStep === 3) && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                const next = cameraOrientationService.toggleNextOrientation();
+                setCameraOrientation(next);
+              }}
+              className="absolute top-3.5 right-24 z-30 bg-slate-900/85 hover:bg-slate-800 text-white backdrop-blur-md px-3 py-1 rounded-full border border-emerald-400/50 text-xs font-bold flex items-center gap-1.5 shadow-md cursor-pointer transition active:scale-95 pointer-events-auto"
+              title="กดเพื่อหมุนมุมมองกล้อง (180° / ปกติ)"
+            >
+              <FlipVertical className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-[11px] text-emerald-300">
+                {cameraOrientation === 'rotate180_mirror' ? 'กล้องกลับหัว 180°' : cameraOrientation === 'rotate180' ? 'หมุน 180°' : cameraOrientation === 'mirror' ? 'กระจก' : 'ปกติ'}
+              </span>
+            </button>
           )}
 
           {/* Overlays สำหรับ Step 2 & 3 บนกล้อง */}

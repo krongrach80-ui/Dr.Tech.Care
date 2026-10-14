@@ -21,6 +21,7 @@ import { usePatientStore } from '../../store/patientStore';
 import { audioFeedback } from '../../services/audioService';
 import { voiceAssistant } from '../../services/voiceAssistantService';
 import confetti from 'canvas-confetti';
+import { cameraOrientationService } from '../../services/cameraOrientationService';
 
 interface FaceAuthModalProps {
   isOpen: boolean;
@@ -668,7 +669,8 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
               ref={videoRef}
               playsInline
               muted
-              className="w-full h-full object-cover transform -scale-x-100"
+              className="w-full h-full object-cover transition-transform duration-300"
+              style={{ transform: cameraOrientationService.getCssTransform() }}
             />
 
             {/* Camera Shutter Flash Effect */}

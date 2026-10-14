@@ -1,0 +1,13 @@
+{
+  "id": 34,
+  "code": "P-0034",
+  "username": "prasert",
+  "name": "นายประเสริฐ มั่นคง",
+  "age": 70,
+  "gender": "male",
+  "phone": "082-111-2233",
+  "diagnosis": "โรคหลอดเลือดสมองระยะฟื้นตัว กล้ามเนื้อซีกขวาอ่อนแรง (Post Stroke Hemiparesis)",
+  "assignedTherapistName": "กภ. พิมพ์ชนก สุขเกษม",
+  "assignedTherapistId": 2,
+  "status": "active"
+}

@@ -14,6 +14,7 @@ import {
   BiometricVerificationResult,
 } from '../types/biometrics';
 import { asset } from '../utils/asset';
+import { cameraOrientationService } from './cameraOrientationService';
 
 let faceapiInstance: any = null;
 async function getFaceApi(): Promise<any> {
@@ -168,9 +169,10 @@ export class LivenessEngine {
   ): LivenessFrameData | null {
     if (!this.faceLandmarker || video.readyState < 2) return null;
 
+    const uprightSource = cameraOrientationService.getUprightCanvas(video) || video;
     let res: FaceLandmarkerResult;
     try {
-      res = this.faceLandmarker.detectForVideo(video, timestamp);
+      res = this.faceLandmarker.detectForVideo(uprightSource, timestamp);
     } catch {
       return null;
     }
@@ -381,8 +383,9 @@ export class LivenessEngine {
         const canvas = this.offscreenCanvas;
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
         if (ctx) {
-          const vw = video.videoWidth || 640;
-          const vh = video.videoHeight || 480;
+          const uprightSource = cameraOrientationService.getUprightCanvas(video) || video;
+          const vw = uprightSource instanceof HTMLVideoElement ? (uprightSource.videoWidth || 640) : uprightSource.width;
+          const vh = uprightSource instanceof HTMLVideoElement ? (uprightSource.videoHeight || 480) : uprightSource.height;
           const defaultSize = Math.min(vw, vh);
 
           let cropX = (vw - defaultSize) / 2;
@@ -415,7 +418,7 @@ export class LivenessEngine {
           }
 
           ctx.clearRect(0, 0, 160, 160);
-          ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, 160, 160);
+          ctx.drawImage(uprightSource, cropX, cropY, cropW, cropH, 0, 0, 160, 160);
 
           if (faceapi && faceapi.nets?.faceRecognitionNet?.isLoaded) {
             try {

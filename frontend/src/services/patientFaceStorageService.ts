@@ -13,6 +13,7 @@
 
 import { FaceRegistryService } from './faceRegistryService';
 import { resolveDefaultApiUrl } from '../config/apiConfig';
+import { cameraOrientationService } from './cameraOrientationService';
 
 export interface PatientProfileData {
   patient_id: string; // e.g. P-6022, P-0012
@@ -273,10 +274,10 @@ class PatientFaceStorageService {
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
 
-      // High-quality bicubic downscaling
+      // High-quality bicubic downscaling with camera upright orientation
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(video, 0, 0, targetW, targetH);
+      cameraOrientationService.drawUprightFrame(video, ctx, targetW, targetH);
 
       const compressedJpg = canvas.toDataURL('image/jpeg', quality);
       const approxKb = Math.round((compressedJpg.length * 0.75) / 1024);

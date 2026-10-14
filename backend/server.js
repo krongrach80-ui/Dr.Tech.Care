@@ -176,6 +176,29 @@ function sanitizeFolderName(patientCode, patientName) {
   return code;
 }
 
+// Ensure patient directories and records exist on disk
+function ensureAllPatientFoldersExist() {
+  const targetBases = [
+    PATIENT_UPLOADS_DIR,
+    path.resolve(__dirname, '../frontend/public/uploads/patients'),
+  ];
+  for (const p of db.patients || []) {
+    const fName = sanitizeFolderName(p.code, p.name);
+    for (const base of targetBases) {
+      const dir = path.join(base, fName);
+      const loginDir = path.join(dir, 'login_history');
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      if (!fs.existsSync(loginDir)) fs.mkdirSync(loginDir, { recursive: true });
+      const rec = path.join(dir, 'patient_record.json');
+      if (!fs.existsSync(rec)) {
+        fs.writeFileSync(rec, JSON.stringify(p, null, 2), 'utf8');
+      }
+    }
+  }
+}
+
+ensureAllPatientFoldersExist();
+
 // Helper: Save Base64 Image to Disk in patient-specific folder
 function saveBase64Image(dataUrl, patientCode, patientName) {
   if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image')) {

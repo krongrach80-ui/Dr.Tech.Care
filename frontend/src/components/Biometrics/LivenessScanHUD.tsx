@@ -16,6 +16,7 @@ import {
   Sun,
   Moon,
   Users,
+  FlipVertical,
 } from 'lucide-react';
 import {
   CameraState,
@@ -23,6 +24,7 @@ import {
   LivenessFrameData,
   LivenessNonce,
 } from '../../types/biometrics';
+import { cameraOrientationService, CameraOrientation } from '../../services/cameraOrientationService';
 
 interface LivenessScanHUDProps {
   videoRef: React.RefObject<HTMLVideoElement>;
@@ -59,6 +61,20 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
 }) => {
   const qg = frameData?.qualityGate;
   const yaw = Math.round(frameData?.yawDeg || 0);
+
+  const [orientation, setOrientation] = React.useState<CameraOrientation>(
+    cameraOrientationService.getOrientation()
+  );
+
+  React.useEffect(() => {
+    const handleOrientation = (e: any) => {
+      setOrientation(e.detail?.orientation || cameraOrientationService.getOrientation());
+    };
+    window.addEventListener('strongcare:camera_orientation_changed', handleOrientation);
+    return () => {
+      window.removeEventListener('strongcare:camera_orientation_changed', handleOrientation);
+    };
+  }, []);
 
   // เชื่อมต่อสัญญาณกล้องทันทีเมื่อ HUD เปิดใน Step 4
   React.useEffect(() => {
@@ -156,10 +172,30 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
           autoPlay
           playsInline
           muted
-          className={`w-full h-full object-cover transform -scale-x-100 transition-opacity duration-300 ${
+          className={`w-full h-full object-cover transition-opacity duration-300 ${
             cameraState.isActive ? 'opacity-95' : 'opacity-0'
           }`}
+          style={{ transform: cameraOrientationService.getCssTransform() }}
         />
+
+        {/* 2.0 Quick Camera Flip & Rotation Toggle Button (180 deg) */}
+        {cameraState.isActive && !isProcessingBiometrics && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              const next = cameraOrientationService.toggleNextOrientation();
+              setOrientation(next);
+            }}
+            className="absolute bottom-3 right-3 z-30 bg-slate-900/85 hover:bg-slate-800 text-white backdrop-blur-md px-3 py-1.5 rounded-xl border border-emerald-400/50 text-xs font-bold flex items-center gap-1.5 shadow-xl cursor-pointer transition active:scale-95"
+            title="กดเพื่อหมุนมุมมองกล้อง (180° / ปกติ)"
+          >
+            <FlipVertical className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-[11px] text-emerald-300">
+              {orientation === 'rotate180_mirror' ? 'กล้องกลับหัว 180°' : orientation === 'rotate180' ? 'หมุน 180°' : orientation === 'mirror' ? 'กระจก' : 'ปกติ'}
+            </span>
+          </button>
+        )}
 
         {/* 2.1 Camera Hardware Error State Overlay */}
         {cameraState.errorCode && (

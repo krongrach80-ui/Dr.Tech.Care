@@ -38,6 +38,7 @@ import {
   getExerciseUnifiedConfig,
 } from '../../data/stretchExercises';
 import { StretchStickFigure } from '../../components/StickFigure/StretchStickFigure';
+import { cameraOrientationService } from '../../services/cameraOrientationService';
 import { ExerciseInstructionCard } from '../../components/Exercise/ExerciseInstructionCard';
 import { ExercisePosePreview } from '../../components/Exercise/ExercisePosePreview';
 import { ExerciseVideoModal } from '../../components/VideoPlayer/ExerciseVideoModal';
@@ -1301,9 +1302,10 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
         {/* Live Patient Video Feed Element */}
         <video
           ref={videoRef}
-          className={`absolute inset-0 w-full h-full object-cover -scale-x-100 ${
+          className={`absolute inset-0 w-full h-full object-cover transition-transform duration-300 ${
             isCameraReady ? 'block' : 'hidden'
           }`}
+          style={{ transform: cameraOrientationService.getCssTransform() }}
           autoPlay
           playsInline
           muted

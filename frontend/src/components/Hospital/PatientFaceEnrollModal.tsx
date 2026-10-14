@@ -9,6 +9,7 @@ import {
   RefreshCw,
   ShieldCheck,
   User,
+  FlipVertical,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { livenessEngine } from '../../services/livenessEngine';
@@ -17,6 +18,7 @@ import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 import { useHospitalStore } from '../../store/hospitalStore';
 import { faceRegistryService } from '../../services/faceRegistryService';
 import { UserAccount } from '../../types/hospital';
+import { cameraOrientationService, CameraOrientation } from '../../services/cameraOrientationService';
 
 interface PatientFaceEnrollModalProps {
   isOpen: boolean;
@@ -478,8 +480,22 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
                       autoPlay
                       playsInline
                       muted
-                      className="w-full h-full object-cover scale-x-[-1]"
+                      className="w-full h-full object-cover transition-transform duration-300"
+                      style={{ transform: cameraOrientationService.getCssTransform() }}
                     />
+                    {/* Quick Flip Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        cameraOrientationService.toggleNextOrientation();
+                      }}
+                      className="absolute top-3 right-3 z-20 bg-slate-900/80 hover:bg-slate-800 text-white backdrop-blur-md px-2.5 py-1 rounded-full border border-white/20 text-[11px] font-bold flex items-center gap-1 shadow-md cursor-pointer transition active:scale-95"
+                      title="กดเพื่อหมุนมุมมองกล้อง (180° / ปกติ)"
+                    >
+                      <FlipVertical className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-300">หมุนกล้อง</span>
+                    </button>
                     {/* Oval Guide Overlay */}
                     <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                       <div className={`w-44 h-56 rounded-[50%] border-4 transition-all duration-300 ${

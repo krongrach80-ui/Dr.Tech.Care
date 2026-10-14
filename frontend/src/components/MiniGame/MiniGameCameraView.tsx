@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { Camera, CameraOff, RefreshCw, AlertCircle, ShieldAlert, CheckCircle2 } from 'lucide-react';
 import { PoseLandmarks } from '../../types/pose';
+import { cameraOrientationService } from '../../services/cameraOrientationService';
 
 interface MiniGameCameraViewProps {
   videoRef: React.RefObject<HTMLVideoElement>;
@@ -163,8 +164,9 @@ export const MiniGameCameraView: React.FC<MiniGameCameraViewProps> = ({
             playsInline
             muted
             autoPlay
-            className="w-full h-full object-cover scale-x-[-1]"
-            aria-label="วิดีโอจากกล้องผู้เล่น (แสดงแบบกระจกเงา)"
+            className="w-full h-full object-cover transition-transform duration-300"
+            style={{ transform: cameraOrientationService.getCssTransform() }}
+            aria-label="วิดีโอจากกล้องผู้เล่น"
           />
 
           {/* Skeleton Canvas Overlay */}

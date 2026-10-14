@@ -1,0 +1,13 @@
+{
+  "id": 35,
+  "code": "P-0035",
+  "username": "kanya",
+  "name": "นางกัญญา บุญมา",
+  "age": 63,
+  "gender": "female",
+  "phone": "085-889-9001",
+  "diagnosis": "กลุ่มอาการปวดกล้ามเนื้อคอบ่าเรื้อรัง (Myofascial Pain Syndrome)",
+  "assignedTherapistName": "กภ. พิมพ์ชนก สุขเกษม",
+  "assignedTherapistId": 2,
+  "status": "active"
+}
