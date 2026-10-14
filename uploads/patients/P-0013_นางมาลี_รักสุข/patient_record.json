@@ -1,0 +1,13 @@
+{
+  "id": 13,
+  "code": "P-0013",
+  "username": "malee",
+  "name": "นางมาลี รักสุข",
+  "age": 72,
+  "gender": "female",
+  "phone": "084-332-9900",
+  "diagnosis": "ข้อเข่าเสื่อมระยะที่ 2 และกล้ามเนื้อต้นขาอ่อนแรง (Knee OA Grade 2)",
+  "assignedTherapistName": "กภ. ธนากร วงศ์สวัสดิ์",
+  "assignedTherapistId": 1,
+  "status": "active"
+}
