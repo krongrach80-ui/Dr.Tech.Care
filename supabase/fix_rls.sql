@@ -88,3 +88,15 @@ drop policy if exists logs_insert on public.activity_logs;
 
 create policy logs_select on public.activity_logs for select using (true);
 create policy logs_insert on public.activity_logs for insert with check (true);
+
+-- 9. Enable Realtime Replication for patients
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables 
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'patients'
+  ) then
+    alter publication supabase_realtime add table public.patients;
+  end if;
+end;
+$$;

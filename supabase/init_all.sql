@@ -463,3 +463,14 @@ BEGIN
         ('System Initializer', 'system', 'SYSTEM', 'DATABASE_SEED', 'เริ่มต้นฐานข้อมูล Supabase สำเร็จพร้อมตารางและ RLS', 'Supabase PostgreSQL Cloud', '127.0.0.1');
 
 END $$;
+
+-- 4. Enable Realtime Replication for patients table
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'patients'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.patients;
+    END IF;
+END $$;

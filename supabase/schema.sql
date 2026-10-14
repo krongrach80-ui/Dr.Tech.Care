@@ -275,3 +275,17 @@ create policy settings_select on public.system_settings for select using (true);
 create policy settings_admin on public.system_settings for all using (
   current_role() = 'admin'
 );
+
+-- ============================================================================
+-- REALTIME
+-- ============================================================================
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables 
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'patients'
+  ) then
+    alter publication supabase_realtime add table public.patients;
+  end if;
+end;
+$$;

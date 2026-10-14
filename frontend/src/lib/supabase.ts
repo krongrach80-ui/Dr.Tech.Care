@@ -68,4 +68,9 @@ if (isSupabaseConfigured()) {
 
 export const supabase = clientInstance!;
 
+/**
+ * Shared Supabase Realtime channel name for Kiosk <-> Admin sync
+ */
+export const PATIENTS_REALTIME_CHANNEL = 'drtechcare_patients_channel';
+
 export default supabase;

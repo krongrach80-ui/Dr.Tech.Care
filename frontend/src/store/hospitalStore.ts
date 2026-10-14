@@ -13,7 +13,7 @@ import {
 } from '../types/hospital';
 import { faceService } from '../services/faceService';
 import { supabaseService } from '../services/supabaseService';
-import { supabase } from '../lib/supabase';
+import { supabase, PATIENTS_REALTIME_CHANNEL } from '../lib/supabase';
 import { faceRegistryService } from '../services/faceRegistryService';
 import { patientSyncService } from '../services/patientSyncService';
 import { patientFaceStorageService } from '../services/patientFaceStorageService';
@@ -837,6 +837,7 @@ interface HospitalState {
 
   // User Management
   addUser: (user: Omit<UserAccount, 'id' | 'created_at'>) => UserAccount;
+  upsertPatientFromSupabase: (patientData: any) => void;
   completePendingPatientInfo: (
     id: number | string,
     patientData: {
@@ -1348,7 +1349,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
         status: 'active',
       }).then(() => {
         try {
-          supabase.channel('public:patients').send({
+          supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
             type: 'broadcast',
             event: 'patient_registered',
             payload: { patient_code: updatedUser.code, full_name: updatedUser.name, status: 'active' },
@@ -1358,6 +1359,73 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     }
 
     return updatedUser;
+  },
+
+  upsertPatientFromSupabase: (p: any) => {
+    if (!p) return;
+    const patientCode = p.patient_code || p.code;
+    if (!patientCode) return;
+
+    const isPending =
+      p.status === 'pending_info' ||
+      (p.chief_complaint && p.chief_complaint.includes('[PENDING_INFO]')) ||
+      (p.therapist_notes && p.therapist_notes.includes('[PENDING_INFO]')) ||
+      (p.full_name && p.full_name.includes('รอลงข้อมูล')) ||
+      (p.full_name && p.full_name.startsWith('ผู้รับบริการใหม่'));
+
+    let rawGender = p.gender || 'male';
+    let normGender: 'male' | 'female' = 'male';
+    if (rawGender === 'หญิง' || rawGender === 'female') normGender = 'female';
+
+    const cleanComplaint = (p.chief_complaint || p.notes || '')
+      .replace(/\[PENDING_INFO\]/g, '')
+      .trim() || (isPending ? 'รอตรวจประเมินกายภาพบำบัด' : 'ตรวจประเมินกายภาพบำบัด');
+
+    let photo = p.photo || p.avatar_url || p.face_image_url;
+    if (!photo && typeof p.medical_history === 'string' && p.medical_history.includes('FACE_PHOTO:')) {
+      const match = p.medical_history.match(/FACE_PHOTO:(data:image\/[^\s\n]+)/);
+      if (match) photo = match[1];
+    }
+
+    const patientUser: UserAccount = {
+      id: p.id || patientCode,
+      code: patientCode,
+      username: `user_${patientCode.toLowerCase().replace(/[^a-z0-9]/g, '')}`,
+      name: p.full_name || p.name || `ผู้รับบริการ (${patientCode})`,
+      role: 'patient',
+      status: isPending ? 'pending_info' : (p.status === 'suspended' ? 'suspended' : 'active'),
+      pendingInfoNote: isPending ? 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว' : undefined,
+      age: Number(p.age) || 65,
+      gender: normGender,
+      phone: p.phone || '',
+      diagnosis: cleanComplaint,
+      chiefComplaint: cleanComplaint,
+      patientBackground: p.medical_history || '',
+      treatmentOutcome: p.treatment_outcome || '',
+      therapistNotes: (p.therapist_notes || '').replace(/\[PENDING_INFO\]/g, '').trim(),
+      assignedTherapistName: p.profiles?.full_name || p.assigned_therapist_name || 'กภ. ธนากร วงศ์สวัสดิ์',
+      assignedTherapistId: p.responsible_therapist_id || p.assigned_therapist_id || 1,
+      face_image_url: photo,
+      created_at: p.created_at ? p.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+      last_active: isPending ? 'รอลงข้อมูลส่วนตัว' : 'พร้อมรับบริการ',
+    };
+
+    const currentUsers = get().users;
+    const existsIndex = currentUsers.findIndex(
+      (u) => u.code === patientUser.code || (p.id && String(u.id) === String(p.id))
+    );
+
+    let updatedUsers: UserAccount[];
+    if (existsIndex >= 0) {
+      updatedUsers = [...currentUsers];
+      updatedUsers[existsIndex] = { ...updatedUsers[existsIndex], ...patientUser };
+    } else {
+      updatedUsers = [patientUser, ...currentUsers];
+    }
+
+    set({ users: updatedUsers, isSupabaseConnected: true });
+    persistUsers(updatedUsers);
+    console.info(`[REALTIME STORE] Upserted patient ${patientUser.name} (${patientUser.code})`);
   },
 
   updateUser: (id, data) => {

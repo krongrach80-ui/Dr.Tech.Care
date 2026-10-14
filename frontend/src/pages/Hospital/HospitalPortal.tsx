@@ -69,7 +69,7 @@ import { BannedManagementModal } from '../../components/Hospital/BannedManagemen
 import { EditTreatmentPlanModal } from '../../components/Hospital/EditTreatmentPlanModal';
 import { NetworkSyncModal } from '../../components/Hospital/NetworkSyncModal';
 import { patientFaceStorageService } from '../../services/patientFaceStorageService';
-import { supabase } from '../../lib/supabase';
+import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 
 const THAI_MONTH_NAMES = [
   'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
@@ -151,6 +151,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     isSupabaseConnected,
     isLoadingFromDb,
     initializeFromSupabase,
+    upsertPatientFromSupabase,
   } = useHospitalStore();
 
   // Load from Supabase on mount and listen to Realtime changes
@@ -158,34 +159,77 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     // 1. Initial fetch
     initializeFromSupabase();
 
-    // 2. Realtime listener on 'patients' table (pushes only when actual events occur)
-    console.info('[SUPABASE REALTIME] Subscribing to public:patients changes in Admin Dashboard...');
+    // 2. Realtime listener: BOTH postgres_changes and broadcast on shared PATIENTS_REALTIME_CHANNEL
+    console.info('[SUPABASE REALTIME] Subscribing to patients realtime channel in Admin Dashboard...');
+    const handleIncomingPatient = (patientPayload: any) => {
+      if (!patientPayload) return;
+      console.info('[SUPABASE REALTIME] Incoming patient event:', patientPayload);
+      upsertPatientFromSupabase(patientPayload);
+      showToast(`🔔 คนไข้ใหม่: ${patientPayload.full_name || patientPayload.name || patientPayload.patient_code} (${patientPayload.patient_code})`);
+      initializeFromSupabase();
+    };
+
     const channel = supabase
-      .channel('public:patients_portal')
+      .channel(PATIENTS_REALTIME_CHANNEL)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'patients' },
+        { event: 'INSERT', schema: 'public', table: 'patients' },
         (payload) => {
-          console.info('[SUPABASE REALTIME] Postgres change detected on patients table:', payload);
-          initializeFromSupabase();
+          console.info('[SUPABASE REALTIME] postgres_changes INSERT on patients:', payload);
+          handleIncomingPatient(payload.new);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'patients' },
+        (payload) => {
+          console.info('[SUPABASE REALTIME] postgres_changes UPDATE on patients:', payload);
+          handleIncomingPatient(payload.new);
         }
       )
       .on('broadcast', { event: 'patient_registered' }, (payload) => {
-        console.info('[SUPABASE REALTIME] Broadcast patient event received:', payload);
-        initializeFromSupabase();
+        console.info('[SUPABASE REALTIME] broadcast patient_registered:', payload);
+        handleIncomingPatient(payload.payload);
+      })
+      .on('broadcast', { event: 'new_patient' }, (payload) => {
+        console.info('[SUPABASE REALTIME] broadcast new_patient:', payload);
+        handleIncomingPatient(payload.payload);
+      })
+      .on('broadcast', { event: 'patient_update' }, (payload) => {
+        console.info('[SUPABASE REALTIME] broadcast patient_update:', payload);
+        handleIncomingPatient(payload.payload);
       })
       .subscribe((status, err) => {
         if (err) {
-          console.error('[SUPABASE REALTIME] Subscription error:', err);
+          console.error('[SUPABASE REALTIME] Channel error:', err);
         } else {
-          console.info('[SUPABASE REALTIME] Subscription status:', status);
+          console.info('[SUPABASE REALTIME] Channel status:', status);
         }
       });
 
+    // 3. Lightweight non-intrusive HEAD count checker (0 payload bytes)
+    let lastKnownCount = -1;
+    const countInterval = setInterval(async () => {
+      try {
+        const { count, error } = await supabase
+          .from('patients')
+          .select('*', { count: 'exact', head: true });
+        if (error || count === null) return;
+
+        const localPatientsCount = useHospitalStore.getState().users.filter((u) => u.role === 'patient').length;
+        if (lastKnownCount !== -1 && count !== localPatientsCount) {
+          console.info(`[REALTIME HEAD CHECK] Database count (${count}) !== local (${localPatientsCount}), updating...`);
+          initializeFromSupabase();
+        }
+        lastKnownCount = count;
+      } catch {}
+    }, 4000);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(countInterval);
     };
-  }, [initializeFromSupabase]);
+  }, [initializeFromSupabase, upsertPatientFromSupabase]);
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<TabKey>('users');

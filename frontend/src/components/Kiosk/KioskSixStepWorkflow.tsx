@@ -59,7 +59,7 @@ import { LivenessScanHUD } from '../Biometrics/LivenessScanHUD';
 import { LivenessFrameData, LivenessChallenge } from '../../types/biometrics';
 import { patientSyncService } from '../../services/patientSyncService';
 import { patientFaceStorageService, PatientFaceBinding } from '../../services/patientFaceStorageService';
-import { supabase } from '../../lib/supabase';
+import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 import { asset } from '../../utils/asset';
 import logoImg from '../../assets/logo.png';
 import logoIconImg from '../../assets/logo_icon.png';
@@ -896,6 +896,16 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       const patientPhone = kioskFormPhone.trim() || undefined;
       const patientComplaint = kioskFormComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด';
 
+      const faceImg = pendingEnrolledUser.face_image_url || patientFaceStorageService.getProfileFaceImage(patientCode);
+      const faceVec = pendingEnrolledUser.face_vector || pendingEnrolledUser.biometricVector;
+      let medHistory = 'ลงทะเบียนผ่านหน้าตู้ Kiosk สำเร็จ';
+      if (faceVec && Array.isArray(faceVec)) {
+        medHistory += `\nFACE_EMB:${JSON.stringify(faceVec)}`;
+      }
+      if (faceImg) {
+        medHistory += `\nFACE_PHOTO:${faceImg}`;
+      }
+
       // =====================================================================
       // [CRITICAL SUPABASE INSERTION]: Direct async await insert to 'patients' table
       // =====================================================================
@@ -910,7 +920,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             gender: patientGender,
             phone: patientPhone || null,
             chief_complaint: patientComplaint,
-            medical_history: 'ลงทะเบียนผ่านหน้าตู้ Kiosk สำเร็จ',
+            medical_history: medHistory,
             therapist_notes: 'ลงทะเบียนข้อมูลครบถ้วน',
             status: 'active',
           }, { onConflict: 'patient_code' })
@@ -920,12 +930,21 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           console.error('[SUPABASE] Patient registration insert error:', sbError);
         } else {
           console.info('[SUPABASE] Patient inserted successfully:', insertedData);
-          // Broadcast realtime notification to Admin Dashboard
+          // Broadcast realtime notification to Admin Dashboard on shared channel
           try {
-            await supabase.channel('public:patients').send({
+            await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
               type: 'broadcast',
               event: 'patient_registered',
-              payload: { patient_code: patientCode, full_name: fullPatientName, status: 'active' },
+              payload: {
+                patient_code: patientCode,
+                full_name: fullPatientName,
+                age: patientAge,
+                gender: patientGender,
+                phone: patientPhone,
+                chief_complaint: patientComplaint,
+                status: 'active',
+                face_image_url: faceImg,
+              },
             });
           } catch (broadcastErr) {
             console.warn('[SUPABASE] Broadcast channel notification error:', broadcastErr);
@@ -1680,12 +1699,22 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         // [SUPABASE IMMEDIATE SYNC]: Insert pending patient record so Admin Dashboard sees it instantly
         (async () => {
           try {
+            const facePhoto = liveJpg || savedRecord.biometric_data.registered_face_url;
+            let medHist = '[PENDING_INFO] รอลงข้อมูลส่วนตัว';
+            if (vector128 && Array.isArray(vector128)) {
+              medHist += `\nFACE_EMB:${JSON.stringify(vector128)}`;
+            }
+            if (facePhoto) {
+              medHist += `\nFACE_PHOTO:${facePhoto}`;
+            }
+
             const { data, error } = await supabase.from('patients').upsert({
               patient_code: createdUser.code,
               full_name: `ผู้รับบริการใหม่ (${createdUser.code})`,
               age: 65,
               gender: 'male',
               chief_complaint: '[PENDING_INFO] รอลงข้อมูลส่วนตัว',
+              medical_history: medHist,
               therapist_notes: '[PENDING_INFO] บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว',
               status: 'active',
             }, { onConflict: 'patient_code' }).select();
@@ -1695,10 +1724,18 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             } else {
               console.info('[SUPABASE] Pending patient recorded successfully:', createdUser.code);
               try {
-                await supabase.channel('public:patients').send({
+                await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
                   type: 'broadcast',
-                  event: 'patient_registered',
-                  payload: { patient_code: createdUser.code, status: 'pending_info' },
+                  event: 'new_patient',
+                  payload: {
+                    patient_code: createdUser.code,
+                    full_name: `ผู้รับบริการใหม่ (${createdUser.code})`,
+                    age: 65,
+                    gender: 'male',
+                    status: 'pending_info',
+                    face_image_url: facePhoto,
+                    chief_complaint: 'รอลงข้อมูลส่วนตัว',
+                  },
                 });
               } catch {}
             }
