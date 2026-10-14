@@ -2286,7 +2286,12 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                             <strong>แพทย์/กภ.:</strong> {patient.assignedTherapistName || 'กภ. ธนากร วงศ์สวัสดิ์'}
                           </div>
                           <div className="text-[11px] text-slate-600">
-                            <strong>ประวัติคนไข้:</strong> {patient.patientBackground || 'ความดันโลหิตปกติ ไม่มีประวัติผ่าตัด'}
+                            <strong>ประวัติคนไข้:</strong> {(patient.patientBackground || '')
+                              .replace(/\[PENDING_INFO\]/g, '')
+                              .replace(/FACE_EMB:\[.*?\]/gs, '')
+                              .replace(/FACE_PHOTO:data:image\/[^\s\n]+/g, '')
+                              .replace(/รอลงข้อมูลส่วนตัว/g, '')
+                              .trim() || 'ความดันโลหิตปกติ ไม่มีประวัติผ่าตัด'}
                           </div>
                         </div>
 
@@ -2308,7 +2313,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                             <span>โน้ตคำแนะนำจากนักกายภาพ</span>
                           </div>
                           <p className="text-slate-700 leading-relaxed text-[11px]">
-                            {patient.therapistNotes || 'เน้นฝึกยืดเหยียดเบาๆ สม่ำเสมอ ไม่ฝืนยกของหนักเกิน 3 กก.'}
+                            {(patient.therapistNotes || '')
+                              .replace(/\[PENDING_INFO\]/g, '')
+                              .replace(/บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว/g, '')
+                              .trim() || 'เน้นฝึกยืดเหยียดเบาๆ สม่ำเสมอ ไม่ฝืนยกของหนักเกิน 3 กก.'}
                           </p>
                         </div>
                       </div>
@@ -4856,23 +4864,114 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         currentUserId={currentUserId}
         currentUserName={currentUser?.name || 'เจ้าหน้าที่'}
         canEdit={patientDetailModal ? canEditUser(patientDetailModal) : false}
-        onSavePatient={(patientId, data) => {
-          if (patientDetailModal?.status === 'pending_info') {
+        onSavePatient={async (patientId, data) => {
+          const isPending =
+            patientDetailModal?.status === 'pending_info' ||
+            (patientDetailModal?.chiefComplaint && patientDetailModal.chiefComplaint.includes('[PENDING_INFO]')) ||
+            (patientDetailModal?.patientBackground && patientDetailModal.patientBackground.includes('[PENDING_INFO]')) ||
+            (patientDetailModal?.therapistNotes && patientDetailModal.therapistNotes.includes('[PENDING_INFO]')) ||
+            (patientDetailModal?.name && (patientDetailModal.name.includes('รอลงข้อมูล') || patientDetailModal.name.startsWith('ผู้รับบริการใหม่')));
+
+          const cleanComplaint = (data.chiefComplaint || 'ตรวจประเมินกายภาพบำบัด')
+            .replace(/\[PENDING_INFO\]/g, '')
+            .replace(/รอลงข้อมูลส่วนตัว/g, '')
+            .trim();
+
+          const cleanNotes = (data.therapistNotes || 'ลงทะเบียนเรียบร้อยแล้ว')
+            .replace(/\[PENDING_INFO\]/g, '')
+            .replace(/บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว/g, '')
+            .trim();
+
+          if (isPending) {
             completePendingPatientInfo(patientId, {
-              name: data.name || 'ผู้รับบริการใหม่',
+              name: data.name || 'ผู้รับบริการ',
               age: data.age,
               gender: data.gender,
               phone: data.phone,
-              chiefComplaint: data.chiefComplaint,
+              chiefComplaint: cleanComplaint,
               patientBackground: data.patientBackground,
               assignedTherapistId: data.assignedTherapistId,
               assignedTherapistName: data.assignedTherapistName,
             });
-            showToast(`✓ บันทึกข้อมูลและซิงค์คนไข้ใหม่ (${data.name}) ไปยังตู้ Kiosk เรียบร้อยแล้ว!`);
           } else {
-            updateUser(patientId, data);
-            showToast(`บันทึกข้อมูลของ ${data.name || ''} เรียบร้อยแล้ว`);
+            updateUser(patientId, {
+              ...data,
+              chiefComplaint: cleanComplaint,
+              therapistNotes: cleanNotes,
+              status: 'active',
+            });
           }
+
+          // Direct Supabase Update & Cross-Device Broadcast to Kiosk
+          const targetCode = patientDetailModal?.code || (typeof patientId === 'string' && patientId.startsWith('P-') ? patientId : undefined);
+          if (targetCode) {
+            try {
+              // 1. Fetch current row to preserve biometric face vectors/photos
+              const { data: curDbPatient } = await supabase
+                .from('patients')
+                .select('medical_history')
+                .eq('patient_code', targetCode)
+                .maybeSingle();
+
+              let medHist = (data.patientBackground || 'ลงทะเบียนเวชระเบียนเรียบร้อยแล้ว')
+                .replace(/\[PENDING_INFO\]/g, '')
+                .replace(/รอลงข้อมูลส่วนตัว/g, '')
+                .trim();
+
+              if (curDbPatient?.medical_history) {
+                const embMatch = curDbPatient.medical_history.match(/FACE_EMB:\[.*?\]/s);
+                const photoMatch = curDbPatient.medical_history.match(/FACE_PHOTO:data:image\/[^\s\n]+/);
+                if (embMatch && !medHist.includes('FACE_EMB:')) {
+                  medHist += `\n${embMatch[0]}`;
+                }
+                if (photoMatch && !medHist.includes('FACE_PHOTO:')) {
+                  medHist += `\n${photoMatch[0]}`;
+                }
+              }
+
+              // 2. Direct Supabase Update
+              await supabase.from('patients').update({
+                full_name: data.name?.trim(),
+                age: Number(data.age) || 65,
+                gender: data.gender || 'male',
+                phone: data.phone?.trim() || null,
+                chief_complaint: cleanComplaint,
+                medical_history: medHist,
+                therapist_notes: cleanNotes,
+                status: 'active',
+              }).eq('patient_code', targetCode);
+
+              // 3. Multi-event Realtime Broadcast to Kiosk (across devices)
+              const broadcastPayload = {
+                patient_code: targetCode,
+                full_name: data.name?.trim(),
+                name: data.name?.trim(),
+                age: Number(data.age) || 65,
+                gender: data.gender,
+                phone: data.phone,
+                chief_complaint: cleanComplaint,
+                status: 'active',
+                isCompleted: true,
+              };
+
+              await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
+                type: 'broadcast',
+                event: 'patient_completed',
+                payload: broadcastPayload,
+              });
+
+              await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
+                type: 'broadcast',
+                event: 'patient_registered',
+                payload: broadcastPayload,
+              });
+            } catch (sbErr) {
+              console.error('[SUPABASE] onSavePatient sync error:', sbErr);
+            }
+          }
+
+          showToast(`✓ บันทึกข้อมูลและซิงค์คนไข้ (${data.name}) ไปยังตู้ Kiosk เรียบร้อยแล้ว!`);
+          initializeFromSupabase();
         }}
         onSuccessToast={showToast}
       />

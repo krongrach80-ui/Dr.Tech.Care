@@ -843,7 +843,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     return () => clearTimeout(timer);
   }, [isRegistrationSuccess, resetCountdown]);
 
-  // Real-Time Cross-Window / Cross-Tab Sync via patientSyncService
+  // Real-Time Cross-Window / Cross-Tab Sync via patientSyncService (Same-Machine)
   useEffect(() => {
     if (!isPendingRegistrationActive || !pendingEnrolledUser || isRegistrationSuccess) return;
 
@@ -869,10 +869,128 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     const foundUser = users.find(
       (u) => u.id === pendingEnrolledUser.id || u.code === pendingEnrolledUser.code
     );
-    if (foundUser && foundUser.status === 'active') {
-      handleRegistrationCompleted(foundUser);
+    if (foundUser) {
+      const isPending =
+        foundUser.status === 'pending_info' ||
+        (foundUser.name && (foundUser.name.startsWith('ผู้รับบริการใหม่') || foundUser.name.includes('รอลงข้อมูล'))) ||
+        (foundUser.chiefComplaint && foundUser.chiefComplaint.includes('[PENDING_INFO]')) ||
+        (foundUser.therapistNotes && foundUser.therapistNotes.includes('[PENDING_INFO]'));
+      if (!isPending) {
+        handleRegistrationCompleted(foundUser);
+      }
     }
   }, [users, isPendingRegistrationActive, pendingEnrolledUser, isRegistrationSuccess, handleRegistrationCompleted]);
+
+  // =========================================================================
+  // Cross-Device Real-Time Sync via Supabase (Physical Kiosk <-> Admin Laptop)
+  // When Kiosk is waiting for Admin to fill info (Option B: P-XXXX)
+  // =========================================================================
+  useEffect(() => {
+    if (!isPendingRegistrationActive || !pendingEnrolledUser || isRegistrationSuccess) return;
+
+    const targetCode = pendingEnrolledUser.code;
+    const targetId = pendingEnrolledUser.id;
+    let isFinished = false;
+
+    console.info(`[KIOSK REALTIME] 📡 Subscribing to cross-device updates for ${targetCode}...`);
+
+    const checkAndComplete = (data: any) => {
+      if (isFinished || isRegistrationSuccess) return;
+      if (!data) return;
+
+      const code = data.patient_code || data.code;
+      const id = data.id;
+      const isMatch = (code && code === targetCode) || (id && String(id) === String(targetId));
+      if (!isMatch) return;
+
+      const name = data.full_name || data.name || '';
+      const isPlaceholderName =
+        !name ||
+        name.startsWith('ผู้รับบริการใหม่') ||
+        name.includes('รอลงข้อมูล');
+
+      const hasPendingTag =
+        (typeof data.chief_complaint === 'string' && data.chief_complaint.includes('[PENDING_INFO]')) ||
+        (typeof data.therapist_notes === 'string' && data.therapist_notes.includes('[PENDING_INFO]'));
+
+      // If marked completed, or name updated from default placeholder, or pending tags removed
+      const isComplete =
+        data.isCompleted === true ||
+        (!isPlaceholderName && !hasPendingTag) ||
+        (Boolean(name) && !isPlaceholderName && (Boolean(data.phone) || Boolean(data.age)));
+
+      if (isComplete) {
+        console.info(`[KIOSK REALTIME] ✅ Detected registration completed by Admin for ${targetCode}:`, data);
+        isFinished = true;
+
+        const resolvedUser: UserAccount = {
+          ...pendingEnrolledUser,
+          id: data.id || pendingEnrolledUser.id,
+          code: targetCode,
+          name: name || pendingEnrolledUser.name,
+          age: Number(data.age) || pendingEnrolledUser.age,
+          gender: data.gender || pendingEnrolledUser.gender,
+          phone: data.phone || pendingEnrolledUser.phone,
+          status: 'active',
+          chiefComplaint: (data.chief_complaint || '').replace(/\[PENDING_INFO\]/g, '').trim(),
+          diagnosis: (data.chief_complaint || '').replace(/\[PENDING_INFO\]/g, '').trim(),
+        };
+
+        handleRegistrationCompleted(resolvedUser);
+      }
+    };
+
+    // 1. Supabase Realtime Listener (Dual Channel: broadcast + postgres_changes)
+    const channel = supabase
+      .channel(`kiosk_sub_${targetCode}_${Date.now()}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'patients' }, (payload) => {
+        console.info('[KIOSK REALTIME] postgres_changes UPDATE:', payload);
+        checkAndComplete(payload.new);
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'patients' }, (payload) => {
+        console.info('[KIOSK REALTIME] postgres_changes INSERT:', payload);
+        checkAndComplete(payload.new);
+      })
+      .on('broadcast', { event: 'patient_completed' }, (payload) => {
+        console.info('[KIOSK REALTIME] broadcast patient_completed:', payload);
+        checkAndComplete(payload.payload);
+      })
+      .on('broadcast', { event: 'patient_registered' }, (payload) => {
+        console.info('[KIOSK REALTIME] broadcast patient_registered:', payload);
+        checkAndComplete(payload.payload);
+      })
+      .on('broadcast', { event: 'patient_update' }, (payload) => {
+        console.info('[KIOSK REALTIME] broadcast patient_update:', payload);
+        checkAndComplete(payload.payload);
+      })
+      .subscribe((status, err) => {
+        if (err) console.warn('[KIOSK REALTIME] Channel error:', err);
+        else console.info('[KIOSK REALTIME] Subscription status:', status);
+      });
+
+    // 2. High-Frequency Active Poller (Every 1.5s) to guarantee zero-fail detection across devices
+    const pollTimer = setInterval(async () => {
+      if (isFinished) return;
+      try {
+        const { data, error } = await supabase
+          .from('patients')
+          .select('*')
+          .eq('patient_code', targetCode)
+          .maybeSingle();
+
+        if (!error && data) {
+          checkAndComplete(data);
+        }
+      } catch (err) {
+        console.warn('[KIOSK REALTIME] Poller error:', err);
+      }
+    }, 1500);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(pollTimer);
+    };
+  }, [isPendingRegistrationActive, pendingEnrolledUser, isRegistrationSuccess, handleRegistrationCompleted]);
 
   // Form submit for Choice A (กรอกข้อมูลที่หน้าตู้)
   const handleKioskFormSubmit = async (e?: React.FormEvent) => {

@@ -132,20 +132,38 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
           (matchedTherapist ? matchedTherapist.name : 'กภ. ธนากร วงศ์สวัสดิ์')
       );
 
-      setChiefComplaint(
+      const cleanComplaint = (
         patient.chiefComplaint ||
           patient.diagnosis ||
           loadedDossier?.medical_records.chief_complaint ||
           loadedDossier?.medical_records.diagnosis ||
           ''
-      );
-      setPatientBackground(
-        patient.patientBackground || loadedDossier?.medical_records.treatment_plan || ''
-      );
+      )
+        .replace(/\[PENDING_INFO\]/g, '')
+        .replace(/รอลงข้อมูลส่วนตัว/g, '')
+        .trim();
+      setChiefComplaint(cleanComplaint || 'ตรวจประเมินกายภาพบำบัด');
+
+      const rawBg =
+        patient.patientBackground || loadedDossier?.medical_records.treatment_plan || '';
+      const cleanBg = rawBg
+        .replace(/\[PENDING_INFO\]/g, '')
+        .replace(/FACE_EMB:\[.*?\]/gs, '')
+        .replace(/FACE_PHOTO:data:image\/[^\s\n]+/g, '')
+        .replace(/รอลงข้อมูลส่วนตัว/g, '')
+        .trim();
+      setPatientBackground(cleanBg || 'ความดันโลหิตปกติ ไม่มีประวัติผ่าตัด');
+
       setTreatmentOutcome(patient.treatmentOutcome || '');
-      setTherapistNotes(
-        patient.therapistNotes || loadedDossier?.medical_records.progress_notes || ''
-      );
+
+      const rawNotes =
+        patient.therapistNotes || loadedDossier?.medical_records.progress_notes || '';
+      const cleanNotes = rawNotes
+        .replace(/\[PENDING_INFO\]/g, '')
+        .replace(/บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว/g, '')
+        .trim();
+      setTherapistNotes(cleanNotes || 'ให้ฝึกตามโปรแกรมที่กำหนดสม่ำเสมอ');
+
       setStatus(patient.status || 'active');
 
       setErrors({});

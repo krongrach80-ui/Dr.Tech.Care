@@ -1036,9 +1036,17 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
                   phone: p.phone || '',
                   diagnosis: cleanComplaint,
                   chiefComplaint: cleanComplaint,
-                  patientBackground: p.medical_history || '',
+                  patientBackground: (p.medical_history || '')
+                    .replace(/\[PENDING_INFO\]/g, '')
+                    .replace(/FACE_EMB:\[.*?\]/gs, '')
+                    .replace(/FACE_PHOTO:data:image\/[^\s\n]+/g, '')
+                    .replace(/รอลงข้อมูลส่วนตัว/g, '')
+                    .trim(),
                   treatmentOutcome: p.treatment_outcome || '',
-                  therapistNotes: (p.therapist_notes || '').replace(/\[PENDING_INFO\]/g, '').trim(),
+                  therapistNotes: (p.therapist_notes || '')
+                    .replace(/\[PENDING_INFO\]/g, '')
+                    .replace(/บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว/g, '')
+                    .trim(),
                   assignedTherapistName: p.profiles?.full_name || 'กภ. ธนากร วงศ์สวัสดิ์',
                   assignedTherapistId: p.responsible_therapist_id || 1,
                   face_image_url: p.photo || p.avatar_url,
@@ -1349,10 +1357,25 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
         status: 'active',
       }).then(() => {
         try {
+          const payload = {
+            patient_code: updatedUser.code,
+            full_name: updatedUser.name,
+            name: updatedUser.name,
+            age: updatedUser.age,
+            gender: updatedUser.gender,
+            phone: updatedUser.phone,
+            status: 'active',
+            isCompleted: true,
+          };
+          supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
+            type: 'broadcast',
+            event: 'patient_completed',
+            payload,
+          }).catch(() => {});
           supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
             type: 'broadcast',
             event: 'patient_registered',
-            payload: { patient_code: updatedUser.code, full_name: updatedUser.name, status: 'active' },
+            payload,
           }).catch(() => {});
         } catch {}
       }).catch((e) => console.error('[SUPABASE] updatePatient error in completePendingPatientInfo:', e));
@@ -1400,9 +1423,17 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       phone: p.phone || '',
       diagnosis: cleanComplaint,
       chiefComplaint: cleanComplaint,
-      patientBackground: p.medical_history || '',
+      patientBackground: (p.medical_history || '')
+        .replace(/\[PENDING_INFO\]/g, '')
+        .replace(/FACE_EMB:\[.*?\]/gs, '')
+        .replace(/FACE_PHOTO:data:image\/[^\s\n]+/g, '')
+        .replace(/รอลงข้อมูลส่วนตัว/g, '')
+        .trim(),
       treatmentOutcome: p.treatment_outcome || '',
-      therapistNotes: (p.therapist_notes || '').replace(/\[PENDING_INFO\]/g, '').trim(),
+      therapistNotes: (p.therapist_notes || '')
+        .replace(/\[PENDING_INFO\]/g, '')
+        .replace(/บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว/g, '')
+        .trim(),
       assignedTherapistName: p.profiles?.full_name || p.assigned_therapist_name || 'กภ. ธนากร วงศ์สวัสดิ์',
       assignedTherapistId: p.responsible_therapist_id || p.assigned_therapist_id || 1,
       face_image_url: photo,
@@ -1446,7 +1477,42 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     get().addActivityLog('แก้ไขข้อมูลผู้ใช้งาน', 'AUTH', `อัปเดตข้อมูลผู้ใช้งาน ID: ${id}`);
 
     if (supabaseService.isConfigured()) {
-      supabaseService.updateProfile(id, data).catch((e) => console.warn('Supabase updateProfile error:', e));
+      if (updatedUser && updatedUser.role === 'patient') {
+        supabaseService.updatePatient(updatedUser.code || id, {
+          name: updatedUser.name,
+          age: updatedUser.age,
+          gender: updatedUser.gender,
+          phone: updatedUser.phone,
+          chief_complaint: (updatedUser.chiefComplaint || '').replace(/\[PENDING_INFO\]/g, '').trim(),
+          therapist_notes: (updatedUser.therapistNotes || '').replace(/\[PENDING_INFO\]/g, '').trim(),
+          status: updatedUser.status === 'suspended' ? 'suspended' : 'active',
+        }).catch((e) => console.warn('Supabase updatePatient in updateUser error:', e));
+
+        try {
+          const payload = {
+            patient_code: updatedUser.code,
+            full_name: updatedUser.name,
+            name: updatedUser.name,
+            age: updatedUser.age,
+            gender: updatedUser.gender,
+            phone: updatedUser.phone,
+            status: updatedUser.status || 'active',
+            isCompleted: true,
+          };
+          supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
+            type: 'broadcast',
+            event: 'patient_completed',
+            payload,
+          }).catch(() => {});
+          supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
+            type: 'broadcast',
+            event: 'patient_update',
+            payload,
+          }).catch(() => {});
+        } catch {}
+      } else {
+        supabaseService.updateProfile(id, data).catch((e) => console.warn('Supabase updateProfile error:', e));
+      }
     }
   },
 
