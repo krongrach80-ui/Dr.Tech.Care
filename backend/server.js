@@ -159,8 +159,25 @@ function broadcastSseEvent(event) {
   }
 }
 
-// Helper: Save Base64 Image to Disk
-function saveBase64Image(dataUrl, patientCode) {
+// Helper: Sanitize Folder Name according to Patient ID & Full Name
+function sanitizeFolderName(patientCode, patientName) {
+  const code = String(patientCode || 'P-0000').trim().toUpperCase();
+  if (patientName && typeof patientName === 'string') {
+    const clean = patientName
+      .replace(/\[PENDING_INFO\]/g, '')
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .replace(/\s+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .trim();
+    if (clean && !clean.includes('ผู้รับบริการใหม่') && clean !== 'ผู้รับบริการ') {
+      return `${code}_${clean}`;
+    }
+  }
+  return code;
+}
+
+// Helper: Save Base64 Image to Disk in patient-specific folder
+function saveBase64Image(dataUrl, patientCode, patientName) {
   if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image')) {
     return null;
   }
@@ -170,19 +187,79 @@ function saveBase64Image(dataUrl, patientCode) {
     const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
     const buffer = Buffer.from(match[2], 'base64');
 
-    const patientFolder = path.join(PATIENT_UPLOADS_DIR, patientCode);
-    if (!fs.existsSync(patientFolder)) {
-      fs.mkdirSync(patientFolder, { recursive: true });
+    const folderName = sanitizeFolderName(patientCode, patientName);
+
+    // Save in both backend/uploads and frontend/public/uploads so static serving works everywhere
+    const targetDirs = [
+      path.join(PATIENT_UPLOADS_DIR, folderName),
+      path.resolve(__dirname, '../frontend/public/uploads/patients', folderName),
+    ];
+
+    if (folderName !== patientCode) {
+      targetDirs.push(
+        path.join(PATIENT_UPLOADS_DIR, patientCode),
+        path.resolve(__dirname, '../frontend/public/uploads/patients', patientCode)
+      );
     }
 
-    const filename = `profile_face.${ext}`;
-    const filePath = path.join(patientFolder, filename);
-    fs.writeFileSync(filePath, buffer);
+    for (const dir of targetDirs) {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const loginHist = path.join(dir, 'login_history');
+      if (!fs.existsSync(loginHist)) {
+        fs.mkdirSync(loginHist, { recursive: true });
+      }
+      fs.writeFileSync(path.join(dir, `profile_face.${ext}`), buffer);
+    }
 
-    // Return static URL
-    return `/uploads/patients/${patientCode}/${filename}`;
+    console.log(`[STORAGE] Created patient folder & saved profile_face.${ext} in: ${folderName}`);
+    return `/uploads/patients/${folderName}/profile_face.${ext}`;
   } catch (err) {
     console.warn(`⚠️ Failed to save base64 image for ${patientCode}:`, err.message);
+    return null;
+  }
+}
+
+// Helper: Save Login Snapshot Image to Disk in patient's login_history folder
+function saveLoginSnapshotToDisk(dataUrl, patientCode, patientName, similarity) {
+  if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image')) {
+    return null;
+  }
+  try {
+    const match = dataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
+    if (!match) return null;
+    const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+    const buffer = Buffer.from(match[2], 'base64');
+
+    const folderName = sanitizeFolderName(patientCode, patientName);
+    const timestamp = Date.now();
+    const simPercent = Math.round(Number(similarity || 0) * 100);
+    const fileName = `login_${timestamp}_${simPercent}.${ext}`;
+
+    const targetDirs = [
+      path.join(PATIENT_UPLOADS_DIR, folderName, 'login_history'),
+      path.resolve(__dirname, '../frontend/public/uploads/patients', folderName, 'login_history'),
+    ];
+
+    if (folderName !== patientCode) {
+      targetDirs.push(
+        path.join(PATIENT_UPLOADS_DIR, patientCode, 'login_history'),
+        path.resolve(__dirname, '../frontend/public/uploads/patients', patientCode, 'login_history')
+      );
+    }
+
+    for (const dir of targetDirs) {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(dir, fileName), buffer);
+    }
+
+    console.log(`[STORAGE] Saved login snapshot in: ${folderName}/login_history/${fileName}`);
+    return `/uploads/patients/${folderName}/login_history/${fileName}`;
+  } catch (err) {
+    console.warn(`⚠️ Failed to save login snapshot for ${patientCode}:`, err.message);
     return null;
   }
 }
@@ -428,7 +505,7 @@ const server = http.createServer(async (req, res) => {
       const rawImage = body.image_data_url || body.photo || body.face_image_url || null;
       let staticImageUrl = null;
       if (rawImage && rawImage.startsWith('data:image')) {
-        staticImageUrl = saveBase64Image(rawImage, patientCode);
+        staticImageUrl = saveBase64Image(rawImage, patientCode, fullName);
       } else if (rawImage && (rawImage.startsWith('http') || rawImage.startsWith('/uploads'))) {
         staticImageUrl = rawImage;
       }
@@ -509,6 +586,27 @@ const server = http.createServer(async (req, res) => {
 
       saveDatabaseToDisk();
 
+      // Save patient_record.json directly into patient-specific named folder
+      try {
+        const folderName = sanitizeFolderName(patientCode, fullName);
+        const recordDirs = [
+          path.join(PATIENT_UPLOADS_DIR, folderName),
+          path.resolve(__dirname, '../frontend/public/uploads/patients', folderName),
+        ];
+        if (folderName !== patientCode) {
+          recordDirs.push(
+            path.join(PATIENT_UPLOADS_DIR, patientCode),
+            path.resolve(__dirname, '../frontend/public/uploads/patients', patientCode)
+          );
+        }
+        for (const rDir of recordDirs) {
+          if (!fs.existsSync(rDir)) fs.mkdirSync(rDir, { recursive: true });
+          fs.writeFileSync(path.join(rDir, 'patient_record.json'), JSON.stringify(patientRecord, null, 2), 'utf8');
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not write patient_record.json to folder:', err.message);
+      }
+
       // REAL-TIME BROADCAST: Broadcast to Admin Dashboard & all other stations
       const eventType = patientRecord.status === 'pending_info' ? 'ENROLLED_PENDING' : 'INFO_COMPLETED';
       broadcastSseEvent({
@@ -530,6 +628,27 @@ const server = http.createServer(async (req, res) => {
     }
 
     // -------------------------------------------------------------
+    // Save Login Snapshot: POST /api/patients/login-snapshot
+    // -------------------------------------------------------------
+    if ((pathname === '/api/patients/login-snapshot' || pathname === '/patients/login-snapshot') && method === 'POST') {
+      const body = await parseBody(req);
+      const patientCode = body.patient_code || body.code;
+      const snapshot = body.snapshot_image || body.image_data_url || body.photo;
+      const sim = body.similarity_score || body.similarity || 0;
+      const pName = body.name || body.full_name;
+
+      if (patientCode && snapshot) {
+        const savedUrl = saveLoginSnapshotToDisk(snapshot, patientCode, pName, sim);
+        return sendJson(res, 200, {
+          status: 'success',
+          message: 'บันทึกภาพประวัติการสแกนใบหน้าเข้าโฟลเดอร์เรียบร้อยแล้ว',
+          snapshot_url: savedUrl,
+        });
+      }
+      return sendJson(res, 400, { status: 'error', message: 'Missing patientCode or snapshot image' });
+    }
+
+    // -------------------------------------------------------------
     // Create/Update Generic Patient: POST /api/patients
     // -------------------------------------------------------------
     if (pathname === '/api/patients' && method === 'POST') {
@@ -540,7 +659,7 @@ const server = http.createServer(async (req, res) => {
       const rawImage = body.image_data_url || body.photo || body.face_image_url;
       let staticImageUrl = null;
       if (rawImage && rawImage.startsWith('data:image')) {
-        staticImageUrl = saveBase64Image(rawImage, code);
+        staticImageUrl = saveBase64Image(rawImage, code, body.name || body.full_name);
       } else if (rawImage) {
         staticImageUrl = rawImage;
       }

@@ -185,30 +185,60 @@ class PatientFaceStorageService {
   }
 
   /**
-   * Get isolated directory path for a patient
+   * Helper: Build sanitized, individual folder name for patient: {patientCode}_{cleanName}
+   * e.g. P-6022_สมชาย_ใจดี
    */
-  public getPatientDirPath(patientId: string | number): string {
+  public getPatientFolderName(patientId: string | number, patientName?: string): string {
     const code = this.normalizePatientId(patientId);
-    return `/public/uploads/patients/${code}/`;
+    let name = patientName;
+    if (!name) {
+      const existing = this.getPatientRecord(code);
+      name = existing?.patient_profile?.full_name || existing?.patient_profile?.first_name;
+    }
+    if (name && typeof name === 'string') {
+      const clean = name
+        .replace(/\[PENDING_INFO\]/g, '')
+        .replace(/[\\/:*?"<>|]/g, '_')
+        .replace(/\s+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .trim();
+      if (clean && !clean.includes('ผู้รับบริการใหม่') && clean !== 'ผู้รับบริการ' && !clean.includes('รอลงข้อมูล')) {
+        return `${code}_${clean}`;
+      }
+    }
+    return code;
   }
 
   /**
-   * 1. Create dedicated isolated directory for a patient
+   * Get isolated directory path for a patient
    */
-  public createPatientDirectory(patientId: string | number): string {
+  public getPatientDirPath(patientId: string | number, patientName?: string): string {
+    const folderName = this.getPatientFolderName(patientId, patientName);
+    return `/public/uploads/patients/${folderName}/`;
+  }
+
+  /**
+   * 1. Create dedicated isolated directory for a patient (named folder and alias)
+   */
+  public createPatientDirectory(patientId: string | number, patientName?: string): string {
     const code = this.normalizePatientId(patientId);
-    const dirPath = `/public/uploads/patients/${code}/`;
-    const loginHistoryDirPath = `/public/uploads/patients/${code}/login_history/`;
+    const folderName = this.getPatientFolderName(code, patientName);
+    const dirPath = `/public/uploads/patients/${folderName}/`;
+    const loginHistoryDirPath = `/public/uploads/patients/${folderName}/login_history/`;
 
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
         localStorage.setItem(`fs:${dirPath}`, 'DIR');
         localStorage.setItem(`fs:${loginHistoryDirPath}`, 'DIR');
+        if (folderName !== code) {
+          localStorage.setItem(`fs:/public/uploads/patients/${code}/`, 'DIR');
+          localStorage.setItem(`fs:/public/uploads/patients/${code}/login_history/`, 'DIR');
+        }
       } catch {}
     }
 
     // Required Debug Logging
-    console.log(`[STORAGE] Created directory: ${dirPath}`);
+    console.log(`[STORAGE] Created patient directory: ${dirPath} (code: ${code})`);
     return dirPath;
   }
 
@@ -304,11 +334,6 @@ class PatientFaceStorageService {
     profileFaceDataUrl?: string | null
   ): CompletePatientRecord {
     const code = this.normalizePatientId(patientId);
-    this.createPatientDirectory(code);
-
-    const dirPath = this.getPatientDirPath(code);
-    const profileFacePath = `${dirPath}profile_face.jpg`;
-    const recordJsonPath = `${dirPath}patient_record.json`;
 
     // Retrieve existing or create new complete dossier
     const existing = this.getPatientRecord(code);
@@ -317,7 +342,16 @@ class PatientFaceStorageService {
     const lastName = partialRecord.patient_profile?.last_name || existing?.patient_profile.last_name || '';
     const fullName = partialRecord.patient_profile?.full_name || `${firstName} ${lastName}`.trim();
 
-    const registeredFaceUrl = profileFaceDataUrl || existing?.biometric_data.registered_face_url || profileFacePath;
+    // Create named folder e.g. P-6022_สมชาย_ใจดี
+    const folderName = this.getPatientFolderName(code, fullName);
+    this.createPatientDirectory(code, fullName);
+
+    const namedDirPath = `/public/uploads/patients/${folderName}/`;
+    const aliasDirPath = `/public/uploads/patients/${code}/`;
+
+    const existingPhoto = this.getProfileFaceImage(code, fullName);
+    const resolvedPhoto = profileFaceDataUrl || existing?.biometric_data.registered_face_url || existingPhoto;
+    const registeredFaceUrl = resolvedPhoto || `${namedDirPath}profile_face.jpg`;
 
     const fullRecord: CompletePatientRecord = {
       patient_profile: {
@@ -363,17 +397,26 @@ class PatientFaceStorageService {
 
     // Store in-memory
     this.memoryRecords.set(code, fullRecord);
+    if (folderName !== code) {
+      this.memoryRecords.set(folderName, fullRecord);
+    }
 
-    // Save distinctly to isolated persistent storage
+    // Save distinctly to isolated persistent storage in both named folder & code alias
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
-        if (profileFaceDataUrl) {
-          localStorage.setItem(`fs:${profileFacePath}`, profileFaceDataUrl);
-          localStorage.setItem(`face_image_${code}`, profileFaceDataUrl);
-          localStorage.setItem(`face_image_${fullRecord.patient_profile.id}`, profileFaceDataUrl);
+        const serialized = JSON.stringify(fullRecord);
+        localStorage.setItem(`fs:${namedDirPath}patient_record.json`, serialized);
+        localStorage.setItem(`fs:${aliasDirPath}patient_record.json`, serialized);
+        localStorage.setItem(`patient_record_${code}`, serialized);
+        localStorage.setItem(`patient_record_${folderName}`, serialized);
+
+        if (resolvedPhoto) {
+          localStorage.setItem(`fs:${namedDirPath}profile_face.jpg`, resolvedPhoto);
+          localStorage.setItem(`fs:${aliasDirPath}profile_face.jpg`, resolvedPhoto);
+          localStorage.setItem(`face_image_${code}`, resolvedPhoto);
+          localStorage.setItem(`face_image_${folderName}`, resolvedPhoto);
+          localStorage.setItem(`face_image_${fullRecord.patient_profile.id}`, resolvedPhoto);
         }
-        localStorage.setItem(`fs:${recordJsonPath}`, JSON.stringify(fullRecord));
-        localStorage.setItem(`patient_record_${code}`, JSON.stringify(fullRecord));
       } catch (err) {
         console.warn('⚠️ LocalStorage quota warning when saving patient record:', err);
       }
@@ -403,7 +446,7 @@ class PatientFaceStorageService {
               medical_history: fullRecord.medical_records?.medical_history,
               assigned_exercises: fullRecord.medical_records?.assigned_exercises,
               face_vector: fullRecord.biometric_data?.face_vector,
-              image_data_url: profileFaceDataUrl || fullRecord.biometric_data?.registered_face_url || null,
+              image_data_url: resolvedPhoto || null,
             }),
           }).catch(() => {});
         }
@@ -411,13 +454,14 @@ class PatientFaceStorageService {
     }
 
     // Required Debug Logging
-    console.log(`[STORAGE] Saved profile face image and patient_record.json for ${code} successfully.`);
+    console.log(`[STORAGE] Saved profile face image and patient_record.json for ${folderName} (HN: ${code}) successfully.`);
 
     return fullRecord;
   }
 
   /**
    * 4. Save login snapshot image taken during verification into login_history/
+   * Saves into patient-specific named folder: /public/uploads/patients/{folderName}/login_history/
    * [LOGIN SNAPSHOT CLEANUP POLICY]:
    * Retain ONLY latest 10 login snapshots per patient.
    * Auto-purge older snapshot files upon saving a new one.
@@ -426,13 +470,18 @@ class PatientFaceStorageService {
   public saveLoginSnapshot(
     patientId: string | number,
     snapshotJpg: string | null,
-    similarityScore: number
+    similarityScore: number,
+    patientName?: string
   ): PatientLoginSnapshot | null {
     if (!snapshotJpg) return null;
     const code = this.normalizePatientId(patientId);
+    const resolvedName = patientName || this.getPatientRecord(code)?.patient_profile?.full_name || '';
+    const folderName = this.getPatientFolderName(code, resolvedName);
     const timestamp = Date.now();
-    const fileName = `login_${timestamp}_${Math.round(similarityScore * 100)}.jpg`;
-    const snapshotPath = `/public/uploads/patients/${code}/login_history/${fileName}`;
+    const simPercent = Math.round(similarityScore * 100);
+    const fileName = `login_${timestamp}_${simPercent}.jpg`;
+    const snapshotPath = `/public/uploads/patients/${folderName}/login_history/${fileName}`;
+    const aliasSnapshotPath = `/public/uploads/patients/${code}/login_history/${fileName}`;
 
     // Ensure snapshot is compressed to max 800x800 & 80% JPEG quality
     const compressedSnapshot = this.compressDataUrl(snapshotJpg, 0.80, 800, 800);
@@ -441,16 +490,40 @@ class PatientFaceStorageService {
       timestamp,
       date_str: new Date(timestamp).toLocaleString('th-TH'),
       similarity_score: similarityScore,
-      similarity_percent: `${Math.round(similarityScore * 100)}%`,
+      similarity_percent: `${simPercent}%`,
       snapshot_image_url: snapshotPath,
     };
 
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
         localStorage.setItem(`fs:${snapshotPath}`, compressedSnapshot);
+        if (snapshotPath !== aliasSnapshotPath) {
+          localStorage.setItem(`fs:${aliasSnapshotPath}`, compressedSnapshot);
+        }
       } catch (err) {
         console.warn('⚠️ LocalStorage quota warning when saving login snapshot:', err);
       }
+    }
+
+    // Synchronize snapshot to backend server to write on disk in folderName/login_history/
+    if (typeof window !== 'undefined') {
+      try {
+        const baseUrl = resolveDefaultApiUrl();
+        if (baseUrl) {
+          fetch(`${baseUrl}/patients/login-snapshot`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              patient_code: code,
+              code: code,
+              name: resolvedName,
+              similarity: similarityScore,
+              similarity_score: similarityScore,
+              snapshot_image: compressedSnapshot,
+            }),
+          }).catch(() => {});
+        }
+      } catch {}
     }
 
     // Update patient dossier's login_history and apply RETENTION POLICY (Latest 10)
@@ -478,6 +551,8 @@ class PatientFaceStorageService {
               try {
                 if (typeof window !== 'undefined' && window.localStorage) {
                   localStorage.removeItem(`fs:${oldSnap.snapshot_image_url}`);
+                  const aliasOld = oldSnap.snapshot_image_url.replace(folderName, code);
+                  localStorage.removeItem(`fs:${aliasOld}`);
                 }
                 console.log(
                   `[STORAGE] Purged older login snapshot: ${oldSnap.snapshot_image_url} (retaining latest ${MAX_SNAPSHOTS})`
@@ -492,7 +567,7 @@ class PatientFaceStorageService {
     }
 
     // Required Debug Logging
-    console.log(`[STORAGE] Saved login snapshot: ${snapshotPath}`);
+    console.log(`[STORAGE] Saved login snapshot in folder ${folderName}: ${snapshotPath}`);
     return snapshotItem;
   }
 
@@ -577,7 +652,7 @@ class PatientFaceStorageService {
   /**
    * 6. Retrieve a specific patient's complete dossier by patient_id
    */
-  public getPatientRecord(patientId: string | number): CompletePatientRecord | null {
+  public getPatientRecord(patientId: string | number, patientName?: string): CompletePatientRecord | null {
     const code = this.normalizePatientId(patientId);
 
     // Check memory first
@@ -585,17 +660,32 @@ class PatientFaceStorageService {
       return this.memoryRecords.get(code)!;
     }
 
-    // Check persistent storage
+    const folderName = this.getPatientFolderName(code, patientName);
+    if (this.memoryRecords.has(folderName)) {
+      return this.memoryRecords.get(folderName)!;
+    }
+
+    // Check persistent storage in both named directory and code key
     if (typeof window !== 'undefined' && window.localStorage) {
-      const raw =
-        localStorage.getItem(`fs:/public/uploads/patients/${code}/patient_record.json`) ||
-        localStorage.getItem(`patient_record_${code}`);
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw);
-          this.memoryRecords.set(code, parsed);
-          return parsed;
-        } catch {}
+      const candidates = [
+        `fs:/public/uploads/patients/${folderName}/patient_record.json`,
+        `fs:/public/uploads/patients/${code}/patient_record.json`,
+        `patient_record_${code}`,
+        `patient_record_${folderName}`,
+      ];
+
+      for (const k of candidates) {
+        const raw = localStorage.getItem(k);
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            this.memoryRecords.set(code, parsed);
+            if (folderName !== code) {
+              this.memoryRecords.set(folderName, parsed);
+            }
+            return parsed;
+          } catch {}
+        }
       }
     }
 
@@ -603,22 +693,27 @@ class PatientFaceStorageService {
   }
 
   /**
-   * 7. Retrieve patient's reference profile face image
+   * 7. Retrieve patient's reference profile face image from named folder or storage
    */
-  public getProfileFaceImage(patientId: string | number): string | null {
+  public getProfileFaceImage(patientId: string | number, patientName?: string): string | null {
     const code = this.normalizePatientId(patientId);
+    const folderName = this.getPatientFolderName(code, patientName);
 
     if (typeof window !== 'undefined' && window.localStorage) {
-      const fsKey = `fs:/public/uploads/patients/${code}/profile_face.jpg`;
-      const direct = localStorage.getItem(fsKey);
-      if (direct) return direct;
+      const candidates = [
+        `fs:/public/uploads/patients/${folderName}/profile_face.jpg`,
+        `fs:/public/uploads/patients/${code}/profile_face.jpg`,
+        `face_image_${code}`,
+        `face_image_${folderName}`,
+      ];
 
-      const altKey = `face_image_${code}`;
-      const alt = localStorage.getItem(altKey);
-      if (alt) return alt;
+      for (const k of candidates) {
+        const val = localStorage.getItem(k);
+        if (val) return val;
+      }
     }
 
-    const record = this.getPatientRecord(code);
+    const record = this.getPatientRecord(code, patientName);
     if (record?.biometric_data.registered_face_url) {
       return record.biometric_data.registered_face_url;
     }
@@ -629,8 +724,8 @@ class PatientFaceStorageService {
   /**
    * Compatibility wrapper for existing getPatientFaceImage calls
    */
-  public getPatientFaceImage(patientCodeOrId: string | number): string | null {
-    return this.getProfileFaceImage(patientCodeOrId);
+  public getPatientFaceImage(patientCodeOrId: string | number, patientName?: string): string | null {
+    return this.getProfileFaceImage(patientCodeOrId, patientName);
   }
 
   /**
@@ -1142,10 +1237,14 @@ class PatientFaceStorageService {
    */
   public deletePatientDirectoryAndData(patientIdOrCode: string | number): boolean {
     const code = this.normalizePatientId(patientIdOrCode);
+    const existing = this.getPatientRecord(code);
+    const folderName = this.getPatientFolderName(code, existing?.patient_profile?.full_name);
     const dirPrefix = `/public/uploads/patients/${code}/`;
+    const namedDirPrefix = `/public/uploads/patients/${folderName}/`;
     
     // 1. Remove from in-memory cache
     this.memoryRecords.delete(code);
+    this.memoryRecords.delete(folderName);
     if (this.memoryRecords.has(String(patientIdOrCode))) {
       this.memoryRecords.delete(String(patientIdOrCode));
     }
@@ -1160,10 +1259,15 @@ class PatientFaceStorageService {
           if (
             key.startsWith(`fs:${dirPrefix}`) ||
             key === `fs:${dirPrefix}` ||
+            key.startsWith(`fs:${namedDirPrefix}`) ||
+            key === `fs:${namedDirPrefix}` ||
             key === `fs:/public/uploads/patients/${code}` ||
+            key === `fs:/public/uploads/patients/${folderName}` ||
             key === `patient_record_${code}` ||
+            key === `patient_record_${folderName}` ||
             key === `patient_record_${patientIdOrCode}` ||
             key === `face_image_${code}` ||
+            key === `face_image_${folderName}` ||
             key === `face_image_${patientIdOrCode}`
           ) {
             keysToRemove.push(key);

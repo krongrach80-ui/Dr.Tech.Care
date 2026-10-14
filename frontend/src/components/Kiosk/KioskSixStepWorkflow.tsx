@@ -1988,13 +1988,13 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             realDiagnosis = 'ตรวจประเมินกายภาพบำบัด';
           }
 
-          // [LOGIN HISTORY]: Save snapshot image taken during login verification into login_history/
+          // [LOGIN HISTORY]: Save snapshot image taken during login verification into patient-specific named folder/login_history/
           if (liveJpg) {
-            patientFaceStorageService.saveLoginSnapshot(targetHN, liveJpg, evaluation.bestScore);
+            patientFaceStorageService.saveLoginSnapshot(targetHN, liveJpg, evaluation.bestScore, realName);
           }
 
           const faceImg =
-            patientFaceStorageService.getProfileFaceImage(targetHN) ||
+            patientFaceStorageService.getProfileFaceImage(targetHN, realName) ||
             dbExactPatient?.photo ||
             dbExactPatient?.avatar_url ||
             matchedCandidate.face_image_url ||

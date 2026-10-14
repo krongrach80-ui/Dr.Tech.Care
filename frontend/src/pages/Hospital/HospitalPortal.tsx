@@ -5062,7 +5062,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   treatment_plan: data.patientBackground?.trim() || undefined,
                   progress_notes: cleanNotes,
                 },
-              });
+              }, preservedPhoto);
 
               // 4. Update Face Registry profile name
               const regProf = faceRegistryService.getAllProfiles().find((p: any) => p.patientCode && p.patientCode.toUpperCase() === targetCode.toUpperCase());

@@ -212,6 +212,8 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
     const firstName = nameParts[0] || name.trim();
     const lastName = nameParts.slice(1).join(' ') || '';
 
+    const patientPhoto = (patient as any).photo || (patient as any).face_image_url || patientFaceStorageService.getProfileFaceImage(patient.code || patient.id);
+
     // Save directly to isolated storage: /public/uploads/patients/{patient_id}/patient_record.json
     patientFaceStorageService.savePatientRecord(patient.code || patient.id, {
       patient_profile: {
@@ -233,7 +235,7 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
         progress_notes: therapistNotes.trim() || undefined,
         responsible_therapist: assignedTherapistName,
       },
-    });
+    }, patientPhoto);
 
     const updatedData: Partial<UserAccount> = {
       name: name.trim(),
