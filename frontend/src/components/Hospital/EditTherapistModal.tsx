@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   User,
@@ -78,10 +78,17 @@ export const EditTherapistModal: React.FC<EditTherapistModalProps> = ({
     licenseNumber?: string;
   }>({});
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const prevTherapistKeyRef = useRef<string | null>(null);
 
   // Pre-fill existing data whenever modal opens with a therapist
   useEffect(() => {
     if (isOpen && therapist) {
+      const therapistKey = `${therapist.id}_${therapist.code || therapist.name}`;
+      if (prevTherapistKeyRef.current === therapistKey) {
+        return; // Don't wipe inputs if already editing this therapist
+      }
+      prevTherapistKeyRef.current = therapistKey;
+
       setName(therapist.name || '');
       setPhone(therapist.phone || '');
       setEmail(therapist.email || '');
@@ -95,6 +102,8 @@ export const EditTherapistModal: React.FC<EditTherapistModalProps> = ({
       setIsAddingCustom(false);
       setErrors({});
       setIsSubmitting(false);
+    } else if (!isOpen) {
+      prevTherapistKeyRef.current = null;
     }
   }, [isOpen, therapist]);
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   User,
@@ -84,10 +84,18 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
   }>({});
 
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const prevPatientKeyRef = useRef<string | null>(null);
 
   // Load Patient Dossier & Pre-fill existing data from isolated directory
   useEffect(() => {
     if (isOpen && patient) {
+      const patientKey = `${patient.id}_${patient.code}`;
+      // If modal is already open for this exact patient, don't wipe what the user is typing!
+      if (prevPatientKeyRef.current === patientKey) {
+        return;
+      }
+      prevPatientKeyRef.current = patientKey;
+
       const code = patient.code || String(patient.id);
       
       // Load complete dossier from isolated directory /public/uploads/patients/{code}/
@@ -142,6 +150,8 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
 
       setErrors({});
       setIsSubmitting(false);
+    } else if (!isOpen) {
+      prevPatientKeyRef.current = null;
     }
   }, [isOpen, patient, therapists]);
 

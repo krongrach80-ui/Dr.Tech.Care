@@ -158,7 +158,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     // 1. Initial fetch
     initializeFromSupabase();
 
-    // 2. Realtime listener on 'patients' table
+    // 2. Realtime listener on 'patients' table (pushes only when actual events occur)
     console.info('[SUPABASE REALTIME] Subscribing to public:patients changes in Admin Dashboard...');
     const channel = supabase
       .channel('public:patients_portal')
@@ -182,14 +182,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         }
       });
 
-    // 3. Fallback polling every 4 seconds to guarantee updates across devices
-    const poller = setInterval(() => {
-      initializeFromSupabase();
-    }, 4000);
-
     return () => {
       supabase.removeChannel(channel);
-      clearInterval(poller);
     };
   }, [initializeFromSupabase]);
 
@@ -2086,6 +2080,17 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       className="w-full pl-9 pr-3 py-2 rounded-full bg-white border border-emerald-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#10B981]"
                     />
                   </div>
+
+                  <button
+                    onClick={() => {
+                      initializeFromSupabase();
+                      showToast('ซิงค์ข้อมูลกับ Supabase เรียบร้อยแล้ว');
+                    }}
+                    className="p-2 rounded-full border border-emerald-200 text-emerald-700 bg-white hover:bg-emerald-50 transition cursor-pointer shadow-2xs active:scale-95 flex items-center justify-center"
+                    title="รีเฟรชข้อมูลจาก Supabase"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
 
                   <button
                     onClick={() => setIsReceptionOpen(true)}

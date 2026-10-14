@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   User,
@@ -77,10 +77,17 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
   }>({});
 
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const prevUserKeyRef = useRef<string | null>(null);
 
   // Populate form with current user data when modal opens or user changes
   useEffect(() => {
     if (isOpen && user) {
+      const userKey = `${user.id}_${user.username || user.code}`;
+      if (prevUserKeyRef.current === userKey) {
+        return; // Don't wipe inputs if already editing this user
+      }
+      prevUserKeyRef.current = userKey;
+
       setName(user.name || '');
       setUsername(user.username || '');
       setRole(user.role);
@@ -110,6 +117,8 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
 
       setErrors({});
       setIsSubmitting(false);
+    } else if (!isOpen) {
+      prevUserKeyRef.current = null;
     }
   }, [isOpen, user, therapists]);
 

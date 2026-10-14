@@ -965,7 +965,10 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   },
 
   initializeFromSupabase: async () => {
-    set({ isLoadingFromDb: true });
+    const isColdStart = get().users.length === 0;
+    if (isColdStart) {
+      set({ isLoadingFromDb: true });
+    }
 
     // 1. Fetch from Central Node.js Server (Single Source of Truth across devices if available)
     await get().fetchPatientsFromCentralApi();
@@ -1045,29 +1048,48 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
           : get().users.filter((u) => u.role === 'patient');
 
         const mergedUsers = [...staffUsers, ...patientUsers];
-        set({ users: mergedUsers, isSupabaseConnected: true });
-        persistUsers(mergedUsers);
-        console.info(`✓ HospitalStore loaded ${patientUsers.length} patients and ${staffUsers.length} staff from Supabase`);
+        const currentUsers = get().users;
+        const isUsersChanged =
+          isColdStart ||
+          currentUsers.length !== mergedUsers.length ||
+          mergedUsers.some((u) => {
+            const cur = currentUsers.find((c) => String(c.id) === String(u.id) || c.code === u.code);
+            if (!cur) return true;
+            return (
+              cur.name !== u.name ||
+              cur.status !== u.status ||
+              cur.phone !== u.phone ||
+              cur.diagnosis !== u.diagnosis ||
+              cur.chiefComplaint !== u.chiefComplaint
+            );
+          });
 
-        if (therapists && therapists.length > 0) {
+        if (isUsersChanged) {
+          set({ users: mergedUsers, isSupabaseConnected: true });
+          persistUsers(mergedUsers);
+          console.info(`✓ HospitalStore updated: loaded ${patientUsers.length} patients and ${staffUsers.length} staff from Supabase`);
+        } else {
+          set({ isSupabaseConnected: true });
+        }
+
+        if (therapists && therapists.length > 0 && get().therapists.length !== therapists.length) {
           set({ therapists });
         }
-        if (exercises && exercises.length > 0) {
+        if (exercises && exercises.length > 0 && get().exercises.length !== exercises.length) {
           set({ exercises });
         }
-        if (logs && logs.length > 0) {
+        if (logs && logs.length > 0 && get().activityLogs.length !== logs.length) {
           set({ activityLogs: logs });
         }
         if (settings) {
           set({ aiSettings: { ...get().aiSettings, ...settings } });
         }
-        if (bannedDevices && bannedDevices.length > 0) {
+        if (bannedDevices && bannedDevices.length > 0 && get().bannedDevices.length !== bannedDevices.length) {
           set({ bannedDevices });
         }
-        if (bannedIps && bannedIps.length > 0) {
+        if (bannedIps && bannedIps.length > 0 && get().bannedIps.length !== bannedIps.length) {
           set({ bannedIps });
         }
-        console.info('✓ HospitalStore synced with live Supabase database');
       } catch (err) {
         console.error('[SUPABASE] initializeFromSupabase error:', err);
       }
@@ -1075,7 +1097,9 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       set({ isSupabaseConnected: false });
     }
 
-    set({ isLoadingFromDb: false });
+    if (isColdStart) {
+      set({ isLoadingFromDb: false });
+    }
   },
 
   setCurrentRole: (role) => set({ currentRole: role }),
