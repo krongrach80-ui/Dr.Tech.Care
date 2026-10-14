@@ -175,10 +175,10 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
           className={`w-full h-full object-cover transition-opacity duration-300 ${
             cameraState.isActive ? 'opacity-95' : 'opacity-0'
           }`}
-          style={{ transform: cameraOrientationService.getCssTransform() }}
+          style={{ transform: cameraOrientationService.getCssTransform(orientation) }}
         />
 
-        {/* 2.0 Quick Camera Flip & Rotation Toggle Button (180 deg) */}
+        {/* 2.0 Quick Camera Flip & Rotation Toggle Button */}
         {cameraState.isActive && !isProcessingBiometrics && (
           <button
             type="button"
@@ -188,11 +188,17 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
               setOrientation(next);
             }}
             className="absolute bottom-3 right-3 z-30 bg-slate-900/85 hover:bg-slate-800 text-white backdrop-blur-md px-3 py-1.5 rounded-xl border border-emerald-400/50 text-xs font-bold flex items-center gap-1.5 shadow-xl cursor-pointer transition active:scale-95"
-            title="กดเพื่อหมุนมุมมองกล้อง (180° / ปกติ)"
+            title="กดเพื่อหมุนมุมมองกล้อง (กระจกเงา / ปกติ / กลับบน-ล่าง / หมุน 180°)"
           >
             <FlipVertical className="w-3.5 h-3.5 text-emerald-400" />
             <span className="text-[11px] text-emerald-300">
-              {orientation === 'rotate180_mirror' ? 'กล้องกลับหัว 180°' : orientation === 'rotate180' ? 'หมุน 180°' : orientation === 'mirror' ? 'กระจก' : 'ปกติ'}
+              {orientation === 'mirror'
+                ? 'กระจกเงา'
+                : orientation === 'normal'
+                ? 'กล้องปกติ'
+                : orientation === 'flip_y' || orientation === 'rotate180_mirror'
+                ? 'กลับบน-ล่าง'
+                : 'หมุน 180°'}
             </span>
           </button>
         )}

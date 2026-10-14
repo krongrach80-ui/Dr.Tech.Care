@@ -2853,7 +2853,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               playsInline
               muted
               className="w-full h-full object-cover opacity-90 transition-transform duration-300"
-              style={{ transform: cameraOrientationService.getCssTransform() }}
+              style={{ transform: cameraOrientationService.getCssTransform(cameraOrientation) }}
             />
           )}
 
@@ -2867,11 +2867,17 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 setCameraOrientation(next);
               }}
               className="absolute top-3.5 right-24 z-30 bg-slate-900/85 hover:bg-slate-800 text-white backdrop-blur-md px-3 py-1 rounded-full border border-emerald-400/50 text-xs font-bold flex items-center gap-1.5 shadow-md cursor-pointer transition active:scale-95 pointer-events-auto"
-              title="กดเพื่อหมุนมุมมองกล้อง (180° / ปกติ)"
+              title="กดเพื่อหมุนมุมมองกล้อง (กระจกเงา / ปกติ / กลับบน-ล่าง / หมุน 180°)"
             >
               <FlipVertical className="w-3.5 h-3.5 text-emerald-400" />
               <span className="text-[11px] text-emerald-300">
-                {cameraOrientation === 'rotate180_mirror' ? 'กล้องกลับหัว 180°' : cameraOrientation === 'rotate180' ? 'หมุน 180°' : cameraOrientation === 'mirror' ? 'กระจก' : 'ปกติ'}
+                {cameraOrientation === 'mirror'
+                  ? 'กระจกเงา'
+                  : cameraOrientation === 'normal'
+                  ? 'กล้องปกติ'
+                  : cameraOrientation === 'flip_y' || cameraOrientation === 'rotate180_mirror'
+                  ? 'กลับบน-ล่าง'
+                  : 'หมุน 180°'}
               </span>
             </button>
           )}

@@ -8,19 +8,20 @@
  * - High-resolution captures for profile_face.jpg and login snapshots
  */
 
-export type CameraOrientation = 'rotate180_mirror' | 'rotate180' | 'mirror' | 'normal';
+export type CameraOrientation = 'mirror' | 'normal' | 'flip_y' | 'rotate180' | 'rotate180_mirror';
 
-const STORAGE_KEY = 'strongcare_camera_orientation';
+const STORAGE_KEY = 'strongcare_camera_orientation_v3';
+const OLD_KEYS = ['strongcare_camera_orientation', 'strongcare_camera_orientation_v2'];
 const ORIENTATION_ORDER: CameraOrientation[] = [
-  'rotate180_mirror',
-  'rotate180',
   'mirror',
   'normal',
+  'flip_y',
+  'rotate180',
 ];
 
 export class CameraOrientationService {
   private static instance: CameraOrientationService;
-  private currentOrientation: CameraOrientation = 'rotate180_mirror';
+  private currentOrientation: CameraOrientation = 'mirror';
   private offscreenProcessingCanvas: HTMLCanvasElement | null = null;
 
   private constructor() {
@@ -37,16 +38,21 @@ export class CameraOrientationService {
   private hydrate(): void {
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
+        // Clear previous faulty storage keys that had rotate180_mirror set by default
+        for (const oldKey of OLD_KEYS) {
+          localStorage.removeItem(oldKey);
+        }
+
         const saved = localStorage.getItem(STORAGE_KEY) as CameraOrientation;
-        if (saved && ORIENTATION_ORDER.includes(saved)) {
+        if (saved && (saved === 'mirror' || saved === 'normal' || saved === 'flip_y' || saved === 'rotate180')) {
           this.currentOrientation = saved;
         } else {
-          // Default to rotate180_mirror for kiosk terminal with inverted webcam
-          this.currentOrientation = 'rotate180_mirror';
-          localStorage.setItem(STORAGE_KEY, 'rotate180_mirror');
+          // Default to standard upright mirror view (like any standard webcam/front camera)
+          this.currentOrientation = 'mirror';
+          localStorage.setItem(STORAGE_KEY, 'mirror');
         }
       } catch {
-        this.currentOrientation = 'rotate180_mirror';
+        this.currentOrientation = 'mirror';
       }
     }
   }
@@ -80,32 +86,42 @@ export class CameraOrientationService {
 
   public getOrientationLabelTh(orientation: CameraOrientation = this.currentOrientation): string {
     switch (orientation) {
-      case 'rotate180_mirror':
-        return 'กลับหัว 180° + กระจกเงา (Kiosk แนะนำ)';
-      case 'rotate180':
-        return 'กลับหัว 180° (ปกติ)';
       case 'mirror':
-        return 'กระจกเงา (ปกติ)';
+        return 'กระจกเงา (ค่าเริ่มต้นปกติ)';
       case 'normal':
-        return 'มุมมองกล้องเดิม (ไม่ปรับ)';
+        return 'มุมมองกล้องเดิม (ไม่กลับด้าน)';
+      case 'flip_y':
+      case 'rotate180_mirror':
+        return 'กลับบน-ล่าง (แก้กล้องกลับหัว)';
+      case 'rotate180':
+        return 'หมุน 180°';
+      default:
+        return 'กระจกเงา';
     }
   }
 
   /**
    * CSS transform property for <video> and UI elements
+   * Standard front-facing webcam uses scaleX(-1) so user sees natural mirror reflection
+   * and is completely right-side up (head at top, chin at bottom).
    */
-  public getCssTransform(): string {
-    switch (this.currentOrientation) {
-      case 'rotate180_mirror':
-        // rotate(180deg) scaleX(-1) is mathematically equivalent to scaleY(-1)
-        return 'rotate(180deg) scaleX(-1)';
-      case 'rotate180':
-        return 'rotate(180deg)';
+  public getCssTransform(orientation: CameraOrientation = this.currentOrientation): string {
+    switch (orientation) {
       case 'mirror':
+        // Upright mirror: X is flipped horizontally, Y is NOT modified (up is up!)
         return 'scaleX(-1)';
       case 'normal':
-      default:
+        // Completely raw camera feed
         return 'none';
+      case 'flip_y':
+      case 'rotate180_mirror':
+        // Inverts Y vertically if camera is mounted upside down
+        return 'scaleY(-1)';
+      case 'rotate180':
+        // Rotates 180 degrees
+        return 'rotate(180deg)';
+      default:
+        return 'scaleX(-1)';
     }
   }
 
@@ -116,26 +132,27 @@ export class CameraOrientationService {
     video: HTMLVideoElement,
     ctx: CanvasRenderingContext2D,
     targetW: number,
-    targetH: number
+    targetH: number,
+    orientation: CameraOrientation = this.currentOrientation
   ): void {
     if (!video || video.readyState < 2) return;
 
     ctx.save();
     ctx.translate(targetW / 2, targetH / 2);
 
-    switch (this.currentOrientation) {
-      case 'rotate180_mirror':
-        // Rotates 180 degrees and mirrors horizontally (scaleY(-1))
-        ctx.rotate(Math.PI);
+    switch (orientation) {
+      case 'mirror':
+        // Horizontal mirror (X reversed, Y is standard upright)
         ctx.scale(-1, 1);
+        break;
+      case 'flip_y':
+      case 'rotate180_mirror':
+        // Vertical flip (Y reversed to correct upside-down camera)
+        ctx.scale(1, -1);
         break;
       case 'rotate180':
-        // Pure 180-degree rotation (turns inverted camera right-side up)
+        // Pure 180-degree rotation
         ctx.rotate(Math.PI);
-        break;
-      case 'mirror':
-        // Horizontal mirror
-        ctx.scale(-1, 1);
         break;
       case 'normal':
       default:
@@ -148,8 +165,9 @@ export class CameraOrientationService {
   }
 
   /**
-   * Returns a cached or newly populated offscreen canvas with the upright frame
-   * for passing directly into MediaPipe FaceLandmarker and Face-api.js
+   * Returns an offscreen canvas with the upright frame ONLY when rotation/flip is required.
+   * For standard 'mirror' and 'normal', it returns null so MediaPipe and Face-api.js
+   * process the HTMLVideoElement directly with full GPU/hardware acceleration.
    */
   public getUprightCanvas(
     video: HTMLVideoElement,
@@ -157,6 +175,11 @@ export class CameraOrientationService {
     maxHeight: number = 480
   ): HTMLCanvasElement | null {
     if (!video || video.readyState < 2) return null;
+
+    // Standard mirror and normal are physically upright, no CPU canvas copy needed!
+    if (this.currentOrientation === 'mirror' || this.currentOrientation === 'normal') {
+      return null;
+    }
 
     if (!this.offscreenProcessingCanvas && typeof document !== 'undefined') {
       this.offscreenProcessingCanvas = document.createElement('canvas');
@@ -187,7 +210,7 @@ export class CameraOrientationService {
     if (!ctx) return null;
 
     ctx.clearRect(0, 0, targetW, targetH);
-    this.drawUprightFrame(video, ctx, targetW, targetH);
+    this.drawUprightFrame(video, ctx, targetW, targetH, this.currentOrientation);
 
     return this.offscreenProcessingCanvas;
   }

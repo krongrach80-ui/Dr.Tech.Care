@@ -52,6 +52,20 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const [cameraOrientation, setCameraOrientation] = useState<CameraOrientation>(
+    cameraOrientationService.getOrientation()
+  );
+
+  useEffect(() => {
+    const handleOrientation = (e: any) => {
+      setCameraOrientation(e.detail?.orientation || cameraOrientationService.getOrientation());
+    };
+    window.addEventListener('strongcare:camera_orientation_changed', handleOrientation);
+    return () => {
+      window.removeEventListener('strongcare:camera_orientation_changed', handleOrientation);
+    };
+  }, []);
+
   useEffect(() => {
     if (isOpen && patient) {
       setCapturedVector(null);
@@ -136,18 +150,13 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
         throw new Error('ไม่สามารถประมวลผลเวกเตอร์ใบหน้าได้ กรุณามองตรงที่มีแสงสว่างเพียงพอ');
       }
 
-      // Capture single JPEG snapshot for profile
+      // Capture single JPEG snapshot for profile using upright frame
       const canvas = document.createElement('canvas');
       canvas.width = 320;
       canvas.height = 320;
       const ctx = canvas.getContext('2d');
       if (ctx && videoRef.current) {
-        const vw = videoRef.current.videoWidth || 640;
-        const vh = videoRef.current.videoHeight || 480;
-        const size = Math.min(vw, vh);
-        const sx = (vw - size) / 2;
-        const sy = (vh - size) / 2;
-        ctx.drawImage(videoRef.current, sx, sy, size, size, 0, 0, 320, 320);
+        cameraOrientationService.drawUprightFrame(videoRef.current, ctx, 320, 320, cameraOrientation);
         const photoDataUrl = canvas.toDataURL('image/jpeg', 0.85);
         setCapturedPhoto(photoDataUrl);
       }
@@ -481,20 +490,29 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
                       playsInline
                       muted
                       className="w-full h-full object-cover transition-transform duration-300"
-                      style={{ transform: cameraOrientationService.getCssTransform() }}
+                      style={{ transform: cameraOrientationService.getCssTransform(cameraOrientation) }}
                     />
                     {/* Quick Flip Button */}
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        cameraOrientationService.toggleNextOrientation();
+                        const next = cameraOrientationService.toggleNextOrientation();
+                        setCameraOrientation(next);
                       }}
                       className="absolute top-3 right-3 z-20 bg-slate-900/80 hover:bg-slate-800 text-white backdrop-blur-md px-2.5 py-1 rounded-full border border-white/20 text-[11px] font-bold flex items-center gap-1 shadow-md cursor-pointer transition active:scale-95"
-                      title="กดเพื่อหมุนมุมมองกล้อง (180° / ปกติ)"
+                      title="กดเพื่อหมุนมุมมองกล้อง (กระจกเงา / ปกติ / กลับบน-ล่าง / หมุน 180°)"
                     >
                       <FlipVertical className="w-3.5 h-3.5 text-emerald-400" />
-                      <span className="text-emerald-300">หมุนกล้อง</span>
+                      <span className="text-emerald-300">
+                        {cameraOrientation === 'mirror'
+                          ? 'กระจกเงา'
+                          : cameraOrientation === 'normal'
+                          ? 'กล้องปกติ'
+                          : cameraOrientation === 'flip_y' || cameraOrientation === 'rotate180_mirror'
+                          ? 'กลับบน-ล่าง'
+                          : 'หมุน 180°'}
+                      </span>
                     </button>
                     {/* Oval Guide Overlay */}
                     <div className="absolute inset-0 pointer-events-none flex items-center justify-center">

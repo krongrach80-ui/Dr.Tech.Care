@@ -14,6 +14,7 @@ import {
   ArrowRight,
   User,
   Volume2,
+  FlipVertical,
 } from 'lucide-react';
 import { faceService, FaceDetectionResult, LIVENESS_DISCLAIMER_TH } from '../../services/faceService';
 import { api } from '../../services/api';
@@ -21,7 +22,7 @@ import { usePatientStore } from '../../store/patientStore';
 import { audioFeedback } from '../../services/audioService';
 import { voiceAssistant } from '../../services/voiceAssistantService';
 import confetti from 'canvas-confetti';
-import { cameraOrientationService } from '../../services/cameraOrientationService';
+import { cameraOrientationService, CameraOrientation } from '../../services/cameraOrientationService';
 
 interface FaceAuthModalProps {
   isOpen: boolean;
@@ -42,6 +43,20 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+
+  const [cameraOrientation, setCameraOrientation] = useState<CameraOrientation>(
+    cameraOrientationService.getOrientation()
+  );
+
+  useEffect(() => {
+    const handleOrientation = (e: any) => {
+      setCameraOrientation(e.detail?.orientation || cameraOrientationService.getOrientation());
+    };
+    window.addEventListener('strongcare:camera_orientation_changed', handleOrientation);
+    return () => {
+      window.removeEventListener('strongcare:camera_orientation_changed', handleOrientation);
+    };
+  }, []);
 
   // States
   const [cameraActive, setCameraActive] = useState<boolean>(false);
@@ -670,8 +685,31 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
               playsInline
               muted
               className="w-full h-full object-cover transition-transform duration-300"
-              style={{ transform: cameraOrientationService.getCssTransform() }}
+              style={{ transform: cameraOrientationService.getCssTransform(cameraOrientation) }}
             />
+
+            {/* Quick Camera Flip & Rotation Toggle Button */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                const next = cameraOrientationService.toggleNextOrientation();
+                setCameraOrientation(next);
+              }}
+              className="absolute top-3 right-3 z-30 bg-slate-900/80 hover:bg-slate-800 text-white backdrop-blur-md px-2.5 py-1 rounded-full border border-white/20 text-[11px] font-bold flex items-center gap-1 shadow-md cursor-pointer transition active:scale-95"
+              title="กดเพื่อหมุนมุมมองกล้อง (กระจกเงา / ปกติ / กลับบน-ล่าง / หมุน 180°)"
+            >
+              <FlipVertical className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-emerald-300">
+                {cameraOrientation === 'mirror'
+                  ? 'กระจกเงา'
+                  : cameraOrientation === 'normal'
+                  ? 'กล้องปกติ'
+                  : cameraOrientation === 'flip_y' || cameraOrientation === 'rotate180_mirror'
+                  ? 'กลับบน-ล่าง'
+                  : 'หมุน 180°'}
+              </span>
+            </button>
 
             {/* Camera Shutter Flash Effect */}
             {showShutterFlash && (
