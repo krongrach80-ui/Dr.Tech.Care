@@ -42,6 +42,8 @@ import {
   Pencil,
   LogOut,
   FlipVertical,
+  RotateCw,
+  FlipHorizontal,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Patient } from '../../types/patient';
@@ -60,7 +62,7 @@ import { LivenessScanHUD } from '../Biometrics/LivenessScanHUD';
 import { LivenessFrameData, LivenessChallenge } from '../../types/biometrics';
 import { patientSyncService } from '../../services/patientSyncService';
 import { patientFaceStorageService, PatientFaceBinding } from '../../services/patientFaceStorageService';
-import { cameraOrientationService, CameraOrientation } from '../../services/cameraOrientationService';
+import { cameraOrientationService, CameraOrientation, CameraRotation } from '../../services/cameraOrientationService';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 import { asset } from '../../utils/asset';
 import logoImg from '../../assets/logo.png';
@@ -452,10 +454,26 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   const [cameraOrientation, setCameraOrientation] = useState<CameraOrientation>(
     cameraOrientationService.getOrientation()
   );
+  const [cameraRotation, setCameraRotation] = useState<CameraRotation>(
+    cameraOrientationService.getRotation()
+  );
+  const [isCameraMirrored, setIsCameraMirrored] = useState<boolean>(
+    cameraOrientationService.isMirror()
+  );
 
   useEffect(() => {
     const handleOrientation = (e: any) => {
       setCameraOrientation(e.detail?.orientation || cameraOrientationService.getOrientation());
+      if (e.detail?.rotation !== undefined) {
+        setCameraRotation(e.detail.rotation);
+      } else {
+        setCameraRotation(cameraOrientationService.getRotation());
+      }
+      if (e.detail?.isMirrored !== undefined) {
+        setIsCameraMirrored(e.detail.isMirrored);
+      } else {
+        setIsCameraMirrored(cameraOrientationService.isMirror());
+      }
     };
     window.addEventListener('strongcare:camera_orientation_changed', handleOrientation);
     return () => {
@@ -1223,7 +1241,8 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         try {
           // กรณีโมดอลสอบถาม "คุณมีบัญชีแล้วหรือยัง?" หรือ "คุณอยู่หน้าเครื่องหรือไม่?" เปิดอยู่: ใช้ MediaPipe Pose ตรวจจับยกแขนซ้าย/ขวา
           if (showAccountInquiryModal || showPresenceInquiryModal) {
-            const res = poseService.detectHolistic(video, now, { enableFace: false, enableHands: false });
+            const uprightVideo = cameraOrientationService.getUprightCanvas(video) || video;
+            const res = poseService.detectHolistic(uprightVideo, now, { enableFace: false, enableHands: false });
             const lm = res?.poseLandmarks;
 
             // วาดภาพสะท้อนแบบกระจกเงาลง canvas ในโมดอล พร้อมจุดวงกลมบอกตำแหน่งข้อมือ
@@ -1233,9 +1252,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               if (ctx) {
                 ctx.save();
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ctx.translate(canvas.width, 0);
-                ctx.scale(-1, 1);
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                cameraOrientationService.drawUprightFrame(video, ctx, canvas.width, canvas.height, cameraRotation, isCameraMirrored);
                 ctx.restore();
 
                 if (lm) {
@@ -2853,33 +2870,40 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               playsInline
               muted
               className="w-full h-full object-cover opacity-90 transition-transform duration-300"
-              style={{ transform: cameraOrientationService.getCssTransform(cameraOrientation) }}
+              style={{ transform: cameraOrientationService.getCssTransform(cameraRotation, isCameraMirrored) }}
             />
           )}
 
-          {/* Quick Camera Flip & Rotation Toggle Button for Kiosk */}
+          {/* Quick Camera Flip & Rotation Toggle Buttons for Kiosk */}
           {(currentStep === 2 || currentStep === 3) && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                const next = cameraOrientationService.toggleNextOrientation();
-                setCameraOrientation(next);
-              }}
-              className="absolute top-3.5 right-24 z-30 bg-slate-900/85 hover:bg-slate-800 text-white backdrop-blur-md px-3 py-1 rounded-full border border-emerald-400/50 text-xs font-bold flex items-center gap-1.5 shadow-md cursor-pointer transition active:scale-95 pointer-events-auto"
-              title="กดเพื่อหมุนมุมมองกล้อง (กระจกเงา / ปกติ / กลับบน-ล่าง / หมุน 180°)"
-            >
-              <FlipVertical className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="text-[11px] text-emerald-300">
-                {cameraOrientation === 'mirror'
-                  ? 'กระจกเงา'
-                  : cameraOrientation === 'normal'
-                  ? 'กล้องปกติ'
-                  : cameraOrientation === 'flip_y' || cameraOrientation === 'rotate180_mirror'
-                  ? 'กลับบน-ล่าง'
-                  : 'หมุน 180°'}
-              </span>
-            </button>
+            <div className="absolute top-3.5 right-24 z-30 flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const nextDeg = cameraOrientationService.rotateNext90();
+                  setCameraRotation(nextDeg);
+                }}
+                className="bg-slate-900/85 hover:bg-slate-800 text-white backdrop-blur-md px-3 py-1 rounded-full border border-emerald-400/50 text-xs font-bold flex items-center gap-1.5 shadow-md cursor-pointer transition active:scale-95 pointer-events-auto"
+                title="กดเพื่อหมุนมุมมองกล้องทีละ 90° (0°, 90°, 180°, 270°)"
+              >
+                <RotateCw className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="text-[11px] text-emerald-300">หมุนกล้อง {cameraRotation}°</span>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const nextMirror = cameraOrientationService.toggleMirror();
+                  setIsCameraMirrored(nextMirror);
+                }}
+                className="bg-slate-900/85 hover:bg-slate-800 text-white backdrop-blur-md px-2.5 py-1 rounded-full border border-white/20 text-xs font-bold flex items-center gap-1 shadow-md cursor-pointer transition active:scale-95 pointer-events-auto"
+                title="กดเพื่อเปิด/ปิดกระจกเงา"
+              >
+                <FlipHorizontal className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="text-[11px] text-cyan-300">{isCameraMirrored ? 'กระจก' : 'ปกติ'}</span>
+              </button>
+            </div>
           )}
 
           {/* Overlays สำหรับ Step 2 & 3 บนกล้อง */}
@@ -4565,8 +4589,43 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               ถ้ามีให้ยกมือขวา (เข้าสู่ระบบ) • ถ้าไม่มีให้ยกมือซ้าย (ผู้ป่วยใหม่)
             </p>
 
+            {/* แถบปรับมุมมองกล้อง (หมุนทีละ 90° และสลับกระจกเงา) */}
+            <div className="w-full flex items-center justify-between mt-2.5 px-1">
+              <span className="text-[11px] sm:text-xs text-slate-500 font-bold flex items-center gap-1">
+                <span>📷 ปรับมุมมองกล้อง:</span>
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const nextDeg = cameraOrientationService.rotateNext90();
+                    setCameraRotation(nextDeg);
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
+                  title="กดเพื่อหมุนกล้องทีละ 90° (0°, 90°, 180°, 270°)"
+                >
+                  <RotateCw className="w-3.5 h-3.5 text-white" />
+                  <span>หมุนกล้อง {cameraRotation}°</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const nextMirror = cameraOrientationService.toggleMirror();
+                    setIsCameraMirrored(nextMirror);
+                  }}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 px-2.5 py-1 rounded-full text-xs font-bold flex items-center gap-1 shadow-sm transition active:scale-95 cursor-pointer"
+                  title="กดเพื่อเปิด/ปิดกระจกเงา"
+                >
+                  <FlipHorizontal className="w-3.5 h-3.5 text-slate-600" />
+                  <span>{isCameraMirrored ? 'กระจก: เปิด' : 'กระจก: ปิด'}</span>
+                </button>
+              </div>
+            </div>
+
             {/* หน้าต่างกระจกเงาสะท้อนจากกล้อง พร้อมตัวตรวจจับการยกแขน */}
-            <div className="w-full relative rounded-2xl overflow-hidden border-2 border-slate-300 bg-slate-900 shadow-inner mt-3">
+            <div className="w-full relative rounded-2xl overflow-hidden border-2 border-slate-300 bg-slate-900 shadow-inner mt-2">
               <canvas
                 ref={modalCanvasRef}
                 width={480}
@@ -4738,8 +4797,43 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               ระบบตรวจไม่พบใบหน้าชั่วคราว กรุณายืนยันว่าท่านอยู่หน้าตู้ Kiosk หรือไม่
             </p>
 
+            {/* แถบปรับมุมมองกล้อง (หมุนทีละ 90° และสลับกระจกเงา) */}
+            <div className="w-full flex items-center justify-between mt-2.5 px-1">
+              <span className="text-[11px] sm:text-xs text-slate-500 font-bold flex items-center gap-1">
+                <span>📷 ปรับมุมมองกล้อง:</span>
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const nextDeg = cameraOrientationService.rotateNext90();
+                    setCameraRotation(nextDeg);
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
+                  title="กดเพื่อหมุนกล้องทีละ 90° (0°, 90°, 180°, 270°)"
+                >
+                  <RotateCw className="w-3.5 h-3.5 text-white" />
+                  <span>หมุนกล้อง {cameraRotation}°</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const nextMirror = cameraOrientationService.toggleMirror();
+                    setIsCameraMirrored(nextMirror);
+                  }}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 px-2.5 py-1 rounded-full text-xs font-bold flex items-center gap-1 shadow-sm transition active:scale-95 cursor-pointer"
+                  title="กดเพื่อเปิด/ปิดกระจกเงา"
+                >
+                  <FlipHorizontal className="w-3.5 h-3.5 text-slate-600" />
+                  <span>{isCameraMirrored ? 'กระจก: เปิด' : 'กระจก: ปิด'}</span>
+                </button>
+              </div>
+            </div>
+
             {/* หน้าต่างกระจกเงาสะท้อนจากกล้อง พร้อมตัวตรวจจับการยกแขน */}
-            <div className="w-full relative rounded-2xl overflow-hidden border-2 border-slate-300 bg-slate-900 shadow-inner mt-3">
+            <div className="w-full relative rounded-2xl overflow-hidden border-2 border-slate-300 bg-slate-900 shadow-inner mt-2">
               <canvas
                 ref={modalCanvasRef}
                 width={480}

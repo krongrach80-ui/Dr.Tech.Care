@@ -17,6 +17,8 @@ import {
   Moon,
   Users,
   FlipVertical,
+  RotateCw,
+  FlipHorizontal,
 } from 'lucide-react';
 import {
   CameraState,
@@ -24,7 +26,7 @@ import {
   LivenessFrameData,
   LivenessNonce,
 } from '../../types/biometrics';
-import { cameraOrientationService, CameraOrientation } from '../../services/cameraOrientationService';
+import { cameraOrientationService, CameraOrientation, CameraRotation } from '../../services/cameraOrientationService';
 
 interface LivenessScanHUDProps {
   videoRef: React.RefObject<HTMLVideoElement>;
@@ -62,13 +64,25 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
   const qg = frameData?.qualityGate;
   const yaw = Math.round(frameData?.yawDeg || 0);
 
-  const [orientation, setOrientation] = React.useState<CameraOrientation>(
-    cameraOrientationService.getOrientation()
+  const [rotation, setRotation] = React.useState<CameraRotation>(
+    cameraOrientationService.getRotation()
+  );
+  const [isMirrored, setIsMirrored] = React.useState<boolean>(
+    cameraOrientationService.isMirror()
   );
 
   React.useEffect(() => {
     const handleOrientation = (e: any) => {
-      setOrientation(e.detail?.orientation || cameraOrientationService.getOrientation());
+      if (e.detail?.rotation !== undefined) {
+        setRotation(e.detail.rotation);
+      } else {
+        setRotation(cameraOrientationService.getRotation());
+      }
+      if (e.detail?.isMirrored !== undefined) {
+        setIsMirrored(e.detail.isMirrored);
+      } else {
+        setIsMirrored(cameraOrientationService.isMirror());
+      }
     };
     window.addEventListener('strongcare:camera_orientation_changed', handleOrientation);
     return () => {
@@ -175,32 +189,39 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
           className={`w-full h-full object-cover transition-opacity duration-300 ${
             cameraState.isActive ? 'opacity-95' : 'opacity-0'
           }`}
-          style={{ transform: cameraOrientationService.getCssTransform(orientation) }}
+          style={{ transform: cameraOrientationService.getCssTransform(rotation, isMirrored) }}
         />
 
-        {/* 2.0 Quick Camera Flip & Rotation Toggle Button */}
+        {/* 2.0 Quick Camera Flip & Rotation Toggle Buttons */}
         {cameraState.isActive && !isProcessingBiometrics && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              const next = cameraOrientationService.toggleNextOrientation();
-              setOrientation(next);
-            }}
-            className="absolute bottom-3 right-3 z-30 bg-slate-900/85 hover:bg-slate-800 text-white backdrop-blur-md px-3 py-1.5 rounded-xl border border-emerald-400/50 text-xs font-bold flex items-center gap-1.5 shadow-xl cursor-pointer transition active:scale-95"
-            title="กดเพื่อหมุนมุมมองกล้อง (กระจกเงา / ปกติ / กลับบน-ล่าง / หมุน 180°)"
-          >
-            <FlipVertical className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="text-[11px] text-emerald-300">
-              {orientation === 'mirror'
-                ? 'กระจกเงา'
-                : orientation === 'normal'
-                ? 'กล้องปกติ'
-                : orientation === 'flip_y' || orientation === 'rotate180_mirror'
-                ? 'กลับบน-ล่าง'
-                : 'หมุน 180°'}
-            </span>
-          </button>
+          <div className="absolute bottom-3 right-3 z-30 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                const nextDeg = cameraOrientationService.rotateNext90();
+                setRotation(nextDeg);
+              }}
+              className="bg-slate-900/85 hover:bg-slate-800 text-white backdrop-blur-md px-3 py-1.5 rounded-xl border border-emerald-400/50 text-xs font-bold flex items-center gap-1.5 shadow-xl cursor-pointer transition active:scale-95"
+              title="กดเพื่อหมุนมุมมองกล้องทีละ 90° (0°, 90°, 180°, 270°)"
+            >
+              <RotateCw className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-[11px] text-emerald-300">หมุนกล้อง {rotation}°</span>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                const nextMirror = cameraOrientationService.toggleMirror();
+                setIsMirrored(nextMirror);
+              }}
+              className="bg-slate-900/85 hover:bg-slate-800 text-white backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-white/20 text-xs font-bold flex items-center gap-1 shadow-xl cursor-pointer transition active:scale-95"
+              title="กดเพื่อเปิด/ปิดกระจกเงา"
+            >
+              <FlipHorizontal className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="text-[11px] text-cyan-300">{isMirrored ? 'กระจก' : 'ปกติ'}</span>
+            </button>
+          </div>
         )}
 
         {/* 2.1 Camera Hardware Error State Overlay */}

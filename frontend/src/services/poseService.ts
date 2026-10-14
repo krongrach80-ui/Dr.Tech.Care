@@ -281,7 +281,7 @@ export class PoseService {
    * while Hand and Face detection are loaded and run only when explicitly enabled.
    */
   public detectHolistic(
-    video: HTMLVideoElement,
+    video: HTMLVideoElement | HTMLCanvasElement,
     timestamp: number,
     options?: { enableHands?: boolean; enableFace?: boolean }
   ): HolisticDetectionResult | null {
@@ -293,7 +293,8 @@ export class PoseService {
       };
     }
 
-    if (!this.landmarker || !video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0 || video.paused) {
+    const isVideo = typeof HTMLVideoElement !== 'undefined' && video instanceof HTMLVideoElement;
+    if (!this.landmarker || !video || (isVideo && (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0 || video.paused))) {
       return null;
     }
 
