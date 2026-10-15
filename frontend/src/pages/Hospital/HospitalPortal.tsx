@@ -736,14 +736,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const canEditUser = (targetUser: UserAccount): boolean => {
     if (currentRole === 'admin') return true;
     if (currentRole === 'therapist') {
-      // Physiotherapist can edit patients under their care or newly enrolled patients awaiting info
-      if (targetUser.role !== 'patient') return false;
-      if (targetUser.status === 'pending_info') return true;
-      const isAssigned =
-        targetUser.assignedTherapistId === currentUserId ||
-        (targetUser.assignedTherapistName &&
-          targetUser.assignedTherapistName.includes(currentTherapist?.name || 'ธนากร'));
-      return !!isAssigned;
+      // Physiotherapist has active edit rights on all patients
+      return targetUser.role === 'patient';
     }
     return false;
   };
@@ -782,13 +776,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const canDeleteUser = (targetUser: UserAccount): boolean => {
     if (currentRole === 'admin') return true;
     if (currentRole === 'therapist') {
-      // Physiotherapist can ONLY delete patients under their care
-      if (targetUser.role !== 'patient') return false;
-      const isAssigned =
-        targetUser.assignedTherapistId === currentUserId ||
-        (targetUser.assignedTherapistName &&
-          targetUser.assignedTherapistName.includes(currentTherapist?.name || 'ธนากร'));
-      return !!isAssigned;
+      // Physiotherapist has active delete rights on patient accounts
+      return targetUser.role === 'patient';
     }
     return false;
   };
@@ -1600,7 +1589,11 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     { id: 'users', label: '1. จัดการผู้ใช้งาน', icon: Users },
     { id: 'patients', label: '2. ข้อมูลคนไข้', icon: User },
     { id: 'schedules', label: '3. ตารางกายภาพ', icon: CalendarDays },
-    { id: 'therapists', label: '4. ข้อมูลนักกายภาพ', icon: Stethoscope },
+    {
+      id: 'therapists',
+      label: currentRole === 'therapist' ? '4. โต๊ะทำงาน (PT Workspace)' : '4. ข้อมูลนักกายภาพ',
+      icon: Stethoscope,
+    },
     { id: 'exercises', label: '5. ท่าทางกายภาพ', icon: Dumbbell },
     { id: 'logs', label: '6. ประวัติการใช้งาน', icon: History, adminOnly: true },
     { id: 'settings', label: '7. ตั้งค่าระบบ', icon: Sliders, adminOnly: true },
@@ -5007,9 +5000,9 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                 <span>ลบชุดนี้</span>
                               </button>
                             ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 text-slate-500 font-bold text-[11px] border border-slate-200">
-                                <Lock className="w-3 h-3 text-slate-400" />
-                                <span>ชุดมาตรฐาน รพ.</span>
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 text-slate-500 font-bold text-xs border border-slate-200" title="ชุดท่ามาตรฐานโรงพยาบาล: สงวนสิทธิ์การแก้ไขและลบ (Read-Only)">
+                                <Lock className="w-3.5 h-3.5 text-slate-400" />
+                                <span>มาตรฐาน รพ. (Read-Only)</span>
                               </span>
                             )}
 
