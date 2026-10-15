@@ -1,13 +1,13 @@
 <?php
 /**
- * Strong Care - Global Configuration
+ * Moh Tech Care - Global Configuration
+ * Timezone: Asia/Bangkok (+07:00)
  */
 
-// Error reporting for development (disable in production)
 error_reporting(E_ALL);
 ini_set('display_errors', '0');
+date_default_timezone_set('Asia/Bangkok');
 
-// Load .env file from project root or backend folder if present
 if (!function_exists('loadEnvFile')) {
     function loadEnvFile(string $filePath): void {
         if (!file_exists($filePath)) {
@@ -26,7 +26,6 @@ if (!function_exists('loadEnvFile')) {
                 [$key, $value] = explode('=', $line, 2);
                 $key = trim($key);
                 $value = trim($value);
-                // Strip quotes if wrapped
                 if ((str_starts_with($value, '"') && str_ends_with($value, '"')) ||
                     (str_starts_with($value, "'") && str_ends_with($value, "'"))) {
                     $value = substr($value, 1, -1);
@@ -45,16 +44,19 @@ if (!function_exists('loadEnvFile')) {
 loadEnvFile(dirname(__DIR__, 2) . '/.env');
 loadEnvFile(dirname(__DIR__) . '/.env');
 
-$dbName = getenv('DB_NAME') ?: 'strongcare';
+$dbName = getenv('DB_NAME') ?: 'moh_tech_care';
 $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
 $dbPort = (int)(getenv('DB_PORT') ?: 3306);
 $dbUser = getenv('DB_USER') ?: 'root';
 $dbPass = getenv('DB_PASS') !== false ? getenv('DB_PASS') : '';
 
+$baseDir = dirname(__DIR__);
+$storageDir = dirname(__DIR__, 2) . '/storage';
+
 return [
     'app' => [
-        'name' => getenv('VITE_APP_NAME') ?: 'Strong Care API',
-        'version' => getenv('VITE_APP_VERSION') ?: '1.0.0',
+        'name' => 'Moh Tech Care API',
+        'version' => '1.0.0',
         'timezone' => 'Asia/Bangkok',
         'env' => getenv('APP_ENV') ?: 'development',
     ],
@@ -66,17 +68,31 @@ return [
         'username' => $dbUser,
         'password' => $dbPass,
         'charset' => 'utf8mb4',
-        // Fallback SQLite file if MySQL is unavailable
         'sqlite_path' => dirname(__DIR__, 2) . "/database/{$dbName}.sqlite"
     ],
+    'storage' => [
+        'root' => $storageDir,
+        'avatars' => $storageDir . '/avatars',
+        'biometric' => $storageDir . '/biometric-data',
+        'exercise_media' => $storageDir . '/exercise-media',
+    ],
     'cors' => [
-        'allowed_origins' => array_filter(array_map('trim', explode(',', getenv('CORS_ALLOWED_ORIGINS') ?: 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,https://krongrach80-ui.github.io'))),
+        'allowed_origins' => array_filter(array_map('trim', explode(',', getenv('CORS_ALLOWED_ORIGINS') ?: 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,http://localhost:3000,http://127.0.0.1:3000'))),
         'allowed_methods' => ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-        'allowed_headers' => ['Content-Type', 'Authorization', 'X-Requested-With'],
+        'allowed_headers' => ['Content-Type', 'Authorization', 'X-Requested-With', 'X-CSRF-Token'],
+    ],
+    'security' => [
+        'session_lifetime_seconds' => 86400, // 24 hours
+        'kiosk_session_lifetime_seconds' => 3600, // 1 hour
+        'max_login_attempts_per_window' => 5,
+        'login_rate_window_minutes' => 10,
+        'password_mask' => 'Hashed ●●●●',
     ],
     'face_auth' => [
-        'model_version' => getenv('FACE_MODEL_VERSION') ?: 'face-resnet34-v2',
-        'similarity_threshold' => (float)(getenv('FACE_SIMILARITY_THRESHOLD') ?: 0.82),
+        'similarity_threshold' => (float)(getenv('FACE_SIMILARITY_THRESHOLD') ?: 0.78),
         'margin_threshold' => (float)(getenv('FACE_MARGIN_THRESHOLD') ?: 0.08),
+    ],
+    'feature_flags' => [
+        'FEATURE_PT_POSE_EXERCISES' => false
     ]
 ];

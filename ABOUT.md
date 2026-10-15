@@ -7,21 +7,21 @@
 ---
 
 ### 🌐 ลิงก์ระบบออนไลน์ (Live Deployment)
-- **GitHub Pages (Live Demo)**: [https://krongrach80-ui.github.io/Strong-Care/](https://krongrach80-ui.github.io/Strong-Care/)
-- **GitHub Repository**: [https://github.com/krongrach80-ui/Strong-Care](https://github.com/krongrach80-ui/Strong-Care)
+- **GitHub Pages (Live Demo)**: [https://krongrach80-ui.github.io/Dr.Tech.Care/](https://krongrach80-ui.github.io/Dr.Tech.Care/)
+- **GitHub Repository**: [https://github.com/krongrach80-ui/Dr.Tech.Care](https://github.com/krongrach80-ui/Dr.Tech.Care)
 
 ---
 
 ### 🔑 ตารางบัญชีเข้าใช้งานระบบ (Demo Credentials)
 
-ระบบ Dr.Tech.Care ใช้ระบบยืนยันตัวตนจริงด้วย **Username + Password** สำหรับบุคลากรทางการแพทย์ และ **Face Biometrics / PIN** สำหรับคนไข้หน้าตู้ Kiosk (ยกเลิกระบบ Demo Switcher แบบปุ่มลอยปนกันโดยสิ้นเชิง):
+ระบบ Dr.Tech.Care ใช้ระบบยืนยันตัวตนจริงด้วย **Username + Password** สำหรับบุคลากรทางการแพทย์ และ **Face Biometrics (Cosine Similarity)** หรือ **Staff Fallback** สำหรับคนไข้หน้าตู้ Kiosk:
 
-| ระบบ / บทบาท | Username | Password / PIN | จำนวนหน้า | สิทธิ์การเข้าถึงและความรับผิดชอบ |
+| ระบบ / บทบาท | Username | Password / Biometrics | จำนวนโมดูล | สิทธิ์การเข้าถึงและความรับผิดชอบ |
 |---|---|---|---|---|
-| **ผู้อำนวยการ / แอดมินใหญ่ (Admin)** | `admin` | `1234` | **6 หน้าเต็ม** | สิทธิ์สูงสุด ดูแลผู้ใช้งานทุกคน, คนไข้ทุกคน, นักกายภาพทุกคน, ท่ากายภาพ, เตะเซสชัน/แบนเครื่อง/แบน IP, และตั้งค่า AI ทั้งระบบ |
-| **นักกายภาพบำบัด (Physiotherapist)** | `pt_thanakorn` | `1234` | **4 หน้า** | กภ. ธนากร เจริญสุข — ดูแลคนไข้ที่รับผิดชอบ, แก้ไขโปรไฟล์ตนเอง, จัดการท่ากายภาพ (ซ่อนหน้า Logs และ Settings เด็ดขาด) |
-| **นักกายภาพบำบัด (Physiotherapist)** | `pt_pimchanok` | `1234` | **4 หน้า** | กภ. พิมพ์ชนก สิทธิสาร — ดูแลคนไข้ที่รับผิดชอบ, แก้ไขโปรไฟล์ตนเอง, จัดการท่ากายภาพ (ซ่อนหน้า Logs และ Settings เด็ดขาด) |
-| **คนไข้หน้าตู้ Kiosk (Patient)** | สแกนใบหน้า หรือ HN | Dev: PIN `1234` / Prod: `POST /api/auth/pin` | **2 โหมดอิสระ** | สแกนใบหน้าชีวมิติจริง หรือใส่ PIN ยืนยันตัวตนผ่าน Backend (ปิดช่องโหว่ Mock Account & Hardcoded PIN ใน Production เรียบร้อย) |
+| **ผู้อำนวยการ / แอดมินใหญ่ (Super Admin)** | `admin` | `admin1234` | **6 โมดูลเต็ม (M1-M6)** | สิทธิ์สูงสุด ดูแลผู้ใช้งานทุกคน, คนไข้ทุกคน, ปฏิทินนัดหมาย, โอนย้ายเคส PT, คลังแบบฝึกหัด, และความปลอดภัย (Force Logout, Ban IP) |
+| **นักกายภาพบำบัด (Physiotherapist)** | `pt_somchai` | `pt123456` | **M1-M5 (M6 ซ่อน/403)** | กภ. สมชาย พิทักษ์ไทย — จัดการคนไข้ในความดูแล, บันทึกเวชระเบียน (Append-Only), มอบหมายเคสแทน (Coverage Delegation) |
+| **นักกายภาพบำบัด (Physiotherapist)** | `pt_kanok` | `pt123456` | **M1-M5 (M6 ซ่อน/403)** | กภ. กนกวรรณ รัตนศิลป์ — ดูแลคนไข้ที่รับมอบหมาย, บันทึกโน้ตการรักษา, สร้างแบบฝึกหัดประจำตัว |
+| **คนไข้หน้าตู้ Kiosk (Patient)** | `P-1001` (นายสมศักดิ์ มีสุข) | สแกนใบหน้า (Biometrics) หรือ Staff Fallback | **Kiosk Terminal** | ตู้แนวตั้ง 1080×1920 ตรวจจับคนเดินเข้า สแกนใบหน้าอัตโนมัติ เล่นมินิเกมกายภาพ (Balloon Pop, Reach & Catch) สรุปผลลงฐานข้อมูล |
 
 ---
 
