@@ -3145,23 +3145,9 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               </p>
             </div>
 
-            {/* ปุ่มกดสำหรับผู้ใช้งาน / ผู้สูงอายุ */}
-            <div className="mt-3 sm:mt-3.5 w-full max-w-xs space-y-2.5">
-              {/* 1. ปุ่มหลัก: เข้าสู่ระบบด้วยใบหน้า */}
-              <button
-                data-kiosk-target="step1-start"
-                onClick={handleStartFaceLogin}
-                className="w-full min-h-[58px] sm:min-h-[64px] py-3.5 px-6 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-black text-base sm:text-lg shadow-xl shadow-cyan-500/25 hover:shadow-2xl active:scale-95 transition flex items-center justify-center gap-2.5 cursor-pointer border-2 border-cyan-300"
-                id="btnSitInFrontOfCamera"
-              >
-                <CheckCircle2 className="w-5 h-5 shrink-0" />
-                <span>แตะหน้าจอเพื่อเข้าสู่ระบบ</span>
-                <ArrowRight className="w-5 h-5 shrink-0" />
-              </button>
-
-
-              {/* 3. ซ่อนปุ่ม PIN ด้านล่างหากมีกล้อง error (เนื่องจากกล่องแจ้งเตือนมีปุ่ม PIN แล้ว) */}
-              {!cameraError && (
+            {/* ตัวเลือกสำรอง: เข้าสู่ระบบด้วยรหัส PIN */}
+            {!cameraError && (
+              <div className="mt-4 sm:mt-5 w-full max-w-xs">
                 <button
                   data-kiosk-target="step1-pin"
                   onClick={() => setShowPinModal(true)}
@@ -3171,8 +3157,8 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   <Key className="w-4 h-4 text-emerald-600 shrink-0" />
                   <span>เข้าสู่ระบบด้วยรหัส PIN (ทางเลือก)</span>
                 </button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
 
