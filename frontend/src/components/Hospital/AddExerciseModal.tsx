@@ -27,11 +27,12 @@ interface AddExerciseModalProps {
 }
 
 const CATEGORIES = [
-  'ฟื้นฟูข้อไหล่และแขน',
-  'ฟื้นฟูข้อเข่าและขา',
-  'ฟื้นฟูข้อสะโพกและหลัง',
-  'ฟื้นฟูข้อเท้าและขา',
-  'ฟื้นฟูระบบประสาท',
+  'ข้อไหล่ (Shoulder)',
+  'คอ (Neck)',
+  'หลังและสะโพก (Back & Hip)',
+  'แขนและมือ (Arm & Hand)',
+  'ขาและข้อเข่า (Leg & Knee)',
+  'มินิเกม (Minigame)',
 ] as const;
 
 export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
@@ -43,8 +44,10 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
   // Section 1: Basic Info
   const [name, setName] = useState<string>('');
   const [englishName, setEnglishName] = useState<string>('');
-  const [category, setCategory] = useState<string>(CATEGORIES[0]);
+  const [category, setCategory] = useState<string>('ฟื้นฟูข้อไหล่และแขน (Shoulder & Arm)');
+  const [type, setType] = useState<'single' | 'preset'>('single');
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
+  const [createdBy, setCreatedBy] = useState<string>('ผู้อำนวยการ นพ.วรชัย');
 
   // Section 2: Kinematics & Training Targets
   const [targetJoint, setTargetJoint] = useState<string>('');
@@ -55,6 +58,8 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
   const [repsPerSet, setRepsPerSet] = useState<number | string>(10);
   const [sets, setSets] = useState<number | string>(3);
   const [description, setDescription] = useState<string>('');
+  const [instructions, setInstructions] = useState<string>('');
+  const [benefits, setBenefits] = useState<string>('');
 
   // Section 3: Safety, Cautions & Warnings
   const [cautions, setCautions] = useState<string>('');
@@ -178,6 +183,10 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
       name: name.trim(),
       englishName: englishName.trim(),
       category: category.trim(),
+      type,
+      defaultReps: repsNum,
+      defaultSets: setsNum,
+      createdBy: createdBy.trim() || 'ผู้อำนวยการ นพ.วรชัย',
       difficulty,
       targetJoint: targetJoint.trim() || 'ข้อต่อและกล้ามเนื้อตามหลักกายภาพ',
       targetAngle: angleNum,
@@ -189,6 +198,8 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
       description:
         description.trim() ||
         'ฝึกเคลื่อนไหวอย่างช้าๆ ควบคุมแนวระนาบของร่างกายและหายใจเข้าออกสม่ำเสมอ',
+      instructions: instructions.trim() || description.trim(),
+      benefits: benefits.trim() || 'เพิ่มความยืดหยุ่น เพิ่มช่วงการเคลื่อนไหวข้อต่อ และลดอาการปวด',
       cautions: cautions.trim() || 'หยุดทันทีหากรู้สึกเจ็บแปลบ ชา หรือเวียนศีรษะ',
       warnings: warnings.trim() || undefined,
       contraindications: contraindications.trim() || undefined,
@@ -304,6 +315,54 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
                 {errors.englishName && (
                   <p className="text-[11px] text-rose-500 mt-1 font-medium">{errors.englishName}</p>
                 )}
+              </div>
+            </div>
+
+            {/* Type Radio & Created By */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">
+                  ประเภทท่าทาง (Type) <span className="text-rose-500">*</span>
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className={`flex items-center gap-2 p-2 rounded-xl border cursor-pointer font-bold transition ${
+                    type === 'single' ? 'bg-emerald-50 border-emerald-400 text-emerald-900' : 'bg-white border-stone-200 text-slate-600'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="exerciseType"
+                      checked={type === 'single'}
+                      onChange={() => setType('single')}
+                      className="accent-emerald-600"
+                    />
+                    <span>Single</span>
+                  </label>
+                  <label className={`flex items-center gap-2 p-2 rounded-xl border cursor-pointer font-bold transition ${
+                    type === 'preset' ? 'bg-emerald-50 border-emerald-400 text-emerald-900' : 'bg-white border-stone-200 text-slate-600'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="exerciseType"
+                      checked={type === 'preset'}
+                      onChange={() => setType('preset')}
+                      className="accent-emerald-600"
+                    />
+                    <span>Preset</span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">
+                  ผู้สร้าง (Created By)
+                </label>
+                <input
+                  type="text"
+                  value={createdBy}
+                  onChange={(e) => setCreatedBy(e.target.value)}
+                  placeholder="เช่น ผู้อำนวยการ นพ.วรชัย"
+                  className="w-full px-3.5 py-2.5 rounded-2xl border border-stone-200 bg-white text-xs text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-[#10B981]"
+                />
               </div>
             </div>
 
@@ -509,17 +568,31 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
               </div>
             </div>
 
-            <div>
-              <label className="block text-slate-700 font-bold mb-1">
-                คำอธิบายวิธีทำและขั้นตอนการปฏิบัติ (Instructions)
-              </label>
-              <textarea
-                rows={2}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="ระบุท่าเริ่มต้น ท่าทางระหว่างฝึก และการหายใจ เช่น ยกแขนทั้งสองข้างกางออกด้านข้างลำตัวจนถึงระดับระนาบหัวไหล่ ค้างไว้ 3 วินาทีแล้วค่อยๆ ผ่อนลง..."
-                className="w-full p-3 rounded-2xl border border-stone-200 bg-white text-xs text-slate-800 leading-relaxed focus:outline-none focus:ring-2 focus:ring-[#10B981]"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">
+                  ขั้นตอนวิธีฝึก (Instructions Steps)
+                </label>
+                <textarea
+                  rows={2}
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                  placeholder="ขั้นตอนที่ 1, ขั้นตอนที่ 2..."
+                  className="w-full p-2.5 rounded-2xl border border-stone-200 bg-white text-xs text-slate-800 leading-relaxed focus:outline-none focus:ring-2 focus:ring-[#10B981]"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">
+                  ประโยชน์ทางกายภาพบำบัด (Benefits)
+                </label>
+                <textarea
+                  rows={2}
+                  value={benefits}
+                  onChange={(e) => setBenefits(e.target.value)}
+                  placeholder="เพิ่มช่วงการเคลื่อนไหว ลดพังผืดข้อต่อ และเสริมสร้างกล้ามเนื้อ..."
+                  className="w-full p-2.5 rounded-2xl border border-stone-200 bg-white text-xs text-slate-800 leading-relaxed focus:outline-none focus:ring-2 focus:ring-[#10B981]"
+                />
+              </div>
             </div>
           </div>
 

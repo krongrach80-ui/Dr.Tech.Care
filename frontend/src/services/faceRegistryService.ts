@@ -141,6 +141,10 @@ export class FaceRegistryService {
     this.persist(filtered);
   }
 
+  public deleteProfile(idOrCode: string | number): void {
+    this.removeProfile(idOrCode);
+  }
+
   /**
    * ล้างข้อมูลใบหน้าทั้งหมด
    */

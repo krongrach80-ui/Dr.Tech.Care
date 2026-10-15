@@ -72,6 +72,12 @@ import { NetworkSyncModal } from '../../components/Hospital/NetworkSyncModal';
 import { PatientFaceEnrollModal } from '../../components/Hospital/PatientFaceEnrollModal';
 import { patientFaceStorageService } from '../../services/patientFaceStorageService';
 import { faceRegistryService } from '../../services/faceRegistryService';
+import { BiometricResetModal } from '../../components/Hospital/BiometricResetModal';
+import { PtAssignedPatientsModal } from '../../components/Hospital/PtAssignedPatientsModal';
+import { PatientCalendarModal } from '../../components/Hospital/PatientCalendarModal';
+import { DailyRoutineAssignmentModal } from '../../components/Hospital/DailyRoutineAssignmentModal';
+import { SecurityControlModal } from '../../components/Hospital/SecurityControlModal';
+import { defaultDash, formatThaiDate, formatThaiDateTime } from '../../utils/dashboardUtils';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 
 const THAI_MONTH_NAMES = [
@@ -712,6 +718,67 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [patientCareFilter, setPatientCareFilter] = useState<'all' | 'assigned'>('all');
   const [patientDetailModal, setPatientDetailModal] = useState<UserAccount | null>(null);
   const [enrollingFacePatient, setEnrollingFacePatient] = useState<UserAccount | null>(null);
+
+  // Module 1 Modal C: Biometric Reset Modal State
+  const [biometricResetUser, setBiometricResetUser] = useState<UserAccount | null>(null);
+
+  // Module 3 Modals: Patient Calendar & Daily Routine Assignment
+  const [calendarPatientModal, setCalendarPatientModal] = useState<UserAccount | null>(null);
+  const [dailyRoutineDate, setDailyRoutineDate] = useState<{
+    isOpen: boolean;
+    patient: UserAccount | null;
+    date: string;
+  }>({ isOpen: false, patient: null, date: '' });
+
+  // Module 4 Modal B: PT Assigned Patients Management
+  const [ptAssignedModalTherapist, setPtAssignedModalTherapist] = useState<PhysicalTherapist | null>(null);
+
+  // Module 6 Modal: Security Control Modal
+  const [securityControlTarget, setSecurityControlTarget] = useState<ActivityLog | null>(null);
+
+  // Module 3: Auto-Reschedule Cron / Trigger for Missed Sessions
+  const checkAndAutoRescheduleMissedSessions = () => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const plans = useHospitalStore.getState().treatmentPlans;
+    plans.forEach((plan) => {
+      if (plan.scheduledDates && Array.isArray(plan.scheduledDates)) {
+        let changed = false;
+        const updatedDates = plan.scheduledDates.map((item: any) => {
+          if (typeof item === 'string') {
+            if (item < todayStr) {
+              changed = true;
+              return { date: todayStr, status: 'missed_rescheduled' };
+            }
+            return item;
+          } else if (item && typeof item === 'object') {
+            if (item.date < todayStr && item.status === 'scheduled') {
+              changed = true;
+              return { ...item, date: todayStr, status: 'missed_rescheduled' };
+            }
+          }
+          return item;
+        });
+
+        if (changed) {
+          const { id, createdAt, ...restPlan } = plan;
+          saveTreatmentPlan({ ...restPlan, id, scheduledDates: updatedDates });
+          addActivityLog(
+            '[Auto-Reschedule Trigger]',
+            'SYSTEM',
+            `ตรวจพบการขาดนัดรักษาของคนไข้ ${plan.patientName || plan.patientId}. เลื่อนนัดหมายและยกยอดรูทีนกายภาพมายัง ${todayStr} อัตโนมัติ`,
+            'Kiosk Auto-Scheduler Cron',
+            '127.0.0.1 (Kiosk Auto-Trigger)'
+          );
+        }
+      }
+    });
+  };
+
+  useEffect(() => {
+    checkAndAutoRescheduleMissedSessions();
+    const interval = setInterval(checkAndAutoRescheduleMissedSessions, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   const filteredPatients = useMemo(() => {
     return users
@@ -1781,7 +1848,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         userRoleFilter === 'patient' ? 'bg-gradient-to-r from-[#10B981] to-[#0284C7] text-white shadow-xs' : 'text-slate-600 hover:text-cyan-800'
                       }`}
                     >
-                      คนไข้
+                      คนไข้ (Patient)
                     </button>
                     <button
                       onClick={() => {
@@ -1789,10 +1856,21 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         setUserPage(1);
                       }}
                       className={`text-xs font-bold px-2.5 sm:px-3 py-1 rounded-full transition cursor-pointer ${
-                        userRoleFilter === 'therapist' ? 'bg-gradient-to-r from-[#10B981] to-[#0284C7] text-white shadow-xs' : 'text-slate-600 hover:text-cyan-800'
+                        userRoleFilter === 'therapist' ? 'bg-[#0F2F2B] text-emerald-200 shadow-xs' : 'text-slate-600 hover:text-cyan-800'
                       }`}
                     >
-                      นักกายภาพ
+                      นักกายภาพ (PT)
+                    </button>
+                    <button
+                      onClick={() => {
+                        setUserRoleFilter('admin' as any);
+                        setUserPage(1);
+                      }}
+                      className={`text-xs font-bold px-2.5 sm:px-3 py-1 rounded-full transition cursor-pointer ${
+                        (userRoleFilter as any) === 'admin' ? 'bg-purple-600 text-white shadow-xs' : 'text-slate-600 hover:text-cyan-800'
+                      }`}
+                    >
+                      Super Admin
                     </button>
                   </div>
 
@@ -1810,7 +1888,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     title="ลงทะเบียนผู้ใช้ใหม่ พร้อมสแกนใบหน้า 10 ช็อต"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>ลงทะเบียนผู้ใช้ใหม่</span>
+                    <span>+ Add New User</span>
                   </button>
                 </div>
               </div>
@@ -1821,20 +1899,21 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   <table className="w-full text-left text-xs sm:text-sm border-collapse">
                     <thead>
                       <tr className="border-b border-cyan-100 text-slate-700 text-[11px] font-bold uppercase tracking-wider bg-gradient-to-r from-emerald-50/80 via-white to-sky-50/80">
-                        <th className="py-2.5 px-3 sm:px-4 sticky left-0 bg-gradient-to-r from-emerald-50 to-white z-20 shadow-xs border-r border-cyan-100 min-w-[160px] sm:min-w-[190px]">
-                          บัญชี / ชื่อผู้ใช้งาน
+                        <th className="py-2.5 px-3 sm:px-4 sticky left-0 bg-gradient-to-r from-emerald-50 to-white z-20 shadow-xs border-r border-cyan-100 min-w-[170px] sm:min-w-[210px]">
+                          รูปหน้า / ชื่อผู้ใช้งาน (Avatar & Name)
                         </th>
-                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap min-w-[125px]">รหัสผ่าน (Password)</th>
-                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap min-w-[160px]">3. ตารางกายภาพ (Schedule)</th>
-                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap min-w-[105px]">สถานะ / บทบาท</th>
-                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap min-w-[130px]">หมอที่รับผิดชอบ</th>
-                        <th className="py-2.5 px-3 sm:px-4 text-right whitespace-nowrap min-w-[120px]">การจัดการ (Actions)</th>
+                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap min-w-[110px]">Unique ID / HN</th>
+                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap min-w-[110px]">บทบาท (Role)</th>
+                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap min-w-[130px]">Password Hash</th>
+                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap min-w-[120px]">Face ID Status</th>
+                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap min-w-[105px]">Account Status</th>
+                        <th className="py-2.5 px-3 sm:px-4 text-right whitespace-nowrap min-w-[140px]">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-emerald-50">
                       {paginatedUsers.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="py-10 text-center">
+                          <td colSpan={7} className="py-10 text-center">
                             <div className="flex flex-col items-center justify-center space-y-2">
                               <div className="w-10 h-10 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center">
                                 <Search className="w-5 h-5" />
@@ -1850,227 +1929,117 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         </tr>
                       ) : (
                         paginatedUsers.map((user) => {
-                          const isPwRevealed = revealedPasswords[user.id];
                           const canEdit = canEditUser(user);
                           const canDelete = canDeleteUser(user);
+                          const faceImg = user.face_image_url || patientFaceStorageService.getProfileFaceImage(user.code);
+                          const hasFaceEnrolled = Boolean(user.face_vector || user.biometricVector || user.faceRegisteredAt || (user as any).faceDossier?.length);
+                          const isAccountDisabled = user.status === 'disabled';
+
                           return (
                             <tr key={user.id} className="hover:bg-emerald-50/40 transition group">
-                              {/* 1. Account name & username (STICKY FIRST COLUMN) */}
-                              <td className="py-2.5 px-3 sm:px-4 sticky left-0 bg-white group-hover:bg-emerald-50/60 z-10 shadow-xs border-r border-emerald-100/60 min-w-[160px] sm:min-w-[190px]">
+                              {/* 1. User Avatar / Face Preview + Name & Username */}
+                              <td className="py-2.5 px-3 sm:px-4 sticky left-0 bg-white group-hover:bg-emerald-50/60 z-10 shadow-xs border-r border-emerald-100/60 min-w-[170px] sm:min-w-[210px]">
                                 <div className="flex items-center gap-2.5">
-                                  <div
-                                    className={`w-8 h-8 rounded-full font-bold flex items-center justify-center text-xs shadow-2xs flex-shrink-0 ${
-                                      user.role === 'patient'
-                                        ? 'bg-[#10B981] text-white'
-                                        : user.role === 'therapist'
-                                        ? 'bg-[#0F2F2B] text-emerald-200'
-                                        : 'bg-amber-600 text-white'
-                                    }`}
-                                  >
-                                    {user.name.charAt(user.name.startsWith('นาย') || user.name.startsWith('นาง') ? 3 : 0) || 'ผ'}
-                                  </div>
+                                  {faceImg ? (
+                                    <img
+                                      src={faceImg}
+                                      alt={user.name}
+                                      className="w-9 h-9 rounded-full object-cover border-2 border-emerald-400 shadow-xs flex-shrink-0"
+                                    />
+                                  ) : (
+                                    <div
+                                      className={`w-9 h-9 rounded-full font-bold flex items-center justify-center text-xs shadow-xs flex-shrink-0 ${
+                                        user.role === 'patient'
+                                          ? 'bg-[#10B981] text-white'
+                                          : user.role === 'therapist'
+                                          ? 'bg-[#0F2F2B] text-emerald-200'
+                                          : 'bg-purple-600 text-white'
+                                      }`}
+                                    >
+                                      {user.name.charAt(user.name.startsWith('นาย') || user.name.startsWith('นาง') ? 3 : 0) || 'ผ'}
+                                    </div>
+                                  )}
                                   <div className="min-w-0">
-                                    <div className="font-bold text-[#0F2F2B] leading-tight text-xs sm:text-sm truncate max-w-[130px] sm:max-w-[170px]">{user.name}</div>
-                                    <div className="text-[10px] text-slate-500 font-mono truncate max-w-[130px] sm:max-w-[170px] mt-0.5">
-                                      <strong className="text-emerald-800">{user.username}</strong> ({user.code})
+                                    <div className="font-bold text-[#0F2F2B] leading-tight text-xs sm:text-sm truncate max-w-[140px] sm:max-w-[180px]">
+                                      {user.name}
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 font-mono truncate max-w-[140px] sm:max-w-[180px] mt-0.5">
+                                      @{user.username}
                                     </div>
                                   </div>
                                 </div>
                               </td>
 
-                              {/* 2. Cryptographically Hashed Password (SHA-256) - Permanently Masked */}
+                              {/* 2. Unique ID / HN (strictly unique) */}
                               <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
-                                <div className="inline-flex items-center gap-1.5 bg-stone-50 px-2.5 py-1 rounded-xl border border-stone-200">
-                                  <Lock className="w-3.5 h-3.5 text-emerald-600" />
-                                  <span className="font-mono font-bold text-xs text-slate-700 tracking-wider">
-                                    ••••••••
-                                  </span>
-                                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                                    SHA-256
-                                  </span>
-                                  <button
-                                    onClick={() => handleResetUserPassword(user)}
-                                    title="รีเซ็ตรหัสผ่าน (สร้างรหัสชั่วคราวและบังคับเปลี่ยน)"
-                                    className="text-[11px] font-bold text-emerald-700 hover:text-emerald-950 hover:underline pl-0.5 cursor-pointer inline-flex items-center gap-1"
-                                  >
-                                    <KeyRound className="w-3 h-3 text-emerald-600" />
-                                    <span>รีเซ็ตรหัสผ่าน</span>
-                                  </button>
-                                </div>
-                              </td>
-
-                              {/* 3. Physical Therapy Schedule (Column 3) */}
-                              <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
-                                {user.role === 'patient' ? (
-                                  (() => {
-                                    const pPlan = treatmentPlans.find(
-                                      (p) =>
-                                        String(p.patientId) === String(user.id) ||
-                                        p.patientCode === user.code ||
-                                        p.patientName === user.name
-                                    );
-                                    if (pPlan) {
-                                      return (
-                                        <div className="inline-flex items-center gap-1.5">
-                                          <button
-                                            onClick={() => {
-                                              setSelectedPlanForEdit(pPlan);
-                                              setIsTreatmentPlanModalOpen(true);
-                                            }}
-                                            className="px-2.5 py-1 rounded-full bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[11px] font-bold border border-emerald-300 transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                                            title={`คลิกเพื่อดูและปรับตาราง: ${pPlan.assignedExercises.map((e) => e.exerciseName).join(', ')}`}
-                                          >
-                                            <CalendarDays className="w-3.5 h-3.5 text-emerald-700" />
-                                            <span>{pPlan.assignedExercises.length} ท่าฝึก</span>
-                                            <span
-                                              className={`w-1.5 h-1.5 rounded-full ${
-                                                pPlan.status === 'active'
-                                                  ? 'bg-[#10B981]'
-                                                  : pPlan.status === 'paused'
-                                                  ? 'bg-amber-500'
-                                                  : 'bg-blue-500'
-                                              }`}
-                                            />
-                                          </button>
-                                          {onLaunchKioskExercise && (
-                                            <button
-                                              onClick={() => {
-                                                if (onSelectPatientForKiosk) onSelectPatientForKiosk(user);
-                                                if (onLaunchKioskExercise) onLaunchKioskExercise();
-                                                showToast(`เลือกคนไข้ ${user.name} เริ่มฝึกตามตารางกายภาพ`);
-                                              }}
-                                              className="p-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition cursor-pointer"
-                                              title="เริ่มฝึกตามตารางที่ตู้ Kiosk ทันที"
-                                            >
-                                              <Play className="w-3.5 h-3.5 text-emerald-600 fill-emerald-600" />
-                                            </button>
-                                          )}
-                                        </div>
-                                      );
-                                    }
-                                    return (
-                                      <button
-                                        onClick={() => {
-                                          setSelectedPlanForEdit({
-                                            id: '',
-                                            patientId: user.id,
-                                            patientName: user.name,
-                                            patientCode: user.code,
-                                            therapistId: currentUserId,
-                                            therapistName:
-                                              currentRole === 'therapist'
-                                                ? currentUser?.name || 'นักกายภาพ'
-                                                : user.assignedTherapistName || 'กภ. ธนากร วงศ์สวัสดิ์',
-                                            diagnosis: user.diagnosis || 'ฟื้นฟูกล้ามเนื้อและข้อต่อ',
-                                            targetJoint: 'ข้อต่อและกล้ามเนื้อทั่วไป',
-                                            assignedExercises: [
-                                              {
-                                                exerciseSlug: 'shoulder_raise',
-                                                exerciseName: 'กางแขนยกด้านข้าง',
-                                                sets: 3,
-                                                reps: 10,
-                                                holdSeconds: 3,
-                                                difficulty: 'beginner',
-                                              },
-                                            ],
-                                            clinicalNotes: 'ฝึกอย่างสม่ำเสมอ พักระหว่างเซ็ต',
-                                            createdAt: new Date().toISOString().split('T')[0],
-                                            status: 'active',
-                                          } as TreatmentPlan);
-                                          setIsTreatmentPlanModalOpen(true);
-                                        }}
-                                        className="px-2 py-0.5 rounded-full bg-slate-100 hover:bg-emerald-50 text-slate-500 hover:text-emerald-800 text-[11px] font-semibold border border-dashed border-slate-300 hover:border-emerald-300 transition cursor-pointer flex items-center gap-1"
-                                        title="คลิกเพื่อมอบหมายตารางฝึกกายภาพให้คนไข้"
-                                      >
-                                        <Plus className="w-3 h-3 text-emerald-600" />
-                                        <span>จัดตารางฝึก</span>
-                                      </button>
-                                    );
-                                  })()
-                                ) : (
-                                  <span className="text-slate-300 font-mono text-xs">—</span>
-                                )}
-                              </td>
-
-                              {/* 4. Role & Status */}
-                              <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
-                                <div className="inline-flex items-center gap-1.5">
-                                  {user.role === 'patient' && (
-                                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs whitespace-nowrap">
-                                      คนไข้
-                                    </span>
-                                  )}
-                                  {user.role === 'therapist' && (
-                                    <span className="px-2.5 py-0.5 rounded-full bg-[#0F2F2B] text-white font-bold text-xs whitespace-nowrap">
-                                      นักกายภาพ
-                                    </span>
-                                  )}
-                                  {user.role === 'admin' && (
-                                    <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs whitespace-nowrap">
-                                      แอดมินใหญ่
-                                    </span>
-                                  )}
-                                  <span className="w-2 h-2 rounded-full bg-[#10B981] flex-shrink-0" />
-                                </div>
-                              </td>
-
-                              {/* 5. Responsible Therapist */}
-                              <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
-                                <span className="text-xs font-semibold text-slate-700 block truncate max-w-[140px] whitespace-nowrap">
-                                  {user.assignedTherapistName || (user.role === 'patient' ? 'กภ. ธนากร วงศ์สวัสดิ์' : '—')}
+                                <span className="px-2.5 py-1 rounded-xl bg-slate-100 border border-slate-200 font-mono font-bold text-xs text-slate-800">
+                                  {defaultDash(user.code)}
                                 </span>
                               </td>
 
-                              {/* 6. Actions: Edit Name, Edit Password, Delete Account, Edit Schedule */}
+                              {/* 3. Role Badge */}
+                              <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
+                                {user.role === 'patient' && (
+                                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold text-xs whitespace-nowrap">
+                                    Patient
+                                  </span>
+                                )}
+                                {user.role === 'therapist' && (
+                                  <span className="px-2.5 py-0.5 rounded-full bg-[#0F2F2B] text-emerald-200 border border-emerald-950 font-bold text-xs whitespace-nowrap">
+                                    Physiotherapist
+                                  </span>
+                                )}
+                                {user.role === 'admin' && (
+                                  <span className="px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-900 border border-purple-300 font-bold text-xs whitespace-nowrap">
+                                    Super Admin
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* 4. Password Hash (SHA-256 masked) */}
+                              <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
+                                <div className="inline-flex items-center gap-1.5 bg-stone-50 px-2.5 py-1 rounded-xl border border-stone-200">
+                                  <Lock className="w-3.5 h-3.5 text-emerald-600" />
+                                  <span className="font-mono font-bold text-[11px] text-slate-700 tracking-wider">
+                                    sha256_••••••••
+                                  </span>
+                                </div>
+                              </td>
+
+                              {/* 5. Face ID Status (Registered / Pending) */}
+                              <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
+                                {hasFaceEnrolled ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-[11px]">
+                                    <Check className="w-3 h-3 text-emerald-600" />
+                                    <span>Registered</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[11px]">
+                                    <Clock className="w-3 h-3 text-amber-700" />
+                                    <span>Pending</span>
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* 6. Account Status (Active / Disabled) */}
+                              <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
+                                {isAccountDisabled ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 font-bold text-[11px]">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-rose-600" />
+                                    <span>Disabled</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-[11px]">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                                    <span>Active</span>
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* 7. Actions: Edit Account (Modal B), Biometric Reset (Modal C), Delete */}
                               <td className="py-2.5 px-3 sm:px-4 text-right whitespace-nowrap">
-                                <div className="inline-flex items-center gap-1 justify-end">
-                                  {user.role === 'patient' && (
-                                    <button
-                                      onClick={() => {
-                                        const pPlan = treatmentPlans.find(
-                                          (p) =>
-                                            String(p.patientId) === String(user.id) ||
-                                            p.patientCode === user.code ||
-                                            p.patientName === user.name
-                                        );
-                                        if (pPlan) {
-                                          setSelectedPlanForEdit(pPlan);
-                                        } else {
-                                          setSelectedPlanForEdit({
-                                            id: '',
-                                            patientId: user.id,
-                                            patientName: user.name,
-                                            patientCode: user.code,
-                                            therapistId: currentUserId,
-                                            therapistName:
-                                              currentRole === 'therapist'
-                                                ? currentUser?.name || 'นักกายภาพ'
-                                                : user.assignedTherapistName || 'กภ. ธนากร วงศ์สวัสดิ์',
-                                            diagnosis: user.diagnosis || 'ฟื้นฟูกล้ามเนื้อและข้อต่อ',
-                                            targetJoint: 'ข้อต่อและกล้ามเนื้อทั่วไป',
-                                            assignedExercises: [
-                                              {
-                                                exerciseSlug: 'shoulder_raise',
-                                                exerciseName: 'กางแขนยกด้านข้าง',
-                                                sets: 3,
-                                                reps: 10,
-                                                holdSeconds: 3,
-                                                difficulty: 'beginner',
-                                              },
-                                            ],
-                                            clinicalNotes: 'ฝึกอย่างสม่ำเสมอ พักระหว่างเซ็ต',
-                                            createdAt: new Date().toISOString().split('T')[0],
-                                            status: 'active',
-                                          } as TreatmentPlan);
-                                        }
-                                        setIsTreatmentPlanModalOpen(true);
-                                      }}
-                                      title="จัดการตารางกายภาพคนไข้"
-                                      className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 cursor-pointer transition"
-                                    >
-                                      <CalendarDays className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
+                                <div className="inline-flex items-center gap-1.5 justify-end">
+                                  {/* Modal B: Edit Account button */}
                                   <button
                                     onClick={() => {
                                       if (canEdit) {
@@ -2080,35 +2049,30 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                       }
                                     }}
                                     disabled={!canEdit}
-                                    title={canEdit ? 'แก้ไขบัญชี' : 'แก้ไขได้เฉพาะคนไข้ที่ตนเองดูแลเท่านั้น'}
-                                    className={`p-1.5 rounded-lg border transition ${
+                                    title="Edit Account (แก้ไขข้อมูลบัญชี, สิทธิ์, รหัสผ่าน, สถานะ)"
+                                    className={`px-2.5 py-1 rounded-xl border text-xs font-bold transition flex items-center gap-1 ${
                                       canEdit
-                                        ? 'border-slate-200 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 cursor-pointer'
+                                        ? 'border-slate-200 text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 cursor-pointer shadow-xs'
                                         : 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50'
                                     }`}
                                   >
-                                    <Pencil className="w-3.5 h-3.5" />
+                                    <Pencil className="w-3 h-3" />
+                                    <span>Edit</span>
                                   </button>
 
+                                  {/* Modal C: Biometric Reset button */}
                                   <button
                                     onClick={() => {
-                                      if (canEdit) {
-                                        setEditingPasswordUser(user);
-                                      } else {
-                                        showToast('สิทธิ์ไม่เพียงพอ: นักกายภาพสามารถเปลี่ยนรหัสผ่านได้เฉพาะคนไข้ที่ตนเองดูแลเท่านั้น');
-                                      }
+                                      setBiometricResetUser(user);
                                     }}
-                                    disabled={!canEdit}
-                                    title={canEdit ? 'เปลี่ยนรหัสผ่าน' : 'เปลี่ยนรหัสผ่านได้เฉพาะคนไข้ที่ตนเองดูแลเท่านั้น'}
-                                    className={`p-1.5 rounded-lg border transition ${
-                                      canEdit
-                                        ? 'border-slate-200 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 cursor-pointer'
-                                        : 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50'
-                                    }`}
+                                    title="Biometric Reset (ดูเวกเตอร์ใบหน้า, ลบอัตลักษณ์ หรือเปิดกล้องสแกน 10 ช็อตใหม่)"
+                                    className="px-2.5 py-1 rounded-xl border border-cyan-300 bg-cyan-50/70 text-cyan-800 hover:bg-cyan-100 text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-xs"
                                   >
-                                    <KeyRound className="w-3.5 h-3.5" />
+                                    <Camera className="w-3 h-3 text-cyan-700" />
+                                    <span>Face Reset</span>
                                   </button>
 
+                                  {/* Delete User */}
                                   <button
                                     onClick={() => {
                                       if (canDelete) {
@@ -2123,13 +2087,13 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                     }}
                                     disabled={!canDelete}
                                     title={canDelete ? 'ลบบัญชีผู้ใช้งาน' : 'ลบได้เฉพาะคนไข้ที่ตนเองดูแลเท่านั้น'}
-                                    className={`p-1.5 rounded-lg border transition ${
+                                    className={`p-1.5 rounded-xl border transition ${
                                       canDelete
-                                        ? 'border-slate-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300 cursor-pointer'
+                                        ? 'border-slate-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300 cursor-pointer shadow-xs'
                                         : 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50'
                                     }`}
                                   >
-                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <Trash2 className="w-3 h-3" />
                                   </button>
                                 </div>
                               </td>
@@ -2705,6 +2669,23 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       className="w-full pl-8 pr-3 py-1.5 rounded-full bg-white border border-emerald-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#10B981]"
                     />
                   </div>
+
+                  {/* Interactive Patient Calendar Trigger */}
+                  <button
+                    onClick={() => {
+                      const firstPat = users.find((u) => u.role === 'patient');
+                      if (firstPat) {
+                        setCalendarPatientModal(firstPat);
+                      } else {
+                        showToast('ไม่พบข้อมูลคนไข้ในระบบ');
+                      }
+                    }}
+                    className="px-3.5 py-2 rounded-2xl bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-50 text-xs font-extrabold shadow-2xs transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap active:scale-95"
+                    title="เปิดปฏิทินนัดหมายคนไข้ พร้อมสถานะ เขียว (สำเร็จ) / น้ำเงิน (นัดหมาย) / แดง (ขาดนัด/เลื่อนอัตโนมัติ)"
+                  >
+                    <Calendar className="w-4 h-4 text-emerald-600" />
+                    <span>🗓️ ปฏิทินคนไข้ (Interactive Calendar)</span>
+                  </button>
 
                   {/* Prominent Primary Add Plan Button */}
                   <button
@@ -3361,6 +3342,25 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                                 )}
                                                 <button
                                                   onClick={() => {
+                                                    if (patientUser) {
+                                                      setCalendarPatientModal(patientUser);
+                                                    } else {
+                                                      setCalendarPatientModal({
+                                                        id: p.patientId,
+                                                        name: p.patientName,
+                                                        code: p.patientCode,
+                                                        role: 'patient',
+                                                        username: p.patientCode,
+                                                      } as UserAccount);
+                                                    }
+                                                  }}
+                                                  className="p-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition cursor-pointer"
+                                                  title="ปฏิทินนัดหมาย (Interactive Calendar)"
+                                                >
+                                                  <Calendar className="w-3 h-3 text-emerald-600" />
+                                                </button>
+                                                <button
+                                                  onClick={() => {
                                                     setSelectedPlanForEdit(p);
                                                     setIsTreatmentPlanModalOpen(true);
                                                   }}
@@ -3641,6 +3641,27 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                         <Play className="w-3.5 h-3.5 fill-white" />
                                       </button>
                                     )}
+
+                                    {/* Interactive Patient Calendar */}
+                                    <button
+                                      onClick={() => {
+                                        if (patientUser) {
+                                          setCalendarPatientModal(patientUser);
+                                        } else {
+                                          setCalendarPatientModal({
+                                            id: plan.patientId,
+                                            name: plan.patientName,
+                                            code: plan.patientCode,
+                                            role: 'patient',
+                                            username: plan.patientCode,
+                                          } as UserAccount);
+                                        }
+                                      }}
+                                      className="p-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition cursor-pointer"
+                                      title="เปิดปฏิทินนัดหมายคนไข้ (Interactive Patient Calendar)"
+                                    >
+                                      <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                                    </button>
 
                                     {/* Edit */}
                                     <button
@@ -3950,11 +3971,17 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         </div>
                       </div>
 
-                      {/* Edit Button with Permission check */}
-                      <div className="pt-2 border-t border-emerald-50 flex items-center justify-between">
-                        <span className="text-[11px] text-slate-400">
-                          {canEdit ? 'สิทธิ์: สามารถแก้ไขได้' : 'แก้ไขได้เฉพาะบัญชีของตนเอง'}
-                        </span>
+                      {/* Action Buttons: Assigned Patients & Edit Details */}
+                      <div className="pt-2 border-t border-emerald-50 flex items-center justify-between flex-wrap gap-2">
+                        <button
+                          onClick={() => setPtAssignedModalTherapist(therapist)}
+                          className="px-3.5 py-1.5 rounded-full border border-cyan-300 bg-cyan-50/80 hover:bg-cyan-100 text-cyan-800 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                          title="ดูและจัดการเคสคนไข้ที่รับผิดชอบ พร้อมโอนย้ายเคส (Modal B)"
+                        >
+                          <Users className="w-3.5 h-3.5 text-cyan-600" />
+                          <span>Assigned Patients ({therapist.activePatientsCount || therapist.assignedCases?.length || 0})</span>
+                        </button>
+
                         <button
                           onClick={() => {
                             if (canEdit) {
@@ -3963,15 +3990,15 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                               showToast('คุณสามารถแก้ไขได้เฉพาะข้อมูลของตนเอง');
                             }
                           }}
-                          className={`px-4 py-2 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                          className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                             canEdit
                               ? 'bg-[#10B981] text-white hover:bg-emerald-600 shadow-sm'
                               : 'bg-slate-100 text-slate-500 hover:bg-slate-200 border border-slate-200'
                           }`}
-                          title={canEdit ? 'แก้ไขข้อมูลนักกายภาพ' : 'คุณสามารถแก้ไขได้เฉพาะข้อมูลของตนเอง'}
+                          title={canEdit ? 'แก้ไขข้อมูลนักกายภาพ (Modal A)' : 'คุณสามารถแก้ไขได้เฉพาะข้อมูลของตนเอง'}
                         >
                           {canEdit ? <Pencil className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-                          <span>แก้ไขข้อมูล</span>
+                          <span>Edit Details</span>
                         </button>
                       </div>
                     </div>
@@ -4184,6 +4211,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                             <div>
                               <div className="font-extrabold text-base text-[#0F2F2B]">{exercise.name}</div>
                               <div className="text-xs text-slate-400 font-medium">{exercise.englishName}</div>
+                              <div className="flex flex-wrap items-center gap-2 mt-1.5 text-[11px] text-slate-600 font-semibold">
+                                <span className="bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">
+                                  Default: <strong>{exercise.defaultSets || exercise.sets || 3} Sets × {exercise.defaultReps || exercise.repsPerSet || 10} Reps</strong>
+                                </span>
+                                <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200">
+                                  {exercise.createdBy || 'ผู้อำนวยการ นพ.วรชัย'}
+                                </span>
+                              </div>
                             </div>
 
                             <div className="text-xs text-slate-600 bg-emerald-50/50 p-3 rounded-2xl border border-emerald-100 space-y-1">
@@ -4455,11 +4490,13 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
                       <tr className="border-b border-emerald-100 text-slate-600 text-[11px] font-bold uppercase tracking-wider bg-emerald-50/70">
-                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap">วัน-เวลา</th>
-                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap">ผู้ดำเนินการ</th>
-                        <th className="py-2.5 px-3 sm:px-4 min-w-[200px]">การกระทำ & รายละเอียด</th>
-                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap">อุปกรณ์ & IP Address</th>
-                        <th className="py-2.5 px-3 sm:px-4 text-right whitespace-nowrap">สิทธิ์แอดมินจัดการ</th>
+                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap">Timestamp</th>
+                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap">User / Role / ID</th>
+                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap">IP Address</th>
+                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap">Device / OS Type</th>
+                        <th className="py-2.5 px-3 sm:px-4 min-w-[190px]">Action Performed</th>
+                        <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap">Security Status</th>
+                        <th className="py-2.5 px-3 sm:px-4 text-right whitespace-nowrap">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-emerald-50">
@@ -4467,12 +4504,22 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         const isKicked = kickedLogIds.includes(log.id);
                         const isDeviceBanned = Boolean(log.device && bannedDevices.includes(log.device));
                         const isIpBanned = Boolean(log.ipAddress && bannedIps.includes(log.ipAddress));
+                        const isSuspicious =
+                          log.securityStatus === 'suspicious' ||
+                          log.status === 'warning' ||
+                          log.status === 'error';
+                        const isKiosk =
+                          Boolean(log.device && log.device.toLowerCase().includes('kiosk')) ||
+                          Boolean(log.action && log.action.toLowerCase().includes('kiosk'));
 
                         return (
                           <tr key={log.id} className="hover:bg-emerald-50/30 transition">
+                            {/* 1. Timestamp */}
                             <td className="py-2.5 px-3 sm:px-4 font-mono text-slate-500 whitespace-nowrap text-[11px]">
                               {log.timestamp}
                             </td>
+
+                            {/* 2. User / Role / ID */}
                             <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
                               <div className="font-bold text-[#0F2F2B] flex items-center gap-1.5">
                                 <span>{log.userName}</span>
@@ -4482,10 +4529,54 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                   </span>
                                 )}
                               </div>
-                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold">
-                                {log.role}
-                              </span>
+                              <div className="flex items-center gap-1 mt-0.5">
+                                <span className="text-[10px] px-2 py-0.2 rounded-full bg-emerald-100 text-emerald-800 font-bold">
+                                  {log.role}
+                                </span>
+                                <span className="text-[10px] px-1.5 py-0.2 rounded font-mono font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                  {log.userCode || defaultDash((log as any).userId)}
+                                </span>
+                              </div>
                             </td>
+
+                            {/* 3. IP Address */}
+                            <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
+                              <div className="flex items-center gap-1.5 text-slate-700 font-mono text-[11px]">
+                                <Globe className="w-3.5 h-3.5 text-slate-400" />
+                                <span>{log.ipAddress || '192.168.1.100'}</span>
+                              </div>
+                              {isIpBanned && (
+                                <span className="text-rose-600 font-bold bg-rose-50 px-1.5 py-0.2 rounded text-[9px] border border-rose-200 mt-0.5 inline-block">
+                                  [Banned IP]
+                                </span>
+                              )}
+                            </td>
+
+                            {/* 4. Device / OS Type (Desktop / Kiosk) */}
+                            <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
+                              <div className="flex items-center gap-1.5 text-slate-700">
+                                <Laptop className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="font-medium text-[11px] truncate max-w-[140px]">{log.device || 'Windows 11 / Chrome'}</span>
+                              </div>
+                              <div className="flex items-center gap-1 mt-0.5">
+                                <span
+                                  className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${
+                                    isKiosk
+                                      ? 'bg-cyan-100 text-cyan-800 border border-cyan-200'
+                                      : 'bg-slate-100 text-slate-600 border border-slate-200'
+                                  }`}
+                                >
+                                  {isKiosk ? 'Kiosk' : 'Desktop'}
+                                </span>
+                                {isDeviceBanned && (
+                                  <span className="text-rose-600 font-bold bg-rose-50 px-1 py-0.2 rounded text-[9px] border border-rose-200">
+                                    [Banned]
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* 5. Action Performed */}
                             <td className="py-2.5 px-3 sm:px-4">
                               <div className="font-bold text-emerald-950 flex items-center gap-1.5">
                                 <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-100 text-slate-700">
@@ -4495,71 +4586,54 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                               </div>
                               <div className="text-slate-600 text-[11px] mt-0.5">{log.details}</div>
                             </td>
-                            <td className="py-3 px-5 whitespace-nowrap">
-                              <div className="flex items-center gap-1.5 text-slate-700">
-                                <Laptop className="w-3.5 h-3.5 text-slate-400" />
-                                <span className="font-medium text-[11px]">{log.device || 'Windows 11 / Chrome'}</span>
-                                {isDeviceBanned && (
-                                  <span className="text-rose-600 font-bold bg-rose-50 px-1.5 py-0.5 rounded text-[9px] border border-rose-200">
-                                    [แบนเครื่อง]
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-1.5 text-slate-500 font-mono text-[10px] mt-0.5">
-                                <Globe className="w-3.5 h-3.5 text-slate-400" />
-                                <span>{log.ipAddress || '192.168.1.100'}</span>
-                                {isIpBanned && (
-                                  <span className="text-rose-600 font-bold bg-rose-50 px-1.5 py-0.5 rounded text-[9px] border border-rose-200">
-                                    [แบน IP]
-                                  </span>
-                                )}
-                              </div>
+
+                            {/* 6. Security Status Badge (Normal / Suspicious) */}
+                            <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
+                              {isSuspicious ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 font-bold text-[10px]">
+                                  <AlertTriangle className="w-3 h-3 text-rose-600" />
+                                  <span>Suspicious</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-[10px]">
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                  <span>Normal</span>
+                                </span>
+                              )}
                             </td>
-                            <td className="py-3 px-5 text-right whitespace-nowrap">
+
+                            {/* 7. Security Control Actions */}
+                            <td className="py-2.5 px-3 sm:px-4 text-right whitespace-nowrap">
                               <div className="inline-flex items-center gap-1.5">
-                                {/* 1. Kick Session Button */}
+                                {/* Security Control Modal Button */}
+                                <button
+                                  onClick={() => setSecurityControlTarget(log)}
+                                  className="px-2.5 py-1 rounded-lg border border-cyan-300 bg-cyan-50/80 hover:bg-cyan-100 text-cyan-800 font-bold text-[10px] transition cursor-pointer flex items-center gap-1 shadow-2xs"
+                                  title="เปิดแผงควบคุมความปลอดภัยขั้นสูง (Force Logout & Ban/Unban IP/Device)"
+                                >
+                                  <Shield className="w-3 h-3 text-cyan-600" />
+                                  <span>Control</span>
+                                </button>
+
+                                {/* Quick Kick Button */}
                                 {isKicked ? (
                                   <button
                                     disabled
-                                    className="px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-100 text-slate-400 font-bold text-[10px] cursor-not-allowed"
+                                    className="px-2 py-1 rounded-lg border border-slate-200 bg-slate-100 text-slate-400 font-bold text-[10px] cursor-not-allowed"
                                   >
-                                    ถูกเตะออก
+                                    เตะออกแล้ว
                                   </button>
                                 ) : (
                                   <button
                                     onClick={() => setConfirmKickLog(log)}
-                                    title="เตะผู้ใช้ออกจากระบบ"
-                                    className="px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 font-bold text-[10px] hover:bg-amber-100 transition cursor-pointer"
+                                    title="เตะผู้ใช้ออกจากระบบทันที"
+                                    className="px-2 py-1 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 font-bold text-[10px] hover:bg-amber-100 transition cursor-pointer"
                                   >
                                     เตะออก
                                   </button>
                                 )}
 
-                                {/* 2. Ban Device Button */}
-                                {isDeviceBanned ? (
-                                  <button
-                                    onClick={() => {
-                                      if (log.device) {
-                                        unbanDevice(log.device);
-                                        showToast('ยกเลิกแบนเครื่องเรียบร้อยแล้ว');
-                                      }
-                                    }}
-                                    title="ยกเลิกแบนคอมพิวเตอร์ / เบราว์เซอร์เครื่องนี้"
-                                    className="px-2.5 py-1 rounded-lg border border-slate-300 bg-slate-100 text-slate-600 font-bold text-[10px] hover:bg-slate-200 transition cursor-pointer"
-                                  >
-                                    ยกเลิกแบน
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={() => setConfirmBanDevice(log.device || 'Windows 11 / Chrome 124')}
-                                    title="แบนคอมพิวเตอร์ / เบราว์เซอร์เครื่องนี้"
-                                    className="px-2.5 py-1 rounded-lg border border-rose-300 bg-rose-50 text-rose-700 font-bold text-[10px] hover:bg-rose-100 transition cursor-pointer"
-                                  >
-                                    แบนเครื่อง
-                                  </button>
-                                )}
-
-                                {/* 3. Ban IP Button */}
+                                {/* Quick Ban IP Button */}
                                 {isIpBanned ? (
                                   <button
                                     onClick={() => {
@@ -4569,15 +4643,15 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                       }
                                     }}
                                     title="ยกเลิกแบนที่อยู่ IP นี้"
-                                    className="px-2.5 py-1 rounded-lg border border-slate-300 bg-slate-100 text-slate-600 font-bold text-[10px] hover:bg-slate-200 transition cursor-pointer"
+                                    className="px-2 py-1 rounded-lg border border-slate-300 bg-slate-100 text-slate-600 font-bold text-[10px] hover:bg-slate-200 transition cursor-pointer"
                                   >
-                                    ยกเลิกแบน
+                                    ปลด IP
                                   </button>
                                 ) : (
                                   <button
                                     onClick={() => setConfirmBanIp(log.ipAddress || '192.168.1.100')}
                                     title="แบน IP Address นี้"
-                                    className="px-2.5 py-1 rounded-lg border border-slate-300 bg-slate-50 text-slate-700 font-bold text-[10px] hover:bg-slate-200 transition cursor-pointer"
+                                    className="px-2 py-1 rounded-lg border border-rose-300 bg-rose-50 text-rose-700 font-bold text-[10px] hover:bg-rose-100 transition cursor-pointer"
                                   >
                                     แบน IP
                                   </button>
@@ -5483,6 +5557,122 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         isOpen={Boolean(enrollingFacePatient)}
         onClose={() => setEnrollingFacePatient(null)}
         patient={enrollingFacePatient}
+        onSuccessToast={showToast}
+      />
+
+      {/* ==================================================================== */}
+      {/* 23. MODULE 1 MODAL C: BIOMETRIC RESET MODAL                          */}
+      {/* ==================================================================== */}
+      <BiometricResetModal
+        isOpen={Boolean(biometricResetUser)}
+        onClose={() => setBiometricResetUser(null)}
+        user={biometricResetUser}
+        onLaunchScanner={(u: UserAccount) => {
+          setBiometricResetUser(null);
+          setEnrollingFacePatient(u);
+        }}
+        onSuccessToast={showToast}
+      />
+
+      {/* ==================================================================== */}
+      {/* 24. MODULE 3 MODAL A: INTERACTIVE PATIENT CALENDAR MODAL             */}
+      {/* ==================================================================== */}
+      <PatientCalendarModal
+        isOpen={Boolean(calendarPatientModal)}
+        onClose={() => setCalendarPatientModal(null)}
+        patient={calendarPatientModal}
+        exercises={exercises}
+        onOpenRoutineAssignment={(pat, dateStr) => {
+          setDailyRoutineDate({ isOpen: true, patient: pat, date: dateStr });
+        }}
+        onSuccessToast={showToast}
+      />
+
+      {/* ==================================================================== */}
+      {/* 25. MODULE 3 MODAL B: DAILY ROUTINE ASSIGNMENT MODAL                 */}
+      {/* ==================================================================== */}
+      <DailyRoutineAssignmentModal
+        isOpen={dailyRoutineDate.isOpen}
+        onClose={() => setDailyRoutineDate({ isOpen: false, patient: null, date: '' })}
+        patient={dailyRoutineDate.patient}
+        dateStr={dailyRoutineDate.date}
+        exercises={exercises}
+        existingPlan={
+          dailyRoutineDate.patient
+            ? treatmentPlans.find(
+                (p) =>
+                  String(p.patientId) === String(dailyRoutineDate.patient?.id) ||
+                  p.patientCode === dailyRoutineDate.patient?.code
+              ) || null
+            : null
+        }
+        onSaveRoutine={(assignedEx, clinicalNotes) => {
+          if (!dailyRoutineDate.patient) return;
+          const currentPlan = treatmentPlans.find(
+            (p) =>
+              String(p.patientId) === String(dailyRoutineDate.patient?.id) ||
+              p.patientCode === dailyRoutineDate.patient?.code
+          );
+          if (currentPlan) {
+            const { id, createdAt, ...restPlan } = currentPlan;
+            saveTreatmentPlan({
+              ...restPlan,
+              id,
+              assignedExercises: assignedEx,
+              clinicalNotes,
+            });
+          } else {
+            saveTreatmentPlan({
+              id: `plan_${Date.now()}`,
+              patientId: dailyRoutineDate.patient.id,
+              patientName: dailyRoutineDate.patient.name,
+              patientCode: dailyRoutineDate.patient.code,
+              therapistId: currentUserId,
+              therapistName: currentUser?.name || 'นักกายภาพบำบัด',
+              diagnosis: dailyRoutineDate.patient.diagnosis || 'ฟื้นฟูกายภาพบำบัดตามอาการ',
+              targetJoint: 'ข้อต่อและกล้ามเนื้อตามหลักกายภาพ',
+              assignedExercises: assignedEx,
+              clinicalNotes,
+              status: 'active',
+              scheduleDays: ['จันทร์', 'พุธ', 'ศุกร์'],
+              timeSlot: '09:30 - 10:30',
+              startTime: '09:30',
+              endTime: '10:30',
+              startDate: '2026-10-01',
+              endDate: '2026-10-31',
+              roomStation: 'ตู้ Kiosk 1',
+              includeMinigame: true,
+            });
+          }
+          setDailyRoutineDate({ isOpen: false, patient: null, date: '' });
+          showToast(`บันทึกและซิงค์โปรแกรมกายภาพของ ${dailyRoutineDate.patient.name} ไปยังตู้ Kiosk สำเร็จ!`);
+        }}
+        onSuccessToast={showToast}
+      />
+
+      {/* ==================================================================== */}
+      {/* 26. MODULE 4 MODAL B: PT ASSIGNED PATIENTS CASE MANAGEMENT           */}
+      {/* ==================================================================== */}
+      <PtAssignedPatientsModal
+        isOpen={Boolean(ptAssignedModalTherapist)}
+        onClose={() => setPtAssignedModalTherapist(null)}
+        therapist={ptAssignedModalTherapist}
+        allTherapists={therapists}
+        onOpenPatientProfile={(pat) => {
+          setPatientDetailModal(pat);
+        }}
+        onSuccessToast={showToast}
+      />
+
+      {/* ==================================================================== */}
+      {/* 27. MODULE 6: SECURITY CONTROL MODAL                                 */}
+      {/* ==================================================================== */}
+      <SecurityControlModal
+        isOpen={Boolean(securityControlTarget)}
+        onClose={() => setSecurityControlTarget(null)}
+        targetIp={securityControlTarget?.ipAddress}
+        targetDevice={securityControlTarget?.device}
+        targetUserCode={securityControlTarget?.userCode || (securityControlTarget as any)?.user}
         onSuccessToast={showToast}
       />
     </div>

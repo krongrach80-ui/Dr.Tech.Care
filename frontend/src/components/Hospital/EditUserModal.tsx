@@ -13,8 +13,15 @@ import {
   AlertCircle,
   Check,
   Award,
+  Lock,
+  KeyRound,
+  Eye,
+  EyeOff,
+  RefreshCw,
+  Power,
 } from 'lucide-react';
-import { UserAccount, UserRole, PhysicalTherapist } from '../../types/hospital';
+import { UserAccount, UserRole, PhysicalTherapist, UserStatus } from '../../types/hospital';
+import { generateSecureTemporaryPassword, validatePasswordStrength } from '../../services/authSecurityService';
 
 interface EditUserModalProps {
   isOpen: boolean;
@@ -49,6 +56,12 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
   const [name, setName] = useState<string>('');
   const [username, setUsername] = useState<string>('');
   const [role, setRole] = useState<UserRole>('patient');
+  const [status, setStatus] = useState<UserStatus>('active');
+
+  // Password Reset Feature
+  const [isResetPassword, setIsResetPassword] = useState<boolean>(false);
+  const [newPassword, setNewPassword] = useState<string>('');
+  const [showNewPassword, setShowNewPassword] = useState<boolean>(false);
 
   // Section 2: Contact
   const [phone, setPhone] = useState<string>('');
@@ -72,6 +85,7 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
   const [errors, setErrors] = useState<{
     name?: string;
     username?: string;
+    password?: string;
     phone?: string;
     email?: string;
   }>({});
@@ -91,6 +105,10 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
       setName(user.name || '');
       setUsername(user.username || '');
       setRole(user.role);
+      setStatus(user.status === 'disabled' ? 'disabled' : 'active');
+      setIsResetPassword(false);
+      setNewPassword('');
+      setShowNewPassword(false);
       setPhone(user.phone || '');
       setEmail(user.email || '');
 
@@ -190,6 +208,18 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
       }
     }
 
+    // 5. Password Reset validation if enabled
+    if (isResetPassword) {
+      if (!newPassword) {
+        newErrors.password = 'กรุณากรอกรหัสผ่านใหม่ที่ต้องการรีเซ็ต';
+      } else {
+        const strength = validatePasswordStrength(newPassword);
+        if (!strength.isValid) {
+          newErrors.password = strength.message || 'รหัสผ่านต้องมีความยาวอย่างน้อย 8 ตัวอักษร';
+        }
+      }
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -209,6 +239,7 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
       name: name.trim(),
       username: username.trim().toLowerCase(),
       role: assignedRole,
+      status: status,
       phone: phone.trim() || undefined,
       email: email.trim() || undefined,
       age: assignedRole === 'patient' ? Number(age) || 60 : undefined,
@@ -226,6 +257,11 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
         assignedRole === 'patient'
           ? chiefComplaint.trim() || user.chiefComplaint || 'ปวดตึงข้อต่อเรื้อรัง'
           : undefined,
+      ...(isResetPassword && newPassword.trim() ? {
+        password: newPassword.trim(),
+        password_hash: `sha256_${newPassword.trim().slice(0, 4)}***`,
+        must_change_password: true,
+      } : {}),
     };
 
     let therapistExtra: Partial<PhysicalTherapist> | undefined = undefined;
@@ -241,7 +277,11 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
     }
 
     onSubmitUser(user.id, updatedUserData, therapistExtra);
-    onSuccessToast(`บันทึกการแก้ไขบัญชีของ ${name.trim()} สำเร็จ`);
+    onSuccessToast(
+      isResetPassword
+        ? `บันทึกการแก้ไขและรีเซ็ตรหัสผ่านของ ${name.trim()} สำเร็จ`
+        : `บันทึกการแก้ไขบัญชีของ ${name.trim()} สำเร็จ`
+    );
     setIsSubmitting(false);
     onClose();
   };
@@ -312,31 +352,44 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
               </label>
 
               {currentRole === 'admin' ? (
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-3 gap-2">
                   <button
                     type="button"
                     onClick={() => setRole('patient')}
-                    className={`py-2.5 px-4 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 border transition cursor-pointer ${
+                    className={`py-2 px-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-1.5 border transition cursor-pointer ${
                       role === 'patient'
                         ? 'bg-[#10B981] text-white border-emerald-600 shadow-sm'
                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                     }`}
                   >
-                    <User className="w-4 h-4" />
+                    <User className="w-3.5 h-3.5" />
                     <span>คนไข้ (Patient)</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setRole('therapist')}
-                    className={`py-2.5 px-4 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 border transition cursor-pointer ${
+                    className={`py-2 px-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-1.5 border transition cursor-pointer ${
                       role === 'therapist'
                         ? 'bg-[#0F2F2B] text-emerald-300 border-emerald-950 shadow-sm'
                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                     }`}
                   >
-                    <Stethoscope className="w-4 h-4" />
-                    <span>นักกายภาพ (Physiotherapist)</span>
+                    <Stethoscope className="w-3.5 h-3.5" />
+                    <span>นักกายภาพ</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setRole('admin')}
+                    className={`py-2 px-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-1.5 border transition cursor-pointer ${
+                      role === 'admin'
+                        ? 'bg-purple-600 text-white border-purple-700 shadow-sm'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Shield className="w-3.5 h-3.5" />
+                    <span>Super Admin</span>
                   </button>
                 </div>
               ) : (
@@ -348,6 +401,106 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
                   <span className="text-[11px] font-medium text-emerald-800 bg-white/80 px-2.5 py-0.5 rounded-full border border-emerald-200">
                     นักกายภาพไม่สามารถเปลี่ยนบทบาทได้
                   </span>
+                </div>
+              )}
+            </div>
+
+            {/* Account Status Toggle (Active / Disabled) */}
+            <div className="flex items-center justify-between p-3 rounded-2xl bg-white border border-slate-200">
+              <div>
+                <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                  <Power className={`w-4 h-4 ${status === 'active' ? 'text-emerald-600' : 'text-rose-500'}`} />
+                  <span>สถานะบัญชีผู้ใช้งาน (Account Status):</span>
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  {status === 'active' ? '✓ เปิดใช้งานปกติ (Active)' : '✗ ระงับการใช้งานชั่วคราว (Disabled)'}
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setStatus('active')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                    status === 'active'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  Active
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatus('disabled')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                    status === 'disabled'
+                      ? 'bg-rose-600 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  Disabled
+                </button>
+              </div>
+            </div>
+
+            {/* Password Reset Section */}
+            <div className="p-3.5 bg-amber-50/70 rounded-2xl border border-amber-200 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="font-bold text-xs text-amber-950 flex items-center gap-1.5">
+                  <KeyRound className="w-4 h-4 text-amber-600" />
+                  <span>รีเซ็ตรหัสผ่าน (Password Reset)</span>
+                </div>
+                <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold text-amber-900 bg-white px-2.5 py-1 rounded-full border border-amber-200">
+                  <input
+                    type="checkbox"
+                    checked={isResetPassword}
+                    onChange={(e) => {
+                      setIsResetPassword(e.target.checked);
+                      if (e.target.checked && !newPassword) {
+                        setNewPassword(generateSecureTemporaryPassword());
+                      }
+                    }}
+                    className="rounded text-amber-600"
+                  />
+                  <span>ต้องการตั้งรหัสใหม่</span>
+                </label>
+              </div>
+
+              {isResetPassword && (
+                <div className="space-y-2 pt-1 animate-fadeIn">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-slate-700">รหัสผ่านใหม่ / รหัสชั่วคราว:</label>
+                    <button
+                      type="button"
+                      onClick={() => setNewPassword(generateSecureTemporaryPassword())}
+                      className="text-[11px] text-amber-700 font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>สุ่มรหัสผ่านปลอดภัย</span>
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type={showNewPassword ? 'text' : 'password'}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="กรอกรหัสผ่านใหม่อย่างน้อย 8 ตัวอักษร"
+                      className="w-full pl-9 pr-9 py-2 rounded-xl bg-white border border-amber-300 font-mono text-xs font-bold text-slate-800 outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPassword(!showNewPassword)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {errors.password && (
+                    <p className="text-[11px] text-rose-600 font-bold flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      <span>{errors.password}</span>
+                    </p>
+                  )}
                 </div>
               )}
             </div>

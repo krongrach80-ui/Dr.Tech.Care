@@ -24,10 +24,12 @@ interface EditExerciseModalProps {
 }
 
 const CATEGORIES = [
-  'ฟื้นฟูข้อไหล่และแขน',
-  'ฟื้นฟูข้อเข่าและขา',
-  'ฟื้นฟูข้อสะโพกและหลัง',
-  'ฟื้นฟูข้อเท้าและขา',
+  'ข้อไหล่ (Shoulder)',
+  'คอ (Neck)',
+  'หลังและสะโพก (Back & Hip)',
+  'แขนและมือ (Arm & Hand)',
+  'ขาและข้อเข่า (Leg & Knee)',
+  'มินิเกม (Minigame)',
 ] as const;
 
 export const EditExerciseModal: React.FC<EditExerciseModalProps> = ({
@@ -41,7 +43,9 @@ export const EditExerciseModal: React.FC<EditExerciseModalProps> = ({
   const [name, setName] = useState<string>('');
   const [englishName, setEnglishName] = useState<string>('');
   const [category, setCategory] = useState<string>(CATEGORIES[0]);
+  const [type, setType] = useState<'single' | 'preset'>('single');
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
+  const [createdBy, setCreatedBy] = useState<string>('ผู้อำนวยการ นพ.วรชัย');
 
   // Section 2: Kinematics & Training Targets
   const [targetAngle, setTargetAngle] = useState<number | string>(90);
@@ -50,6 +54,8 @@ export const EditExerciseModal: React.FC<EditExerciseModalProps> = ({
   const [sets, setSets] = useState<number | string>(3);
   const [targetJoint, setTargetJoint] = useState<string>('');
   const [description, setDescription] = useState<string>('');
+  const [instructions, setInstructions] = useState<string>('');
+  const [benefits, setBenefits] = useState<string>('');
 
   // Section 3: Safety & Cautions
   const [cautions, setCautions] = useState<string>('');
@@ -71,13 +77,21 @@ export const EditExerciseModal: React.FC<EditExerciseModalProps> = ({
       setName(exercise.name || '');
       setEnglishName(exercise.englishName || '');
       setCategory(exercise.category || CATEGORIES[0]);
+      setType((exercise.type as 'single' | 'preset') || 'single');
       setDifficulty(exercise.difficulty || 'medium');
+      setCreatedBy(exercise.createdBy || 'ผู้อำนวยการ นพ.วรชัย');
       setTargetAngle(exercise.targetAngle ?? 90);
       setHoldSeconds(exercise.holdSeconds ?? 3);
-      setRepsPerSet(exercise.repsPerSet ?? 10);
-      setSets(exercise.sets ?? 3);
+      setRepsPerSet(exercise.repsPerSet ?? exercise.defaultReps ?? 10);
+      setSets(exercise.sets ?? exercise.defaultSets ?? 3);
       setTargetJoint(exercise.targetJoint || '');
       setDescription(exercise.description || '');
+      setInstructions(
+        Array.isArray(exercise.instructions)
+          ? exercise.instructions.join('\n')
+          : (exercise.instructions || exercise.description || '')
+      );
+      setBenefits(exercise.benefits || 'เพิ่มช่วงการเคลื่อนไหว ลดพังผืดข้อต่อ');
       setCautions(exercise.cautions || '');
       setContraindications(exercise.contraindications || '');
       setErrors({});
@@ -123,6 +137,10 @@ export const EditExerciseModal: React.FC<EditExerciseModalProps> = ({
       name: name.trim(),
       englishName: englishName.trim(),
       category: category.trim(),
+      type,
+      defaultReps: repsNum,
+      defaultSets: setsNum,
+      createdBy: createdBy.trim() || 'ผู้อำนวยการ นพ.วรชัย',
       difficulty,
       targetJoint: targetJoint.trim() || 'ข้อต่อและกล้ามเนื้อตามหลักกายภาพ',
       targetAngle: angleNum,
@@ -132,6 +150,8 @@ export const EditExerciseModal: React.FC<EditExerciseModalProps> = ({
       description:
         description.trim() ||
         'ฝึกเคลื่อนไหวอย่างช้าๆ ควบคุมแนวระนาบของร่างกายและหายใจเข้าออกสม่ำเสมอ',
+      instructions: instructions.trim() || description.trim(),
+      benefits: benefits.trim() || 'เพิ่มช่วงการเคลื่อนไหว ลดพังผืดข้อต่อ',
       cautions: cautions.trim() || 'หยุดทันทีหากรู้สึกเจ็บแปลบ ชา หรือเวียนศีรษะ',
       contraindications: contraindications.trim() || undefined,
     };
@@ -242,6 +262,54 @@ export const EditExerciseModal: React.FC<EditExerciseModalProps> = ({
                 {errors.englishName && (
                   <p className="text-[11px] text-rose-500 mt-1 font-medium">{errors.englishName}</p>
                 )}
+              </div>
+            </div>
+
+            {/* Type Radio & Created By */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">
+                  ประเภทรูปแบบ (Type) <span className="text-rose-500">*</span>
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className={`flex items-center gap-2 p-2 rounded-xl border cursor-pointer font-bold transition ${
+                    type === 'single' ? 'bg-emerald-50 border-emerald-400 text-emerald-900' : 'bg-white border-stone-200 text-slate-600'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="editExerciseType"
+                      checked={type === 'single'}
+                      onChange={() => setType('single')}
+                      className="accent-emerald-600"
+                    />
+                    <span>Single</span>
+                  </label>
+                  <label className={`flex items-center gap-2 p-2 rounded-xl border cursor-pointer font-bold transition ${
+                    type === 'preset' ? 'bg-emerald-50 border-emerald-400 text-emerald-900' : 'bg-white border-stone-200 text-slate-600'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="editExerciseType"
+                      checked={type === 'preset'}
+                      onChange={() => setType('preset')}
+                      className="accent-emerald-600"
+                    />
+                    <span>Preset</span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">
+                  ผู้สร้างท่าทาง (Created By)
+                </label>
+                <input
+                  type="text"
+                  value={createdBy}
+                  onChange={(e) => setCreatedBy(e.target.value)}
+                  placeholder="เช่น ผู้อำนวยการ นพ.วรชัย"
+                  className="w-full px-3.5 py-2.5 rounded-2xl border border-stone-200 bg-white text-xs text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-[#10B981]"
+                />
               </div>
             </div>
 

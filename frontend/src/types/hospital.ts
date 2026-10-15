@@ -3,7 +3,16 @@
  */
 
 export type UserRole = 'admin' | 'therapist' | 'patient';
-export type UserStatus = 'active' | 'suspended' | 'pending_info';
+export type UserStatus = 'active' | 'suspended' | 'pending_info' | 'disabled';
+
+export interface MedicalNoteItem {
+  id: string | number;
+  date: string;
+  author: string;
+  text?: string;
+  note?: string;
+  role?: UserRole;
+}
 
 export interface UserAccount {
   id: number | string;
@@ -20,8 +29,14 @@ export interface UserAccount {
   age?: number;
   gender?: 'male' | 'female' | 'other';
   diagnosis?: string;
-  chiefComplaint?: string;       // ประวัติการซักประวัติ
+  chiefComplaint?: string;       // ประวัติการซักประวัติ / อาการเริ่มต้น
   patientBackground?: string;    // ประวัติคนไข้ตามปกติ / โรคประจำตัว
+  underlyingDiseases?: string;   // โรคประจำตัว (default "-")
+  drugAllergies?: string;        // แพ้ยา/สารอาหาร (default "-")
+  admissionDate?: string;        // วันที่เริ่มรับการรักษา (Admission Date)
+  treatmentStatus?: 'active' | 'discharged' | 'on_hold'; // สถานะการรักษา
+  progressPercent?: number;      // ความก้าวหน้าการฟื้นฟู (%)
+  medicalNotesHistory?: MedicalNoteItem[]; // ประวัติโน้ตทางการแพทย์
   treatmentOutcome?: string;     // ผลการรักษา
   therapistNotes?: string;       // โน้ต/ข้อความคำแนะนำจากนักกายภาพ
   created_at: string;
@@ -33,6 +48,7 @@ export interface UserAccount {
   face_vector?: number[] | string; // 128-D embedding vector for patient biometric authentication
   face_image_url?: string;       // Path or Data URL pointing to the patient's registered facial photo
   faceRegisteredAt?: string;     // Timestamp when face was enrolled at kiosk
+  faceStatus?: 'registered' | 'pending'; // Face ID Status
 }
 
 export interface PhysicalTherapist {
@@ -69,6 +85,14 @@ export interface HospitalExercise {
   contraindications?: string;
   imageUrl?: string;
   demoImageUrl?: string;
+  type?: 'single' | 'preset';
+  defaultReps?: number;
+  defaultSets?: number;
+  createdBy?: string;
+  benefits?: string;
+  instructions?: string | string[];
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video';
 }
 
 export interface PrescribedExercise {
@@ -109,6 +133,7 @@ export interface TreatmentPlan {
   status: 'active' | 'completed' | 'paused';
   // Timetable Scheduling (ตารางจัดเวลาเหมือนตารางเรียน)
   scheduleDays?: string[];  // วันที่ลงฝึก เช่น ['จันทร์', 'พุธ', 'ศุกร์']
+  scheduledDates?: (string | { date: string; status: 'scheduled' | 'completed' | 'missed_rescheduled' })[];
   timeSlot?: string;        // ช่วงเวลา เช่น '09:30 - 10:30'
   startTime?: string;       // เวลาเริ่มต้น เช่น '09:30'
   endTime?: string;         // เวลาสิ้นสุด เช่น '10:30'
@@ -128,10 +153,13 @@ export interface ActivityLog {
   action: string;
   category: 'AUTH' | 'PATIENT' | 'THERAPIST' | 'TREATMENT' | 'SYSTEM' | 'AI';
   details: string;
+  status?: string;
   device?: string;       // อุปกรณ์/เบราว์เซอร์
   ipAddress?: string;    // IP Address
   isBannedDevice?: boolean;
   isBannedIp?: boolean;
+  securityStatus?: 'normal' | 'suspicious' | 'warning';
+  userCode?: string;
 }
 
 export interface PatientSymptomReport {

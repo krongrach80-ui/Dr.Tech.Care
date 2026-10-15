@@ -82,6 +82,9 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
   const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
   const [role, setRole] = useState<UserRole>(currentRole === 'therapist' ? 'patient' : 'patient');
 
+  // Unique ID / HN / Staff ID (Auto-generated or custom)
+  const [customCode, setCustomCode] = useState<string>('');
+
   // Section 2: Contact
   const [phone, setPhone] = useState<string>('');
   const [email, setEmail] = useState<string>('');
@@ -94,18 +97,22 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
     new Date().toISOString().split('T')[0]
   );
   const [chiefComplaint, setChiefComplaint] = useState<string>('');
+  const [underlyingDiseases, setUnderlyingDiseases] = useState<string>('-');
+  const [drugAllergies, setDrugAllergies] = useState<string>('-');
 
   // Section 3 (Therapist specific)
   const [specialty, setSpecialty] = useState<string>(
-    'กายภาพบำบัดระบบกระดูกและกล้ามเนื้อ (Orthopedic PT)'
+    'Musculoskeletal (ระบบกระดูกและกล้ามเนื้อ)'
   );
   const [licenseNumber, setLicenseNumber] = useState<string>('กภ. 8920');
   const [bio, setBio] = useState<string>('');
+  const [initialAssignedPatientIds, setInitialAssignedPatientIds] = useState<(string | number)[]>([]);
 
   // Validation Errors
   const [errors, setErrors] = useState<{
     name?: string;
     username?: string;
+    customCode?: string;
     password?: string;
     confirmPassword?: string;
     phone?: string;
@@ -171,6 +178,19 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
     };
   }, []);
 
+  // Helper to generate unique ID / Staff ID / HN
+  const generateUniqueCode = (targetRole: UserRole): string => {
+    const prefix = targetRole === 'patient' ? 'P' : targetRole === 'therapist' ? 'T' : 'SA';
+    for (let i = 0; i < 30; i++) {
+      const num = Math.floor(1000 + Math.random() * 9000);
+      const codeCandidate = `${prefix}-${num}`;
+      if (!existingUsers.some((u) => u.code.toUpperCase() === codeCandidate.toUpperCase())) {
+        return codeCandidate;
+      }
+    }
+    return `${prefix}-${Date.now().toString().slice(-4)}`;
+  };
+
   // Initialize or reset when modal opens
   useEffect(() => {
     if (isOpen) {
@@ -187,7 +207,11 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
       setAge(65);
       setGender('male');
       setChiefComplaint('');
+      setUnderlyingDiseases('-');
+      setDrugAllergies('-');
+      setInitialAssignedPatientIds([]);
       setBio('');
+      setSpecialty('Musculoskeletal (ระบบกระดูกและกล้ามเนื้อ)');
       setLicenseNumber(`กภ. ${Math.floor(1000 + Math.random() * 9000)}`);
       setAdmissionDate(new Date().toISOString().split('T')[0]);
       setErrors({});
@@ -197,11 +221,13 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
       setCreatedSummary(null);
       setCameraError(null);
 
+      const targetRole: UserRole = currentRole === 'therapist' ? 'patient' : 'patient';
+      setRole(targetRole);
+      setCustomCode(generateUniqueCode(targetRole));
+
       if (currentRole === 'therapist') {
-        setRole('patient');
         setAssignedTherapistId(currentUserId);
       } else {
-        setRole('patient');
         if (therapists.length > 0) {
           setAssignedTherapistId(therapists[0].id);
         }
@@ -483,15 +509,14 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
   ) => {
     const targetTherapist = therapists.find((t) => t.id === Number(assignedTherapistId)) || therapists[0];
     const assignedRole: UserRole = currentRole === 'therapist' ? 'patient' : role;
-    const prefix = assignedRole === 'patient' ? 'P' : assignedRole === 'therapist' ? 'T' : 'ADM';
-    const randCode = `${prefix}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const finalCode = customCode.trim().toUpperCase() || generateUniqueCode(assignedRole);
 
     const newUserData: Omit<UserAccount, 'id' | 'created_at'> = {
       username: username.trim().toLowerCase(),
       name: name.trim(),
       role: assignedRole,
       status: 'active',
-      code: randCode,
+      code: finalCode,
       password: password.trim(),
       must_change_password: true,
       phone: phone.trim() || undefined,
@@ -500,9 +525,22 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
       gender: assignedRole === 'patient' ? gender : undefined,
       assignedTherapistId: assignedRole === 'patient' ? targetTherapist?.id : undefined,
       assignedTherapistName: assignedRole === 'patient' ? targetTherapist?.name || currentUserName : undefined,
-      diagnosis: assignedRole === 'patient' ? chiefComplaint.trim() || 'ข้อไหล่ติดระยะฟื้นฟู' : undefined,
-      chiefComplaint: assignedRole === 'patient' ? chiefComplaint.trim() || 'ปวดตึงข้อต่อเรื้อรัง' : undefined,
-      patientBackground: assignedRole === 'patient' ? 'ลงทะเบียนใหม่พร้อมสแกนใบหน้า 10 ช็อต (ตรง, ซ้าย, ขวา)' : undefined,
+      diagnosis: assignedRole === 'patient' ? chiefComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด' : undefined,
+      chiefComplaint: assignedRole === 'patient' ? chiefComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด' : undefined,
+      underlyingDiseases: assignedRole === 'patient' ? underlyingDiseases.trim() || '-' : undefined,
+      drugAllergies: assignedRole === 'patient' ? drugAllergies.trim() || '-' : undefined,
+      admissionDate: assignedRole === 'patient' ? admissionDate : undefined,
+      treatmentStatus: 'active',
+      progressPercent: 0,
+      medicalNotesHistory: assignedRole === 'patient' ? [
+        {
+          id: `note-${Date.now()}`,
+          date: admissionDate || new Date().toISOString().split('T')[0],
+          author: currentUserName,
+          text: chiefComplaint.trim() || 'ลงทะเบียนแรกรับผู้ป่วยใหม่และบันทึกประวัติการรักษา',
+        }
+      ] : undefined,
+      patientBackground: assignedRole === 'patient' ? `ลงทะเบียนใหม่พร้อมสแกนใบหน้า 10 ช็อต (โรคประจำตัว: ${underlyingDiseases.trim() || '-'}, ประวัติแพ้ยา: ${drugAllergies.trim() || '-'})` : undefined,
       treatmentOutcome: assignedRole === 'patient' ? 'เริ่มต้นโปรแกรมการรักษา' : undefined,
       therapistNotes: assignedRole === 'patient' ? 'เริ่มฝึกกายภาพท่าพื้นฐานตามโปรแกรม' : undefined,
       last_active: 'เพิ่งลงทะเบียน',
@@ -517,14 +555,14 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
     let therapistExtra: Omit<PhysicalTherapist, 'id'> | undefined = undefined;
     if (assignedRole === 'therapist') {
       therapistExtra = {
-        code: randCode,
+        code: finalCode,
         name: name.trim(),
-        specialty: specialty.trim() || 'กายภาพบำบัดระบบกระดูกและกล้ามเนื้อ (Orthopedic PT)',
+        specialty: specialty.trim() || 'Musculoskeletal (ระบบกระดูกและกล้ามเนื้อ)',
         phone: phone.trim() || '08x-xxx-xxxx',
         email: email.trim() || `${username.trim()}@drtechcare.hospital`,
         licenseNumber: licenseNumber.trim() || `กภ. ${Math.floor(1000 + Math.random() * 9000)}`,
-        activePatientsCount: 0,
-        assignedCases: [],
+        activePatientsCount: initialAssignedPatientIds.length,
+        assignedCases: initialAssignedPatientIds.map(String),
         bio: bio.trim() || 'นักกายภาพบำบัดวิชาชีพ ประจำโรงพยาบาล Dr.Tech.Care',
         status: 'active',
       };
@@ -532,7 +570,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
 
     onSubmitUser(newUserData, therapistExtra);
     setCreatedSummary({
-      code: randCode,
+      code: finalCode,
       name: name.trim(),
       role: assignedRole,
       photo: photoUrl,
@@ -542,8 +580,8 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
 
     onSuccessToast(
       assignedRole === 'patient'
-        ? `ลงทะเบียนผู้ใช้ใหม่สำเร็จ: ${name.trim()} (${randCode}) บันทึกใบหน้า 10 ช็อตเรียบร้อย`
-        : `ลงทะเบียนนักกายภาพบำบัดสำเร็จ: ${name.trim()} (${randCode})`
+        ? `ลงทะเบียนผู้ใช้ใหม่สำเร็จ: ${name.trim()} (${finalCode}) บันทึกใบหน้า 10 ช็อตเรียบร้อย`
+        : `ลงทะเบียนนักกายภาพบำบัดสำเร็จ: ${name.trim()} (${finalCode})`
     );
   };
 
@@ -581,6 +619,18 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
 
     if (!name.trim()) {
       newErrors.name = 'กรุณากรอกชื่อ-นามสกุล';
+    }
+
+    const trimmedCode = customCode.trim().toUpperCase();
+    if (!trimmedCode) {
+      newErrors.customCode = 'กรุณาระบุ Unique ID / Staff ID / HN';
+    } else {
+      const isDuplicate = existingUsers.some(
+        (u) => u.code.toUpperCase() === trimmedCode
+      );
+      if (isDuplicate) {
+        newErrors.customCode = `รหัส ID/HN "${trimmedCode}" นี้ถูกใช้งานแล้ว กรุณาระบุรหัสอื่น`;
+      }
     }
 
     const trimmedUsername = username.trim().toLowerCase();
@@ -773,31 +823,53 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                 </label>
 
                 {currentRole === 'admin' ? (
-                  <div className="grid grid-cols-2 gap-2.5">
+                  <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
-                      onClick={() => setRole('patient')}
-                      className={`py-2.5 px-4 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 border transition cursor-pointer ${
+                      onClick={() => {
+                        setRole('patient');
+                        setCustomCode(generateUniqueCode('patient'));
+                      }}
+                      className={`py-2 px-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-1.5 border transition cursor-pointer ${
                         role === 'patient'
                           ? 'bg-[#10B981] text-white border-emerald-600 shadow-sm'
                           : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                       }`}
                     >
-                      <User className="w-4 h-4" />
+                      <User className="w-3.5 h-3.5" />
                       <span>คนไข้ (Patient)</span>
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => setRole('therapist')}
-                      className={`py-2.5 px-4 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 border transition cursor-pointer ${
+                      onClick={() => {
+                        setRole('therapist');
+                        setCustomCode(generateUniqueCode('therapist'));
+                      }}
+                      className={`py-2 px-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-1.5 border transition cursor-pointer ${
                         role === 'therapist'
                           ? 'bg-[#0F2F2B] text-emerald-300 border-emerald-950 shadow-sm'
                           : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                       }`}
                     >
-                      <Stethoscope className="w-4 h-4" />
-                      <span>นักกายภาพ (Physiotherapist)</span>
+                      <Stethoscope className="w-3.5 h-3.5" />
+                      <span>นักกายภาพ (PT)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRole('admin');
+                        setCustomCode(generateUniqueCode('admin'));
+                      }}
+                      className={`py-2 px-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-1.5 border transition cursor-pointer ${
+                        role === 'admin'
+                          ? 'bg-purple-600 text-white border-purple-700 shadow-sm'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Shield className="w-3.5 h-3.5" />
+                      <span>Super Admin</span>
                     </button>
                   </div>
                 ) : (
@@ -810,6 +882,50 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                       นักกายภาพเพิ่มได้เฉพาะคนไข้
                     </span>
                   </div>
+                )}
+              </div>
+
+              {/* Unique ID / Staff ID / HN (Auto-generated or custom) */}
+              <div className="bg-white p-3 rounded-2xl border border-slate-200 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-slate-700 text-xs">
+                    {role === 'patient'
+                      ? 'รหัสประจำตัวคนไข้ / HN (Unique ID)'
+                      : role === 'therapist'
+                      ? 'รหัสประจำตัวนักกายภาพ (Staff ID)'
+                      : 'รหัสประจำตัวผู้อำนวยการ / ผู้ดูแลระบบ (Admin ID)'} <span className="text-rose-500">*</span>:
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setCustomCode(generateUniqueCode(role))}
+                    className="text-[11px] text-emerald-700 font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3 h-3 text-emerald-600" />
+                    <span>สุ่มรหัสอัตโนมัติ</span>
+                  </button>
+                </div>
+                <div className="relative">
+                  <Award className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={customCode}
+                    onChange={(e) => {
+                      setCustomCode(e.target.value.toUpperCase());
+                      if (errors.customCode) setErrors((prev) => ({ ...prev, customCode: undefined }));
+                    }}
+                    placeholder={role === 'patient' ? 'เช่น P-1785' : role === 'therapist' ? 'เช่น T-001' : 'เช่น SA-001'}
+                    className={`w-full pl-9 pr-3 py-2 rounded-xl bg-slate-50/70 border font-mono font-bold text-xs text-[#0F2F2B] outline-none transition ${
+                      errors.customCode
+                        ? 'border-rose-400 ring-2 ring-rose-100'
+                        : 'border-slate-200 focus:border-[#10B981] focus:ring-2 focus:ring-emerald-100'
+                    }`}
+                  />
+                </div>
+                {errors.customCode && (
+                  <p className="text-[11px] text-rose-600 font-semibold mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>{errors.customCode}</span>
+                  </p>
                 )}
               </div>
 
@@ -828,7 +944,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                         setName(e.target.value);
                         if (errors.name) setErrors((prev) => ({ ...prev, name: undefined }));
                       }}
-                      placeholder={role === 'patient' ? 'เช่น นายสมศักดิ์ สุขใจ' : 'เช่น กภ. ชนกพร มั่งคั่ง'}
+                      placeholder={role === 'patient' ? 'เช่น นายสมศักดิ์ สุขใจ' : role === 'therapist' ? 'เช่น กภ. ชนกพร มั่งคั่ง' : 'เช่น นพ. วรชัย ผู้บริหาร'}
                       className={`w-full pl-9 pr-3 py-2 rounded-xl bg-white border text-xs font-semibold text-[#0F2F2B] outline-none transition ${
                         errors.name
                           ? 'border-rose-400 ring-2 ring-rose-100'
@@ -890,7 +1006,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <label className="font-bold text-slate-700">
-                      รหัสผ่าน (Password) <span className="text-rose-500">*</span>:
+                      รหัสผ่านชั่วคราว <span className="text-rose-500">*</span>:
                     </label>
                     <button
                       type="button"
@@ -971,13 +1087,20 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
               </div>
             </div>
 
-            {/* Section 2: ข้อมูลติดต่อ & ข้อมูลคนไข้ */}
+            {/* Section 2: ข้อมูลติดต่อ & Dynamic Role Branching */}
             <div className="space-y-3 bg-stone-50/70 p-4 rounded-2xl border border-stone-200/80">
               <div className="font-bold text-sm text-[#0F2F2B] flex items-center gap-2 border-b border-stone-200/60 pb-2">
                 <Phone className="w-4 h-4 text-emerald-600" />
-                <span>ส่วนที่ 2: ข้อมูลติดต่อ & การรักษา</span>
+                <span>
+                  {role === 'patient'
+                    ? 'ส่วนที่ 2: ข้อมูลติดต่อ & เวชระเบียนแรกรับ'
+                    : role === 'therapist'
+                    ? 'ส่วนที่ 2: ข้อมูลวิชาชีพ & การรับเคสดูแล'
+                    : 'ส่วนที่ 2: ข้อมูลการติดต่อผู้ดูแลระบบ'}
+                </span>
               </div>
 
+              {/* Contact info (Phone, Email) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">
@@ -1008,16 +1131,17 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="เช่น patient@hospital.com"
+                      placeholder="เช่น user@hospital.com"
                       className="w-full pl-9 pr-3 py-2 rounded-xl bg-white border border-slate-200 text-xs text-[#0F2F2B] outline-none focus:border-[#10B981]"
                     />
                   </div>
                 </div>
               </div>
 
+              {/* Dynamic Role Branching: PATIENT */}
               {role === 'patient' && (
-                <>
-                  <div className="grid grid-cols-3 gap-3 pt-1">
+                <div className="space-y-3 pt-2 border-t border-stone-200/60">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                     <div>
                       <label className="block font-bold text-slate-700 mb-1">อายุ (ปี):</label>
                       <input
@@ -1044,7 +1168,17 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                     </div>
 
                     <div>
-                      <label className="block font-bold text-slate-700 mb-1">กภ. ผู้ดูแล:</label>
+                      <label className="block font-bold text-slate-700 mb-1">วันที่แรกรับ (Admission):</label>
+                      <input
+                        type="date"
+                        value={admissionDate}
+                        onChange={(e) => setAdmissionDate(e.target.value)}
+                        className="w-full px-2.5 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold text-[#0F2F2B] outline-none focus:border-[#10B981] cursor-pointer"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">กภ. ผู้ดูแล (Assigned PT):</label>
                       <select
                         value={assignedTherapistId}
                         onChange={(e) => setAssignedTherapistId(e.target.value)}
@@ -1060,19 +1194,154 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                     </div>
                   </div>
 
-                  <div className="pt-1">
+                  {/* Medical fields: Underlying Diseases & Drug Allergies (default "-") */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">
+                        โรคประจำตัว (Underlying Diseases):
+                      </label>
+                      <input
+                        type="text"
+                        value={underlyingDiseases}
+                        onChange={(e) => setUnderlyingDiseases(e.target.value)}
+                        placeholder="หากไม่มีให้ระบุเป็น -"
+                        className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs text-[#0F2F2B] outline-none focus:border-[#10B981]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">
+                        ประวัติแพ้ยา (Drug Allergies):
+                      </label>
+                      <input
+                        type="text"
+                        value={drugAllergies}
+                        onChange={(e) => setDrugAllergies(e.target.value)}
+                        placeholder="หากไม่มีให้ระบุเป็น -"
+                        className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs text-[#0F2F2B] outline-none focus:border-[#10B981]"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Initial Symptoms / Notes */}
+                  <div>
                     <label className="block font-bold text-slate-700 mb-1">
-                      อาการสำคัญ / การวินิจฉัย (Chief Complaint / Diagnosis):
+                      อาการสำคัญแรกรับ / การวินิจฉัย (Initial Symptoms / Clinical Notes):
                     </label>
-                    <input
-                      type="text"
+                    <textarea
+                      rows={2}
                       value={chiefComplaint}
                       onChange={(e) => setChiefComplaint(e.target.value)}
-                      placeholder="เช่น ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder), ปวดสะบักเรื้อรัง"
-                      className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs text-[#0F2F2B] outline-none focus:border-[#10B981]"
+                      placeholder="เช่น ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder), ปวดสะบักเรื้อรังจากการทำงาน"
+                      className="w-full p-2.5 rounded-xl bg-white border border-slate-200 text-xs text-[#0F2F2B] outline-none focus:border-[#10B981]"
                     />
                   </div>
-                </>
+                </div>
+              )}
+
+              {/* Dynamic Role Branching: PHYSIOTHERAPIST */}
+              {role === 'therapist' && (
+                <div className="space-y-3 pt-2 border-t border-stone-200/60">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">
+                        เลขที่ใบประกอบวิชาชีพ (License No.):
+                      </label>
+                      <input
+                        type="text"
+                        value={licenseNumber}
+                        onChange={(e) => setLicenseNumber(e.target.value)}
+                        placeholder="เช่น กภ. 8920"
+                        className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-mono font-bold text-[#0F2F2B] outline-none focus:border-[#10B981]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">
+                        แผนก / ความเชี่ยวชาญ (Department / Specialty):
+                      </label>
+                      <select
+                        value={specialty}
+                        onChange={(e) => setSpecialty(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold text-[#0F2F2B] outline-none focus:border-[#10B981] cursor-pointer"
+                      >
+                        <option value="Musculoskeletal (ระบบกระดูกและกล้ามเนื้อ)">Musculoskeletal (ระบบกระดูกและกล้ามเนื้อ)</option>
+                        <option value="Neurological (ระบบประสาทและการเคลื่อนไหว)">Neurological (ระบบประสาทและการเคลื่อนไหว)</option>
+                        <option value="Geriatric (กายภาพบำบัดผู้สูงอายุ)">Geriatric (กายภาพบำบัดผู้สูงอายุ)</option>
+                        <option value="Sports PT (เวชศาสตร์การกีฬา)">Sports PT (เวชศาสตร์การกีฬา)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">
+                      ประวัติการศึกษา / ความเชี่ยวชาญ (Bio & Education):
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={bio}
+                      onChange={(e) => setBio(e.target.value)}
+                      placeholder="เช่น ปริญญาตรีกายภาพบำบัดบัณฑิต จุฬาลงกรณ์มหาวิทยาลัย ประสบการณ์ 6 ปี"
+                      className="w-full p-2.5 rounded-xl bg-white border border-slate-200 text-xs text-[#0F2F2B] outline-none focus:border-[#10B981]"
+                    />
+                  </div>
+
+                  {/* Initial Assigned Patients Multi-Select */}
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">
+                      คนไข้เริ่มต้นที่มอบหมายให้ดูแล (Initial Assigned Patients):
+                    </label>
+                    <div className="max-h-28 overflow-y-auto p-2 bg-white rounded-xl border border-slate-200 space-y-1">
+                      {existingUsers.filter((u) => u.role === 'patient').length === 0 ? (
+                        <p className="text-[11px] text-slate-400">ยังไม่มีรายชื่อคนไข้ในระบบ</p>
+                      ) : (
+                        existingUsers
+                          .filter((u) => u.role === 'patient')
+                          .map((pat) => {
+                            const isSelected = initialAssignedPatientIds.includes(pat.id);
+                            return (
+                              <label
+                                key={pat.id}
+                                className={`flex items-center justify-between p-1.5 rounded-lg text-xs cursor-pointer transition ${
+                                  isSelected ? 'bg-emerald-50 text-emerald-950 font-bold' : 'hover:bg-slate-50 text-slate-700'
+                                }`}
+                              >
+                                <span className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setInitialAssignedPatientIds([...initialAssignedPatientIds, pat.id]);
+                                      } else {
+                                        setInitialAssignedPatientIds(initialAssignedPatientIds.filter((id) => id !== pat.id));
+                                      }
+                                    }}
+                                    className="rounded text-emerald-600"
+                                  />
+                                  <span>{pat.name}</span>
+                                </span>
+                                <span className="text-[10px] font-mono text-slate-400">{pat.code}</span>
+                              </label>
+                            );
+                          })
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Dynamic Role Branching: SUPER ADMIN */}
+              {role === 'admin' && (
+                <div className="p-3 bg-purple-50 rounded-2xl border border-purple-200 text-purple-900 space-y-1 text-xs">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <Shield className="w-4 h-4 text-purple-600" />
+                    <span>สิทธิ์ผู้บริหารสูงสุด (Hospital Director / Super Admin):</span>
+                  </div>
+                  <p className="text-[11px] text-purple-800 leading-relaxed">
+                    มีอำนาจบริหารจัดการระบบส่วนกลางเต็มรูปแบบ ครอบคลุมทั้ง 6 โมดูล เวชระเบียนคนไข้ ตารางการรักษา ไดเรกทอรีนักกายภาพ ไลบรารี่ท่ากายภาพ และระบบ Audit Log & Security Control
+                  </p>
+                </div>
               )}
             </div>
 
@@ -1083,7 +1352,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                 onClick={onClose}
                 className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 font-bold hover:bg-slate-100 transition active:scale-95 cursor-pointer text-xs"
               >
-                ยกเลิก
+                ยกเลิก (Cancel)
               </button>
 
               <div className="flex items-center gap-2">
@@ -1094,7 +1363,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                   className="px-3.5 py-2 rounded-xl border border-slate-200 text-slate-600 hover:text-emerald-800 hover:bg-emerald-50 text-xs font-bold transition cursor-pointer"
                   title="บันทึกข้อมูลทันทีโดยไม่ต้องเปิดกล้องสแกนใบหน้า"
                 >
-                  ข้ามสแกนหน้า (บันทึกข้อมูล)
+                  ข้ามสแกนหน้า (Skip)
                 </button>
 
                 <button
@@ -1103,8 +1372,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                   className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-extrabold shadow-md shadow-cyan-500/25 transition active:scale-95 flex items-center gap-2 cursor-pointer text-xs"
                 >
                   <Camera className="w-4 h-4" />
-                  <span>ถัดไป: สแกนใบหน้า (10 ช็อต ตรง-ซ้าย-ขวา)</span>
-                  <ArrowRight className="w-4 h-4" />
+                  <span>ถัดไป: สแกนใบหน้า (Next: Face Registration ➔)</span>
                 </button>
               </div>
             </div>
@@ -1286,7 +1554,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
             </div>
 
             {/* Bottom Controls Step 2 */}
-            <div className="pt-2 border-t border-emerald-100 flex items-center justify-between gap-2">
+            <div className="pt-2.5 border-t border-emerald-100 flex flex-wrap items-center justify-between gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -1296,18 +1564,19 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                 className="px-3.5 py-2 rounded-xl border border-slate-300 text-slate-700 font-bold hover:bg-slate-100 transition active:scale-95 cursor-pointer text-xs flex items-center gap-1.5"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
-                <span>แก้ไขข้อมูล</span>
+                <span>← Back</span>
               </button>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={handleResetShots}
                   disabled={capturedShots.length === 0}
-                  className="px-3 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-bold transition cursor-pointer disabled:opacity-40"
+                  className="px-3 py-2 rounded-xl border border-amber-300 text-amber-800 hover:bg-amber-50 text-xs font-bold transition cursor-pointer disabled:opacity-40 flex items-center gap-1"
                   title="ล้างภาพที่ถ่ายแล้วและเริ่มถ่ายใหม่"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Retake</span>
                 </button>
 
                 <button
@@ -1315,21 +1584,33 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                   onClick={handleSkipScanAndSave}
                   className="px-3 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-bold transition cursor-pointer"
                 >
-                  ข้ามสแกน
+                  Skip
                 </button>
+
+                {capturedShots.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => finalizeAllShots(capturedShots)}
+                    disabled={isSubmitting}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-sm transition active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Save & Complete ({capturedShots.length}/10)</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
                   onClick={triggerCaptureShot}
                   disabled={isCapturingShot || capturedShots.length >= 10}
-                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-black shadow-md shadow-cyan-500/25 transition active:scale-95 flex items-center gap-2 cursor-pointer text-xs disabled:opacity-50"
+                  className="px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-black shadow-md shadow-cyan-500/25 transition active:scale-95 flex items-center gap-1.5 cursor-pointer text-xs disabled:opacity-50"
                 >
                   <Camera className="w-4 h-4" />
                   <span>
                     {isCapturingShot
                       ? 'กำลังจับภาพ...'
-                      : `📸 ถ่ายช็อตที่ ${capturedShots.length + 1}/10 (${
-                          currentAngle === 'center' ? 'มุมตรง' : currentAngle === 'left' ? 'มุมซ้าย' : 'มุมขวา'
+                      : `📸 ช็อตที่ ${capturedShots.length + 1}/10 (${
+                          currentAngle === 'center' ? 'ตรง' : currentAngle === 'left' ? 'ซ้าย' : 'ขวา'
                         })`}
                   </span>
                 </button>
