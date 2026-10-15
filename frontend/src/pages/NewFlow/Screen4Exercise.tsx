@@ -98,6 +98,7 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
   const [isStepsModalOpen, setIsStepsModalOpen] = useState<boolean>(false);
   const [pipPosition, setPipPosition] = useState<'right' | 'left'>('right');
   const [isPipMinimized, setIsPipMinimized] = useState<boolean>(false);
+  const [showDevPosePreview, setShowDevPosePreview] = useState<boolean>(false);
 
   // Time & Score Tracking
   const currentStretch = isStretchMode ? queue[currentIndex] || queue[0] : null;
@@ -964,6 +965,72 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
     voiceAssistant.speakInstruction('เริ่มนับท่านี้ใหม่ครับ', { force: true });
     startExercisePreparation(currentExerciseConfig);
   }, [currentStretch, currentExerciseConfig, getPoseHoldSeconds, startExercisePreparation]);
+
+  // --------------------------------------------------------------------------
+  // Development Constraint: Placeholder screen stating "ยังไม่ได้เพิ่มระบบดีเทคกายภาพ โปรดรอการพัฒนา"
+  // --------------------------------------------------------------------------
+  if (!showDevPosePreview) {
+    return (
+      <div className="w-full max-w-[540px] mx-auto flex flex-col items-center animate-fadeIn relative z-10 py-6 px-3 my-auto">
+        <div className="w-full bg-white/95 backdrop-blur-xl border-2 border-emerald-300 rounded-[36px] p-6 sm:p-8 shadow-2xl text-center space-y-5">
+          <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-amber-500 via-orange-500 to-amber-600 mx-auto flex items-center justify-center text-white shadow-lg shadow-amber-500/30">
+            <AlertTriangle className="w-10 h-10 stroke-[2.5]" />
+          </div>
+
+          <div className="space-y-2">
+            <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-xs font-black">
+              <span>⚠️ อยู่ระหว่างขั้นตอนการพัฒนา (Under Development)</span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-black text-[#0B2B2B]">
+              ยังไม่ได้เพิ่มระบบดีเทคกายภาพ โปรดรอการพัฒนา
+            </h2>
+            <p className="text-xs sm:text-sm text-slate-600 font-medium leading-relaxed">
+              ระบบวิเคราะห์ท่าทางกายภาพบำบัดด้วยกล้อง AI (Pose Detection & Joint Angles) อยู่ระหว่างการพัฒนาและตรวจสอบเกณฑ์ชีวกลศาสตร์เพื่อความปลอดภัยของผู้ป่วย
+            </p>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-emerald-50/80 border border-emerald-200 text-left text-xs space-y-1.5 text-emerald-950">
+            <div className="font-extrabold flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-emerald-600" />
+              <span>แนะนำให้ทำกายภาพผ่านมินิเกม:</span>
+            </div>
+            <p className="text-slate-600 text-[11px] leading-relaxed">
+              ท่านสามารถร่วมกิจกรรมกายภาพผ่าน <strong>มินิเกมฝึกสมองและการเคลื่อนไหว (Interactive Mini-Games)</strong> ที่พร้อมใช้งานได้ทันที
+            </p>
+          </div>
+
+          <div className="space-y-2.5 pt-2">
+            {onNavigateToMinigame && (
+              <button
+                type="button"
+                onClick={onNavigateToMinigame}
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-black text-sm shadow-lg shadow-cyan-500/25 active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <span>🎮 เปิดเล่นมินิเกมกายภาพทันที</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={onBack}
+              className="w-full py-3 px-4 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>กลับสู่หน้าหลัก / เมนู Kiosk</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowDevPosePreview(true)}
+              className="w-full py-2 text-[11px] text-slate-400 hover:text-slate-600 font-bold transition cursor-pointer"
+            >
+              🛠️ [สำหรับนักพัฒนา] ดูตัวอย่างโครงร่าง AI (Developer Preview)
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // --------------------------------------------------------------------------
   // Summary View when all exercises are complete

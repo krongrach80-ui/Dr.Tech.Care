@@ -12,6 +12,7 @@ import {
   Sliders,
   Calendar,
   Layers,
+  Lock,
 } from 'lucide-react';
 import {
   TreatmentPlan,
@@ -21,6 +22,39 @@ import {
 } from '../../types/hospital';
 import { useHospitalStore } from '../../store/hospitalStore';
 import { defaultDash } from '../../utils/dashboardUtils';
+
+export const AVAILABLE_MINIGAMES = [
+  {
+    id: 'minigame_quiz',
+    slug: 'minigame_quiz',
+    name: 'มินิเกมตอบคำถามฝึกสมองและการตอบสนอง (Interactive Quiz)',
+    category: 'มินิเกม (Minigame)',
+    targetJoint: 'ประสานระบบประสาทและความจำ',
+    defaultReps: 5,
+    defaultSets: 1,
+    defaultHold: 15,
+  },
+  {
+    id: 'minigame_arm_coordination',
+    slug: 'minigame_arm_coordination',
+    name: 'มินิเกมฝึกประสานการเคลื่อนไหวแขน (Bilateral Arm Coordination)',
+    category: 'มินิเกม (Minigame)',
+    targetJoint: 'ข้อต่อหัวไหล่และแขนสองข้าง',
+    defaultReps: 10,
+    defaultSets: 2,
+    defaultHold: 5,
+  },
+  {
+    id: 'minigame_balloon_catch',
+    slug: 'minigame_balloon_catch',
+    name: 'มินิเกมสะบัดแขนจับลูกโป่ง (Balloon Catch Game)',
+    category: 'มินิเกม (Minigame)',
+    targetJoint: 'ช่วงการเคลื่อนไหวของข้อไหล่ (ROM)',
+    defaultReps: 12,
+    defaultSets: 2,
+    defaultHold: 5,
+  },
+];
 
 interface DailyRoutineAssignmentModalProps {
   isOpen: boolean;
@@ -48,9 +82,9 @@ export const DailyRoutineAssignmentModal: React.FC<DailyRoutineAssignmentModalPr
   const [assigned, setAssigned] = useState<PrescribedExercise[]>([]);
   const [instructions, setInstructions] = useState<string>('');
   const [selectedExerciseId, setSelectedExerciseId] = useState<string>('');
-  const [repsInput, setRepsInput] = useState<number>(10);
-  const [setsInput, setSetsInput] = useState<number>(3);
-  const [restSecondsInput, setRestSecondsInput] = useState<number>(30);
+  const [repsInput, setRepsInput] = useState<number>(5);
+  const [setsInput, setSetsInput] = useState<number>(1);
+  const [restSecondsInput, setRestSecondsInput] = useState<number>(15);
   const [difficultyInput, setDifficultyInput] = useState<'beginner' | 'intermediate' | 'advanced'>('beginner');
 
   useEffect(() => {
@@ -59,18 +93,18 @@ export const DailyRoutineAssignmentModal: React.FC<DailyRoutineAssignmentModalPr
         setAssigned([...existingPlan.assignedExercises]);
         setInstructions(existingPlan.clinicalNotes || '');
       } else {
-        // Default starting routine if none exists
+        // Default starting routine with available Mini-Game
         setAssigned([
           {
-            exerciseSlug: 'shoulder_raise',
-            exerciseName: 'กางแขนยกด้านข้าง (Shoulder Abduction)',
-            sets: 3,
-            reps: 10,
-            holdSeconds: 3,
+            exerciseSlug: 'minigame_quiz',
+            exerciseName: 'มินิเกมตอบคำถามฝึกสมองและการตอบสนอง (Interactive Quiz)',
+            sets: 1,
+            reps: 5,
+            holdSeconds: 15,
             difficulty: 'beginner',
           },
         ]);
-        setInstructions('ทำอย่างช้าๆ หายใจเข้า-ออกลึกๆ ไม่เกร็งกล้ามเนื้อคอ');
+        setInstructions('ฝึกตอบคำถามสุขภาพผ่านการยกแขนซ้ายและขวาอย่างผ่อนคลาย');
       }
     }
   }, [isOpen, existingPlan]);
@@ -78,23 +112,28 @@ export const DailyRoutineAssignmentModal: React.FC<DailyRoutineAssignmentModalPr
   if (!isOpen || !patient) return null;
 
   const handleAddExercise = () => {
-    const ex = exercises.find((e) => String(e.id) === selectedExerciseId || e.englishName === selectedExerciseId);
-    if (!ex) {
-      alert('กรุณาเลือกท่ากายภาพจากรายการ');
+    const mg = AVAILABLE_MINIGAMES.find((m) => m.id === selectedExerciseId || m.slug === selectedExerciseId);
+    if (mg) {
+      const newItem: PrescribedExercise = {
+        exerciseSlug: mg.slug,
+        exerciseName: mg.name,
+        sets: setsInput,
+        reps: repsInput,
+        holdSeconds: restSecondsInput,
+        difficulty: difficultyInput,
+      };
+      setAssigned((prev) => [...prev, newItem]);
+      setSelectedExerciseId('');
       return;
     }
 
-    const newItem: PrescribedExercise = {
-      exerciseSlug: ex.englishName.toLowerCase().replace(/\s+/g, '_'),
-      exerciseName: ex.name,
-      sets: setsInput,
-      reps: repsInput,
-      holdSeconds: restSecondsInput,
-      difficulty: difficultyInput,
-    };
+    const ex = exercises.find((e) => String(e.id) === selectedExerciseId || e.englishName === selectedExerciseId);
+    if (ex) {
+      alert('⚠️ ยังไม่ได้เพิ่มระบบดีเทคกายภาพ โปรดรอการพัฒนา\n\n(ในปัจจุบันระบบตรวจจับท่าทางกายภาพอยู่ระหว่างการพัฒนา กรุณาเลือกและเซ็ตได้เฉพาะมินิเกมเท่านั้น)');
+      return;
+    }
 
-    setAssigned((prev) => [...prev, newItem]);
-    setSelectedExerciseId('');
+    alert('กรุณาเลือกมินิเกมที่ต้องการเพิ่มในตาราง');
   };
 
   const handleRemoveExercise = (idx: number) => {
@@ -103,7 +142,7 @@ export const DailyRoutineAssignmentModal: React.FC<DailyRoutineAssignmentModalPr
 
   const handleSave = () => {
     if (assigned.length === 0) {
-      alert('กรุณาเลือกอย่างน้อย 1 ท่ากายภาพสำหรับตารางประจำวันนี้');
+      alert('กรุณาเลือกอย่างน้อย 1 กิจกรรมหรือมินิเกมสำหรับตารางประจำวันนี้');
       return;
     }
     onSaveRoutine(assigned, instructions);
@@ -156,25 +195,52 @@ export const DailyRoutineAssignmentModal: React.FC<DailyRoutineAssignmentModalPr
           {/* Add Exercise Selector */}
           {canWrite && (
             <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200/80 space-y-3">
-              <div className="font-bold text-slate-800 text-sm flex items-center gap-2">
-                <Plus className="w-4 h-4 text-emerald-600" />
-                <span>เพิ่มท่ากายภาพจากคลัง (Exercise Library):</span>
+              <div className="font-bold text-slate-800 text-sm flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Gamepad2 className="w-4 h-4 text-emerald-600" />
+                  <span>มอบหมายกิจกรรมและมินิเกม (Mini-Game Assignment):</span>
+                </div>
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-extrabold text-[11px] border border-emerald-300">
+                  🎮 มินิเกมพร้อมใช้งาน
+                </span>
+              </div>
+
+              {/* Development Constraint Notice Banner */}
+              <div className="p-3 rounded-xl bg-amber-50/90 border border-amber-300 text-amber-900 font-bold text-[11px] flex items-start gap-2 shadow-2xs">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p>
+                    <strong>ข้อจำกัดการพัฒนาปัจจุบัน:</strong> ในขณะนี้แอดมินและนักกายภาพสามารถเลือกและเซ็ตได้เฉพาะ <strong>"มินิเกมกายภาพ (Interactive Mini-Games)"</strong> เท่านั้น
+                  </p>
+                  <p className="text-amber-800/80 font-normal">
+                    สำหรับท่าทางกายภาพบำบัดมาตรฐาน ระบบ AI ตรวจจับท่าทาง (Pose Detection) กำลังอยู่ระหว่างการพัฒนา จะขึ้นสถานะ <em>"อยู่ระหว่างพัฒนา"</em>
+                  </p>
+                </div>
               </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="sm:col-span-2">
-                <label className="block font-semibold text-slate-700 mb-1">เลือกท่าฝึก:</label>
+                <label className="block font-semibold text-slate-700 mb-1">เลือกมินิเกมหรือท่าฝึก:</label>
                 <select
                   value={selectedExerciseId}
                   onChange={(e) => setSelectedExerciseId(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 font-bold text-xs text-[#0F2F2B] outline-none focus:border-emerald-500 cursor-pointer"
                 >
-                  <option value="">-- เลือกท่าฝึกจากคลัง --</option>
-                  {exercises.map((ex) => (
-                    <option key={ex.id} value={String(ex.id)}>
-                      {ex.name} ({ex.category}) - {ex.targetJoint}
-                    </option>
-                  ))}
+                  <option value="">-- กรุณาเลือกมินิเกมที่ต้องการมอบหมาย --</option>
+                  <optgroup label="🎮 มินิเกมกายภาพ (Interactive Mini-Games) - พร้อมใช้งาน">
+                    {AVAILABLE_MINIGAMES.map((mg) => (
+                      <option key={mg.id} value={mg.id}>
+                        🎮 {mg.name} ({mg.category}) — {mg.targetJoint}
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="🔒 ท่ากายภาพมาตรฐาน - อยู่ระหว่างพัฒนา (Physical Therapy Exercises)">
+                    {exercises.map((ex) => (
+                      <option key={ex.id} value={String(ex.id)} disabled className="text-slate-400 bg-slate-100">
+                        🔒 {ex.name} ({ex.category}) — อยู่ระหว่างพัฒนา
+                      </option>
+                    ))}
+                  </optgroup>
                 </select>
               </div>
 
@@ -235,7 +301,7 @@ export const DailyRoutineAssignmentModal: React.FC<DailyRoutineAssignmentModalPr
                 className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 transition active:scale-95 cursor-pointer shadow-xs"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>เพิ่มท่านี้ในตาราง</span>
+                <span>เพิ่มมินิเกมในตาราง</span>
               </button>
             </div>
           </div>

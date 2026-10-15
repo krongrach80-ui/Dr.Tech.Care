@@ -485,6 +485,8 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   const [presenceProgress, setPresenceProgress] = useState<number>(0);
   const [faceCountdownSeconds, setFaceCountdownSeconds] = useState<number>(3);
   const [isSlideUpAnimating, setIsSlideUpAnimating] = useState<boolean>(false);
+  const [isBothHandsDetected, setIsBothHandsDetected] = useState<boolean>(false);
+  const [bothHandsProgress, setBothHandsProgress] = useState<number>(0);
 
   // Step 1: Prolonged No-Face Presence Inquiry Modal ("คุณอยู่หน้าเครื่องหรือไม่?")
   const [showPresenceInquiryModal, setShowPresenceInquiryModal] = useState<boolean>(false);
@@ -1254,6 +1256,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     let rafId: number | null = null;
     let lastTime = performance.now();
     let faceHoldMs = 0;
+    let bothHandsHoldMs = 0;
     let noFaceIdleMs = 0;
     let modalRightHoldMs = 0;
     let modalLeftHoldMs = 0;
@@ -1392,9 +1395,47 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           } else {
             // หน้าแรกปกติ: ตรวจจับใบหน้าอัตโนมัติด้วย MediaPipe FaceLandmarker / Pose (ใช้เฟรมที่หมุนถูกต้อง)
             const uprightVideo = cameraOrientationService.getUprightCanvas(video) || video;
-            const res = poseService.detectHolistic(uprightVideo, now, { enableFace: true, enableHands: false });
+            const res = poseService.detectHolistic(uprightVideo, now, { enableFace: true, enableHands: true });
             const lm = res?.poseLandmarks;
             const faceLm = res?.faceLandmarks;
+
+            // Gesture Control: ตรวจจับยก 2 มือขึ้น ("คุณพร้อมจะกายภาพรึยัง? ยก 2 มือขึ้นเพื่อเริ่ม")
+            let bothHandsRaised = false;
+            if (lm) {
+              const leftShoulder = lm[11];
+              const leftWrist = lm[15];
+              const rightShoulder = lm[12];
+              const rightWrist = lm[16];
+
+              const isRightRaised = Boolean(rightWrist && rightShoulder && rightWrist.y < (rightShoulder.y - 0.05));
+              const isLeftRaised = Boolean(leftWrist && leftShoulder && leftWrist.y < (leftShoulder.y - 0.05));
+              bothHandsRaised = isRightRaised && isLeftRaised;
+            }
+
+            if (bothHandsRaised) {
+              bothHandsHoldMs += delta;
+              setIsBothHandsDetected(true);
+              const prog = Math.min(100, Math.round((bothHandsHoldMs / 1200) * 100));
+              setBothHandsProgress(prog);
+
+              if (bothHandsHoldMs >= 1200) {
+                bothHandsHoldMs = 0;
+                setIsBothHandsDetected(false);
+                setBothHandsProgress(100);
+                audioFeedback.playRepSuccess();
+                try {
+                  voiceAssistant.speak('ตรวจพบการยกสองมือ พร้อมเข้าสู่ขั้นตอนสแกนใบหน้าค่ะ', { level: 'system' });
+                } catch {}
+                triggerSlideUp(4);
+                return;
+              }
+            } else {
+              if (bothHandsHoldMs > 0) {
+                bothHandsHoldMs = Math.max(0, bothHandsHoldMs - delta * 2);
+                setBothHandsProgress(Math.round((bothHandsHoldMs / 1200) * 100));
+                if (bothHandsHoldMs === 0) setIsBothHandsDetected(false);
+              }
+            }
 
             const isFaceVisible = Boolean(
               (faceLm && faceLm.length > 0) ||
@@ -3099,12 +3140,12 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 <div className={`absolute bottom-0 right-0 w-5 h-5 border-b-2 border-r-2 rounded-br-lg transition-colors duration-300 ${isPersonDetected ? 'border-emerald-500' : 'border-emerald-300/60'}`} />
               </div>
 
-              {/* วงแหวนโลโก้และเป้าเล็งใบหน้า */}
+              {/* วงแหวนโลโก้และเป้าเล็งใบหน้า (Motion sensor automatically lifts logo container to reveal camera when patient sits down) */}
               <div
-                className={`w-44 h-44 sm:w-52 sm:h-52 rounded-full border-4 shadow-xl overflow-hidden flex flex-col items-center justify-center relative transform group-hover:scale-105 transition-all duration-300 p-2 sm:p-3 ${
-                  isPersonDetected
-                    ? 'border-emerald-500 bg-white shadow-emerald-500/25 ring-4 ring-emerald-300/40'
-                    : 'border-emerald-300 bg-white'
+                className={`w-44 h-44 sm:w-52 sm:h-52 rounded-full border-4 shadow-xl overflow-hidden flex flex-col items-center justify-center relative transform transition-all duration-700 ease-out p-2 sm:p-3 ${
+                  isSlideUpAnimating || isPersonDetected
+                    ? '-translate-y-4 sm:-translate-y-6 scale-95 border-emerald-500 bg-white shadow-emerald-500/25 ring-4 ring-emerald-300/40'
+                    : 'translate-y-0 scale-100 border-emerald-300 bg-white'
                 }`}
               >
                 <img
@@ -3135,8 +3176,29 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               )}
             </div>
 
+            {/* Gesture Control (Raise 2 Hands): "คุณพร้อมจะกายภาพรึยัง? ยก 2 มือขึ้นเพื่อเริ่ม" */}
+            <div className="mt-2.5 w-full max-w-sm px-4 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 border-2 border-emerald-300 shadow-sm flex flex-col items-center text-center animate-fadeIn">
+              <div className="flex items-center gap-2 text-emerald-950 font-black text-xs sm:text-sm">
+                <span className="text-xl animate-bounce">🙌</span>
+                <span>คุณพร้อมจะกายภาพรึยัง? ยก 2 มือขึ้นเพื่อเริ่ม</span>
+              </div>
+              <p className="text-[11px] text-slate-600 font-semibold mt-0.5">
+                {isBothHandsDetected
+                  ? `ตรวจพบการยก 2 มือแล้ว! กำลังเข้าสู่ระบบ (${bothHandsProgress}%)`
+                  : 'ยก 2 มือขึ้นหน้ากล้อง AI เพื่อเริ่มขั้นตอนสแกนใบหน้า'}
+              </p>
+              {bothHandsProgress > 0 && (
+                <div className="w-full h-2 bg-emerald-100 rounded-full overflow-hidden mt-1.5 border border-emerald-300">
+                  <div
+                    className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-100"
+                    style={{ width: `${bothHandsProgress}%` }}
+                  />
+                </div>
+              )}
+            </div>
+
             {/* ข้อความต้อนรับและชื่อระบบ Dr.Tech.Care */}
-            <div className="mt-1 flex flex-col items-center">
+            <div className="mt-2 flex flex-col items-center">
               <h1 className="text-2xl sm:text-3xl font-black text-[#0B2B2B] tracking-tight">
                 Dr.Tech.Care
               </h1>
@@ -4223,10 +4285,10 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             </div>
 
             <h3 className="text-xl sm:text-2xl font-black text-[#0B2B2B] tracking-tight">
-              ไม่พบข้อมูลบัญชีในระบบ
+              ไม่พบบัญชี โปรดติดต่อเจ้าหน้าที่ หรือลองสแกนอีกครั้ง
             </h3>
-            <p className="text-sm font-extrabold text-amber-800 mt-0.5">
-              กรุณาติดต่อเคาน์เตอร์เจ้าหน้าที่เพื่อเปิดประวัติ
+            <p className="text-xs sm:text-sm font-extrabold text-amber-800 mt-1">
+              ระบบไม่พบเวชระเบียนที่ผูกกับใบหน้านี้ในฐานข้อมูลโรงพยาบาล
             </p>
 
             {/* Description Card */}
@@ -4281,6 +4343,19 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   <span>ใช้รหัส PIN 6 หลัก</span>
                 </button>
               </div>
+
+              {/* Staff Bypass button directly in modal */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNoAccountModal(false);
+                  onOpenHospitalPortal();
+                }}
+                className="w-full py-2.5 px-3 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-extrabold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+              >
+                <Shield className="w-4 h-4 text-amber-700" />
+                <span>🛡️ เจ้าหน้าที่เข้าสู่ระบบบุคลากร / รพ. (Staff Bypass)</span>
+              </button>
 
               {/* Dev / Demo Quick Test (if isDemoMode or DEV) */}
               {(isDemoMode || import.meta.env.DEV) && (

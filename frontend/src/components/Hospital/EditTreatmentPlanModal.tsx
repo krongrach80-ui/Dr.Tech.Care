@@ -33,6 +33,7 @@ import {
   UserRole,
 } from '../../types/hospital';
 import { patientFaceStorageService } from '../../services/patientFaceStorageService';
+import { AVAILABLE_MINIGAMES } from './DailyRoutineAssignmentModal';
 
 interface EditTreatmentPlanModalProps {
   isOpen: boolean;
@@ -369,7 +370,9 @@ export const EditTreatmentPlanModal: React.FC<EditTreatmentPlanModalProps> = ({
         setRoomStation('ตู้ Kiosk 1');
       }
 
-      if (exercises.length > 0) {
+      if (AVAILABLE_MINIGAMES.length > 0) {
+        setSelectedExerciseSlug(AVAILABLE_MINIGAMES[0].id);
+      } else if (exercises.length > 0) {
         setSelectedExerciseSlug(exercises[0].svgType || exercises[0].name);
       }
     }
@@ -406,32 +409,45 @@ export const EditTreatmentPlanModal: React.FC<EditTreatmentPlanModalProps> = ({
     setError(null);
   };
 
-  // Add exercise to list
+  // Add exercise to list (Restricted to Mini-Games only due to development constraints)
   const handleAddExercise = () => {
     if (!selectedExerciseSlug) return;
-    const exObj =
-      exercises.find(
-        (e) => (e.svgType && e.svgType === selectedExerciseSlug) || e.name === selectedExerciseSlug
-      ) || exercises[0];
 
-    const slug = exObj.svgType || exObj.name;
-    const alreadyExists = assignedExercises.some((item) => item.exerciseSlug === slug);
-    if (alreadyExists) {
-      setError(`ท่า "${exObj.name}" มีอยู่ในตารางฝึกแล้ว`);
+    // 1. Check if selected is an active Mini-Game
+    const mg = AVAILABLE_MINIGAMES.find(
+      (m) => m.id === selectedExerciseSlug || m.slug === selectedExerciseSlug
+    );
+    if (mg) {
+      const alreadyExists = assignedExercises.some((item) => item.exerciseSlug === mg.slug);
+      if (alreadyExists) {
+        setError(`มินิเกม "${mg.name}" มีอยู่ในตารางฝึกแล้ว`);
+        return;
+      }
+
+      const newPrescription: PrescribedExercise = {
+        exerciseSlug: mg.slug,
+        exerciseName: mg.name,
+        sets: exerciseSets,
+        reps: exerciseReps,
+        holdSeconds: exerciseHold,
+        difficulty: 'beginner',
+      };
+
+      setAssignedExercises([...assignedExercises, newPrescription]);
+      setError(null);
       return;
     }
 
-    const newPrescription: PrescribedExercise = {
-      exerciseSlug: slug,
-      exerciseName: exObj.name,
-      sets: exerciseSets,
-      reps: exerciseReps,
-      holdSeconds: exerciseHold,
-      difficulty: 'beginner',
-    };
+    // 2. Standard Physical Therapy Exercise constraint
+    const exObj = exercises.find(
+      (e) => (e.svgType && e.svgType === selectedExerciseSlug) || e.name === selectedExerciseSlug || String(e.id) === selectedExerciseSlug
+    );
+    if (exObj) {
+      setError('⚠️ ยังไม่ได้เพิ่มระบบดีเทคกายภาพ โปรดรอการพัฒนา (ในปัจจุบันสามารถเลือกและเซ็ตได้เฉพาะมินิเกมเท่านั้น)');
+      return;
+    }
 
-    setAssignedExercises([...assignedExercises, newPrescription]);
-    setError(null);
+    setError('กรุณาเลือกมินิเกมที่ต้องการมอบหมาย');
   };
 
   // Remove exercise from list
@@ -757,6 +773,19 @@ export const EditTreatmentPlanModal: React.FC<EditTreatmentPlanModalProps> = ({
           {/* ================================================================= */}
           {step === 2 && (
             <div className="space-y-3.5 animate-fadeIn">
+              {/* Development Constraint Notice Banner */}
+              <div className="p-3 rounded-xl bg-amber-50/90 border border-amber-300 text-amber-900 font-bold text-[11px] flex items-start gap-2 shadow-2xs">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p>
+                    <strong>ข้อจำกัดการพัฒนาปัจจุบัน:</strong> ในขณะนี้แอดมินและนักกายภาพสามารถเลือกและเซ็ตได้เฉพาะ <strong>"มินิเกมกายภาพ (Interactive Mini-Games)"</strong> เท่านั้น
+                  </p>
+                  <p className="text-amber-800/80 font-normal">
+                    สำหรับท่าทางกายภาพบำบัดมาตรฐาน ระบบ AI ตรวจจับท่าทาง (Pose Detection) กำลังอยู่ระหว่างการพัฒนา จะขึ้นสถานะ <em>"อยู่ระหว่างพัฒนา"</em>
+                  </p>
+                </div>
+              </div>
+
               {/* Preset Templates / Modpacks */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs">
@@ -905,9 +934,14 @@ export const EditTreatmentPlanModal: React.FC<EditTreatmentPlanModalProps> = ({
 
                 {/* Add New Custom Exercise Form */}
                 <div className="p-2.5 rounded-2xl bg-emerald-50/70 border border-emerald-200 space-y-2">
-                  <div className="font-bold text-slate-700 flex items-center gap-1.5">
-                    <Plus className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>เพิ่มท่าใหม่เข้าตารางฝึก</span>
+                  <div className="font-bold text-slate-700 flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Gamepad2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>เพิ่มมินิเกมหรือกิจกรรมเข้าตารางฝึก</span>
+                    </div>
+                    <span className="text-[10px] text-emerald-800 font-bold bg-emerald-100 px-2 py-0.5 rounded-full">
+                      🎮 มินิเกมพร้อมใช้งาน
+                    </span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
                     <div className="sm:col-span-2 relative">
@@ -916,11 +950,20 @@ export const EditTreatmentPlanModal: React.FC<EditTreatmentPlanModalProps> = ({
                         onChange={(e) => setSelectedExerciseSlug(e.target.value)}
                         className="w-full bg-white border border-emerald-200 rounded-xl p-2 text-xs font-bold text-[#0F2F2B] focus:outline-none focus:ring-2 focus:ring-[#10B981] appearance-none"
                       >
-                        {exercises.map((ex) => (
-                          <option key={ex.id} value={ex.svgType || ex.name}>
-                            {ex.name} ({ex.category})
-                          </option>
-                        ))}
+                        <optgroup label="🎮 มินิเกมกายภาพ (Interactive Mini-Games) - พร้อมใช้งาน">
+                          {AVAILABLE_MINIGAMES.map((mg) => (
+                            <option key={mg.id} value={mg.id}>
+                              🎮 {mg.name} ({mg.category})
+                            </option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="🔒 ท่ากายภาพมาตรฐาน - อยู่ระหว่างพัฒนา (Physical Therapy Exercises)">
+                          {exercises.map((ex) => (
+                            <option key={ex.id} value={ex.svgType || ex.name} disabled className="text-slate-400 bg-slate-100">
+                              🔒 {ex.name} ({ex.category}) — อยู่ระหว่างพัฒนา
+                            </option>
+                          ))}
+                        </optgroup>
                       </select>
                       <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
@@ -954,7 +997,7 @@ export const EditTreatmentPlanModal: React.FC<EditTreatmentPlanModalProps> = ({
                       className="w-full bg-[#10B981] text-white rounded-xl font-bold py-2 px-3 text-xs hover:bg-emerald-600 transition flex items-center justify-center gap-1 cursor-pointer shadow-2xs"
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      <span>+ เพิ่มท่า</span>
+                      <span>+ เพิ่มในตาราง</span>
                     </button>
                   </div>
                 </div>

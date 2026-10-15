@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   ArrowLeft,
   Settings,
@@ -16,6 +16,8 @@ import {
   XCircle,
   Clock,
   Touchpad,
+  Calendar,
+  Pause,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Patient } from '../../types/patient';
@@ -82,6 +84,46 @@ export const Screen5MiniGame: React.FC<Screen5MiniGameProps> = ({
   const [userAnswer, setUserAnswer] = useState<'yes' | 'no' | null>(null);
   const [isRoundFinished, setIsRoundFinished] = useState<boolean>(false);
   const [gameStartTime, setGameStartTime] = useState<number>(() => Date.now());
+  const [resetCountdown, setResetCountdown] = useState<number>(8);
+  const [isResetPaused, setIsResetPaused] = useState<boolean>(false);
+
+  // Next appointment date calculation (+7 days from current date)
+  const nextAppointmentDateStr = useMemo(() => {
+    const nextDate = new Date();
+    nextDate.setDate(nextDate.getDate() + 7);
+    const thaiDays = ['วันอาทิตย์', 'วันจันทร์', 'วันอังคาร', 'วันพุธ', 'วันพฤหัสบดี', 'วันศุกร์', 'วันเสาร์'];
+    const thaiMonths = [
+      'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+      'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+    ];
+    const dName = thaiDays[nextDate.getDay()];
+    const d = nextDate.getDate();
+    const m = thaiMonths[nextDate.getMonth()];
+    const y = nextDate.getFullYear() + 543;
+    return `${dName}ที่ ${d} ${m} พ.ศ. ${y} เวลา 09:30 น.`;
+  }, []);
+
+  // Post-Session 8-second auto-reset back to standby logo screen
+  useEffect(() => {
+    if (!isRoundFinished) {
+      setResetCountdown(8);
+      setIsResetPaused(false);
+      return;
+    }
+
+    if (isResetPaused) return;
+
+    if (resetCountdown <= 0) {
+      onBack();
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setResetCountdown((prev) => prev - 1);
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [isRoundFinished, isResetPaused, resetCountdown, onBack]);
 
   // Gestures holding state
   const [holdSide, setHoldSide] = useState<'yes' | 'no' | null>(null);
@@ -571,17 +613,50 @@ export const Screen5MiniGame: React.FC<Screen5MiniGameProps> = ({
           </div>
 
           <h2 className="text-2xl sm:text-3xl font-black text-[#0B2B2B]">
-            {ratingTitle}
+            วันนี้คุณทำได้ดีมาก!
           </h2>
 
           <p className="text-sm sm:text-base font-semibold text-emerald-800 mt-1 max-w-md">
             {ratingMsg}
           </p>
 
-          {/* Daily Course Completion Badge */}
-          <div className="w-full max-w-md p-3.5 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-2 border-emerald-300 text-emerald-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 my-2 shadow-sm">
-            <span className="text-xl">🏆</span>
-            <span>คุณทำกายภาพและกิจกรรมเสร็จสิ้นสำหรับวันนี้แล้ว เชิญพักผ่อนได้ครับ</span>
+          {/* Next Appointment Date Badge (Master Prompt Requirement) */}
+          <div className="w-full max-w-md p-3.5 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-2 border-emerald-300 text-emerald-950 font-black text-xs sm:text-sm flex flex-col items-center justify-center gap-1 my-2 shadow-sm">
+            <div className="flex items-center gap-1.5 text-emerald-800 font-extrabold text-xs">
+              <Calendar className="w-4 h-4 text-emerald-600" />
+              <span>นัดหมายครั้งต่อไป:</span>
+            </div>
+            <span className="text-sm sm:text-base font-black text-[#0B2B2B]">
+              {nextAppointmentDateStr}
+            </span>
+          </div>
+
+          {/* Auto-Reset Countdown Alert Bar */}
+          <div className="w-full max-w-md bg-stone-50 border border-slate-200 rounded-2xl p-2.5 sm:p-3 flex items-center justify-between gap-2 text-xs font-bold text-slate-700 my-1">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-emerald-600 animate-spin" />
+              <span className="text-[11px] sm:text-xs">
+                {isResetPaused
+                  ? 'หยุดเวลารีเซ็ตชั่วคราว'
+                  : `ตู้จะรีเซ็ตกลับหน้าแรกอัตโนมัติใน: ${resetCountdown} วินาที`}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setIsResetPaused((p) => !p)}
+                className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-slate-600 text-[11px] cursor-pointer"
+              >
+                {isResetPaused ? 'เล่นต่อ' : 'หยุดเวลา'}
+              </button>
+              <button
+                type="button"
+                onClick={onBack}
+                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold cursor-pointer"
+              >
+                รีเซ็ตทันที
+              </button>
+            </div>
           </div>
 
           {/* Stars Rating */}
