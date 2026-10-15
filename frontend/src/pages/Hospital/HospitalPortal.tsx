@@ -4402,14 +4402,6 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         className="w-full pl-9 pr-3 py-2 rounded-full bg-white border border-emerald-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#10B981]"
                       />
                     </div>
-
-                    <button
-                      onClick={() => setIsAddTherapistOpen(true)}
-                      className="px-4 py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-bold shadow-md shadow-cyan-500/25 hover:opacity-95 transition flex items-center gap-2 cursor-pointer whitespace-nowrap active:scale-95"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>+ เพิ่มนักกายภาพ</span>
-                    </button>
                   </div>
                 </div>
 
