@@ -7,8 +7,8 @@
 ---
 
 ### 🌐 ลิงก์ระบบออนไลน์ (Live Deployment)
-- **GitHub Pages (Live Demo)**: [https://krongrach80-ui.github.io/Strong-Care/](https://krongrach80-ui.github.io/Strong-Care/)
-- **GitHub Repository**: [https://github.com/krongrach80-ui/Strong-Care](https://github.com/krongrach80-ui/Strong-Care)
+- **GitHub Pages (Live Demo)**: [https://krongrach80-ui.github.io/Dr.Tech.Care/](https://krongrach80-ui.github.io/Dr.Tech.Care/)
+- **GitHub Repository**: [https://github.com/krongrach80-ui/Dr.Tech.Care](https://github.com/krongrach80-ui/Dr.Tech.Care)
 
 ---
 
