@@ -10,6 +10,7 @@ import {
   Calendar,
   Stethoscope,
   HeartPulse,
+  Share2,
 } from 'lucide-react';
 import { UserAccount, PhysicalTherapist } from '../../types/hospital';
 import { useHospitalStore } from '../../store/hospitalStore';
@@ -21,6 +22,7 @@ interface PtAssignedPatientsModalProps {
   therapist: PhysicalTherapist | null;
   allTherapists: PhysicalTherapist[];
   onOpenPatientProfile: (patient: UserAccount) => void;
+  onOpenDelegation?: (patient: UserAccount) => void;
   onSuccessToast: (msg: string) => void;
 }
 
@@ -30,6 +32,7 @@ export const PtAssignedPatientsModal: React.FC<PtAssignedPatientsModalProps> = (
   therapist,
   allTherapists,
   onOpenPatientProfile,
+  onOpenDelegation,
   onSuccessToast,
 }) => {
   const { users, updateUser, addActivityLog } = useHospitalStore();
@@ -237,6 +240,18 @@ export const PtAssignedPatientsModal: React.FC<PtAssignedPatientsModalProps> = (
                             </div>
                           ) : (
                             <div className="inline-flex items-center gap-1.5">
+                              {onOpenDelegation && (
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenDelegation(patient)}
+                                  className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-xs font-bold transition flex items-center gap-1 shadow-2xs hover:opacity-95"
+                                  title="ฝากเคสคนไข้รายนี้ให้เพื่อนร่วมงานช่วยดูแลชั่วคราว"
+                                >
+                                  <Share2 className="w-3 h-3" />
+                                  <span>+ ฝากเคสชั่วคราว</span>
+                                </button>
+                              )}
+
                               <button
                                 type="button"
                                 onClick={() => setTransferringPatientId(patient.id)}

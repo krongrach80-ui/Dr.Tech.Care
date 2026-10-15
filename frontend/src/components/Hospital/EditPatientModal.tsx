@@ -195,9 +195,11 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const formattedDateTime = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-    const authorPrefix = currentRole === 'admin' ? 'ผอ.รพ.' : 'PT';
+    const authorPrefix = currentRole === 'admin' ? 'Super Admin' : 'PT';
     const authorName = currentUserName || (currentRole === 'admin' ? 'ผู้อำนวยการโรงพยาบาล' : 'กภ. ผู้ดูแล');
-    const immutableStamp = `[${formattedDateTime} - โดย ${authorPrefix}: ${authorName}]`;
+    const immutableStamp = currentRole === 'admin'
+      ? `[${formattedDateTime} - Logged by Super Admin: ${authorName}]`
+      : `[${formattedDateTime} - Logged by PT: ${authorName}]`;
     const finalNoteText = `${immutableStamp} ${newNoteText.trim()}`;
 
     const newNote: MedicalNoteItem = {
@@ -534,7 +536,7 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
                 <div className="p-3 rounded-2xl bg-emerald-50/80 border border-emerald-200 text-emerald-950 flex items-start gap-2">
                   <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
                   <div className="text-[11px] leading-relaxed">
-                    <strong>ระบบบันทึกเวชระเบียนแบบต่อท้ายถาวร (Append-Only Progress Notes System):</strong> บันทึกทางการแพทย์ในอดีตไม่สามารถแก้ไขหรือลบได้โดยนักกายภาพ เพื่อความถูกต้องของประวัติการรักษาตามมาตรฐานวิชาชีพ ทุกการบันทึกจะประทับเวลาและชื่อผู้บันทึกอัตโนมัติ: <code className="font-bold text-emerald-800">[DD/MM/YYYY HH:mm - โดย PT: ชื่อ-นามสกุล]</code>
+                    <strong>ระบบบันทึกเวชระเบียนแบบต่อท้ายถาวร (Append-Only Progress Notes System):</strong> บันทึกทางการแพทย์ในอดีตไม่สามารถแก้ไขหรือลบได้โดยนักกายภาพ เพื่อความถูกต้องของประวัติการรักษาตามมาตรฐานวิชาชีพ ทุกการบันทึกจะประทับเวลาและชื่อผู้บันทึกอัตโนมัติ: <code className="font-bold text-emerald-800">[DD/MM/YYYY HH:mm - Logged by PT: &lt;Name&gt;]</code>
                   </div>
                 </div>
               )}
@@ -567,7 +569,7 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
                   <div className="flex items-center justify-between">
                     <label className="block font-bold text-slate-700">New Note (บันทึกความก้าวหน้าทางการแพทย์ใหม่):</label>
                     <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                      Stamps [DD/MM/YYYY HH:mm - โดย {currentRole === 'admin' ? 'ผอ.รพ.' : 'PT'}: {currentUserName || 'ผู้บันทึก'}]
+                      Stamps [{currentRole === 'admin' ? 'Logged by Super Admin' : 'Logged by PT'}: {currentUserName || 'ผู้บันทึก'}]
                     </span>
                   </div>
                   <textarea

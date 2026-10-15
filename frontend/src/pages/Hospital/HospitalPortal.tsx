@@ -51,6 +51,7 @@ import {
   Copy,
   PackagePlus,
   Server,
+  Share2,
 } from 'lucide-react';
 import { useHospitalStore } from '../../store/hospitalStore';
 import { validatePasswordStrength } from '../../services/authSecurityService';
@@ -482,6 +483,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
   // Temporary Case Delegation Modal State & PT Profile Modal State
   const [isDelegationModalOpen, setIsDelegationModalOpen] = useState<boolean>(false);
+  const [selectedDelegationPatientId, setSelectedDelegationPatientId] = useState<string | number | null>(null);
   const [isEditMyProfileModalOpen, setIsEditMyProfileModalOpen] = useState<boolean>(false);
 
   // My Assigned Patients under primary care
@@ -2723,7 +2725,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     </button>
                   </div>
 
-                  {/* PT Filter Toggle */}
+                  {/* PT Filter Toggle: [My Patients], [Temporary Covered Cases], [All Patients] */}
                   {currentRole === 'therapist' && (
                     <div className="flex items-center gap-1 p-1 bg-white border border-emerald-200 rounded-full shadow-2xs">
                       <button
@@ -2735,7 +2737,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         }`}
                         title="แสดงเฉพาะตารางฝึกของคนไข้ภายใต้การดูแลหลักของฉัน"
                       >
-                        <span>คนไข้ของฉัน (My Patients)</span>
+                        <span>[คนไข้ของฉัน]</span>
                         <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${planCareFilter === 'my_patients' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'}`}>
                           {myAssignedPatients.length}
                         </span>
@@ -2749,7 +2751,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         }`}
                         title="แสดงตารางฝึกของเคสที่ได้รับมอบหมายให้ดูแลแทนชั่วคราว (ฝากเคส)"
                       >
-                        <span>เคสดูแลแทน (Covered)</span>
+                        <span>[เคสรับฝากชั่วคราว]</span>
                         {myCoveredPatients.length > 0 && (
                           <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${planCareFilter === 'covered_cases' ? 'bg-white/20 text-white' : 'bg-cyan-100 text-cyan-800'}`}>
                             {myCoveredPatients.length}
@@ -2765,7 +2767,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         }`}
                         title="ดูตารางนัดหมายทั้งหมดในโรงพยาบาล (อ่านอย่างเดียวสำหรับเคสที่ไม่ได้ดูแล)"
                       >
-                        คนไข้ทั้งหมด (All Patients)
+                        <span>[คนไข้ทั้งหมด]</span>
                       </button>
                     </div>
                   )}
@@ -4139,9 +4141,23 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       </div>
                     </div>
 
-                    <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
-                      Primary Care
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setSelectedDelegationPatientId(null);
+                          setIsDelegationModalOpen(true);
+                        }}
+                        className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-black shadow-xs hover:opacity-95 transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                        title="มอบหมายสิทธิ์ดูแลคนไข้ให้เพื่อนนักกายภาพบำบัดดูแลแทนชั่วคราว พร้อมระบุช่วงเวลา"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>+ ฝากเคสชั่วคราว (Assign Temporary Coverage)</span>
+                      </button>
+
+                      <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
+                        Primary Care
+                      </span>
+                    </div>
                   </div>
 
                   {myAssignedPatients.length === 0 ? (
@@ -4196,6 +4212,19 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                               </td>
                               <td className="py-3 px-4 text-right">
                                 <div className="inline-flex items-center gap-1.5 justify-end">
+                                  {/* Shortcut to Delegate this Patient */}
+                                  <button
+                                    onClick={() => {
+                                      setSelectedDelegationPatientId(pat.id);
+                                      setIsDelegationModalOpen(true);
+                                    }}
+                                    className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 font-extrabold text-xs transition flex items-center gap-1 cursor-pointer shadow-2xs"
+                                    title="ฝากเคสคนไข้รายนี้ให้เพื่อนร่วมงานช่วยดูแลชั่วคราว"
+                                  >
+                                    <Share2 className="w-3 h-3 text-emerald-700" />
+                                    <span>ฝากเคส (Delegate)</span>
+                                  </button>
+
                                   {/* Shortcut to Module 3: Schedule & Routine */}
                                   <button
                                     onClick={() => setCalendarPatientModal(pat)}
@@ -6268,10 +6297,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       {/* ==================================================================== */}
       <TemporaryCaseDelegationModal
         isOpen={isDelegationModalOpen}
-        onClose={() => setIsDelegationModalOpen(false)}
+        onClose={() => {
+          setIsDelegationModalOpen(false);
+          setSelectedDelegationPatientId(null);
+        }}
         currentTherapist={currentTherapist}
         assignedPatients={myAssignedPatients}
         activeTherapists={therapists}
+        initialPatientId={selectedDelegationPatientId}
         onSubmitDelegation={(data) => {
           addDelegation(data);
           showToast(`ฝากเคส ${data.patientName} ให้ ${data.coveringTherapistName} สำเร็จ`);
@@ -6306,6 +6339,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         allTherapists={therapists}
         onOpenPatientProfile={(pat) => {
           setPatientDetailModal(pat);
+        }}
+        onOpenDelegation={(pat) => {
+          setSelectedDelegationPatientId(pat.id);
+          setIsDelegationModalOpen(true);
         }}
         onSuccessToast={showToast}
       />

@@ -1143,6 +1143,11 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
         if (bannedIps && bannedIps.length > 0 && get().bannedIps.length !== bannedIps.length) {
           set({ bannedIps });
         }
+        const remoteDelegations = await supabaseService.fetchTemporaryCoverages();
+        if (remoteDelegations && remoteDelegations.length > 0) {
+          set({ delegations: remoteDelegations });
+          persistDelegations(remoteDelegations);
+        }
       } catch (err) {
         console.error('[SUPABASE] initializeFromSupabase error:', err);
       }
@@ -1967,6 +1972,19 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     const updated = [newDelegation, ...get().delegations];
     set({ delegations: updated });
     persistDelegations(updated);
+
+    if (supabaseService.isConfigured()) {
+      supabaseService.saveTemporaryCoverage(data).then((res) => {
+        if (res.data?.id) {
+          const synced = get().delegations.map((d) => d.id === newDelegation.id ? { ...d, id: res.data.id } : d);
+          set({ delegations: synced });
+          persistDelegations(synced);
+        }
+      }).catch((err) =>
+        console.warn('Supabase saveTemporaryCoverage error:', err)
+      );
+    }
+
     get().addActivityLog(
       'มอบหมายเคสชั่วคราว (Case Delegation)',
       'PATIENT',
@@ -1982,6 +2000,13 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     );
     set({ delegations: updated });
     persistDelegations(updated);
+
+    if (supabaseService.isConfigured()) {
+      supabaseService.revokeTemporaryCoverage(id).catch((err) =>
+        console.warn('Supabase revokeTemporaryCoverage error:', err)
+      );
+    }
+
     get().addActivityLog(
       'ยกเลิกการมอบหมายเคสชั่วคราว (Revoke Delegation)',
       'PATIENT',

@@ -215,7 +215,7 @@
          └─────────────────────┘           └─────────────────────┘           └─────────────────────┘
 ```
 
-#### 1. โครงสร้าง 11 ตารางฐานข้อมูล (Database Schema)
+#### 1. โครงสร้าง 13 ตารางฐานข้อมูล (Database Schema)
 1. **`profiles`**: จัดเก็บข้อมูลผู้ใช้งานทุกคน (`id` UUID เชื่อม `auth.users`, `username` unique, `full_name`, `role: 'admin'|'therapist'|'patient'`, `phone`, `email`, `is_active`, `created_at`, `updated_at`)
 2. **`patients`**: ทะเบียนคนไข้เวชระเบียน (`id` UUID, `profile_id` FK profiles, `patient_code` unique เช่น `P-0012`, `full_name`, `age`, `gender`, `phone`, `chief_complaint`, `medical_history`, `treatment_outcome`, `therapist_notes`, `responsible_therapist_id` FK profiles, `pin_hash` แฮช SHA-256, `started_at`, `status`)
 3. **`therapists`**: ทะเบียนนักกายภาพบำบัด (`id` UUID, `profile_id` FK profiles, `license_no`, `specialty`, `bio`, `phone`, `email`, `status: 'active'|'on_leave'|'suspended'`)
@@ -227,15 +227,29 @@
 9. **`banned_ips`**: ทะเบียน IP Address ที่ถูกแบน (`id` UUID, `value`, `reason`, `banned_by`, `created_at`)
 10. **`system_settings`**: การตั้งค่าพารามิเตอร์ AI และระบบ (`key` text PK, `value` jsonb, `updated_at`)
 11. **`face_embeddings`**: เวกเตอร์ชีวมิติใบหน้า 128 มิติ (`id` UUID, `patient_id` FK patients, `embedding` jsonb, `created_at`)
+12. **`temporary_coverages`**: ระบบการฝากเคสชั่วคราว (`id` UUID, `patient_id` FK patients, `primary_therapist_id` FK, `covering_therapist_id` FK, `valid_from` timestamptz, `valid_until` timestamptz, `status: 'active'|'revoked'|'expired'`, `reason`, `created_at`)
+13. **`medical_notes`**: บันทึกเวชระเบียนแบบ Append-Only ทางคลินิก (`id` UUID, `patient_id` FK patients, `author_id` FK profiles, `author_name`, `author_role`, `content`, `created_at`)
 
-#### 2. นโยบายความปลอดภัยระดับแถว (Row Level Security - RLS)
+#### 2. โครงสร้าง Supabase Storage (Strict User Data Isolation)
+- **Bucket `avatars` (Public / Authenticated Read)**:  
+  - Path Rule: `/{role}/{user_id}/avatar.jpg` (เช่น `/patient/P-1785/avatar.jpg`, `/pt/T-001/avatar.png`)
+- **Bucket `biometric-data` (Strictly Private / RLS Protected)**:  
+  - ปลอดภัยสูงสำหรับ AI สแกนใบหน้า เข้าถึงผ่าน Presigned URL เท่านั้น
+  - Path Rule: `/{role}/{user_id}/face_frames/frame_{1..10}.jpg`
+- **Bucket `exercise-media` (Public Read)**:  
+  - จัดหมวดหมู่ไฟล์มีเดีย สื่อมัลติมีเดีย และภาพท่าทาง
+  - Path Rule: `/{category}/{item_id}/media_file.ext` (เช่น `/mini-games/MG-01/cover_image.png`)
+
+#### 3. นโยบายความปลอดภัยระดับแถว (Row Level Security - RLS)
 - **Admin**: สิทธิ์เต็มรูปแบบ (Full Read/Write/Delete) บนทุกตาราง
 - **Physiotherapist**:
   - `profiles`: ดูได้ทั้งหมด, เพิ่มได้เฉพาะบทบาท `'patient'`
-  - `patients`: เพิ่มคนไข้ใหม่ได้, แก้ไขได้เฉพาะคนไข้ที่ตนเองรับผิดชอบ (`responsible_therapist_id = current_user_id()`), อ่านข้อมูลคนไข้คนอื่นในโหมด Read-Only
+  - `patients`: เพิ่มคนไข้ใหม่ได้, แก้ไขได้เฉพาะคนไข้ที่ตนเองรับผิดชอบ (`responsible_therapist_id = current_user_id()`) หรือเคสที่ได้รับฝากชั่วคราวในช่วงเวลาที่กำหนด (`temporary_coverages.valid_from <= now() AND valid_until >= now()`), อ่านข้อมูลคนไข้คนอื่นในโหมด Read-Only
+  - `temporary_coverages`: สร้างการฝากเคสสำหรับคนไข้ในความดูแล และยกเลิกการฝากเคสได้
+  - `medical_notes`: บันทึกประวัติแบบ Append-Only ห้ามแก้ไขหรือลบย้อนหลัง (`[DD/MM/YYYY HH:mm - Logged by PT: <Name>]`)
   - `therapists`: แก้ไขได้เฉพาะโปรไฟล์ของตนเอง
-  - `exercises`: ดูและจัดการท่าทางกายภาพได้
-  - `activity_logs` & `system_settings`: **ปิดกั้นการเข้าถึง 100%**
+  - `exercises`: ดูและจัดการท่าทางกายภาพได้ (จำกัดการสั่งจ่ายเฉพาะมินิเกมและท่ามาตรฐาน)
+  - `activity_logs` & `system_settings`: **ปิดกั้นการเข้าถึง 100% (403 Forbidden)**
 - **Patient**:
   - อ่านเฉพาะข้อมูลเวชระเบียนของตนเอง (`id = patient_id`)
   - บันทึกผลการฝึก `treatment_sessions` และ `minigame_results` ของตนเองได้

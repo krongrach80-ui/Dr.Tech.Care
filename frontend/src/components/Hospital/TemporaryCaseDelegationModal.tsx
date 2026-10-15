@@ -19,6 +19,7 @@ interface TemporaryCaseDelegationModalProps {
   currentTherapist: PhysicalTherapist | null;
   assignedPatients: UserAccount[];
   activeTherapists: PhysicalTherapist[];
+  initialPatientId?: string | number | null;
   onSubmitDelegation: (data: Omit<TemporaryCaseDelegation, 'id' | 'createdAt' | 'status'>) => void;
   onSuccessToast: (msg: string) => void;
 }
@@ -29,6 +30,7 @@ export const TemporaryCaseDelegationModal: React.FC<TemporaryCaseDelegationModal
   currentTherapist,
   assignedPatients,
   activeTherapists,
+  initialPatientId,
   onSubmitDelegation,
   onSuccessToast,
 }) => {
@@ -36,7 +38,7 @@ export const TemporaryCaseDelegationModal: React.FC<TemporaryCaseDelegationModal
   const nextWeek = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
 
   const [selectedPatientId, setSelectedPatientId] = useState<string | number>(
-    assignedPatients[0]?.id || ''
+    initialPatientId || assignedPatients[0]?.id || ''
   );
   const [selectedCoverPtId, setSelectedCoverPtId] = useState<string | number>(
     activeTherapists.find((t) => t.id !== currentTherapist?.id)?.id || ''
@@ -45,6 +47,18 @@ export const TemporaryCaseDelegationModal: React.FC<TemporaryCaseDelegationModal
   const [endDate, setEndDate] = useState<string>(nextWeek);
   const [reason, setReason] = useState<string>('ไปราชการ / ลาพักผ่อนประจำปี');
   const [error, setError] = useState<string | null>(null);
+
+  // Sync selectedPatientId when modal opens with initialPatientId
+  React.useEffect(() => {
+    if (isOpen) {
+      if (initialPatientId && assignedPatients.some((p) => String(p.id) === String(initialPatientId))) {
+        setSelectedPatientId(initialPatientId);
+      } else if (assignedPatients.length > 0) {
+        setSelectedPatientId(assignedPatients[0].id);
+      }
+      setError(null);
+    }
+  }, [isOpen, initialPatientId, assignedPatients]);
 
   if (!isOpen) return null;
 

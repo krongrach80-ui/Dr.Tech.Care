@@ -278,6 +278,90 @@ create policy settings_admin on public.system_settings for all using (
 );
 
 -- ============================================================================
+-- TEMPORARY CASE DELEGATIONS & MEDICAL NOTES (DrTech.Care)
+-- ============================================================================
+
+-- Temporary Case Delegation (การฝากเคสชั่วคราว)
+create table if not exists public.temporary_coverages (
+  id uuid primary key default gen_random_uuid(),
+  patient_id uuid references public.patients(id) on delete cascade,
+  patient_code text not null,
+  patient_name text not null,
+  original_therapist_id uuid references public.profiles(id) on delete cascade,
+  original_therapist_name text not null,
+  covering_therapist_id uuid references public.profiles(id) on delete cascade,
+  covering_therapist_name text not null,
+  start_date date not null,
+  end_date date not null,
+  reason text default '-',
+  status text default 'active' check (status in ('active', 'revoked', 'expired')),
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_coverages_covering_pt on public.temporary_coverages(covering_therapist_id, status);
+create index if not exists idx_coverages_patient on public.temporary_coverages(patient_id, status);
+
+alter table public.temporary_coverages enable row level security;
+drop policy if exists coverages_select on public.temporary_coverages;
+drop policy if exists coverages_write on public.temporary_coverages;
+
+create policy coverages_select on public.temporary_coverages for select using (true);
+create policy coverages_write on public.temporary_coverages for all using (
+  current_role() in ('admin', 'therapist')
+);
+
+-- Append-Only Medical Notes (เวชระเบียนแบบต่อท้ายถาวร)
+create table if not exists public.medical_notes (
+  id uuid primary key default gen_random_uuid(),
+  patient_id uuid references public.patients(id) on delete cascade,
+  author_id uuid references public.profiles(id) on delete set null,
+  author_name text not null,
+  author_role text not null check (author_role in ('admin', 'therapist')),
+  note text not null,
+  formatted_date text not null,
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_medical_notes_patient on public.medical_notes(patient_id, created_at desc);
+
+alter table public.medical_notes enable row level security;
+drop policy if exists medical_notes_select on public.medical_notes;
+drop policy if exists medical_notes_insert on public.medical_notes;
+drop policy if exists medical_notes_admin_all on public.medical_notes;
+
+create policy medical_notes_select on public.medical_notes for select using (true);
+create policy medical_notes_insert on public.medical_notes for insert with check (
+  current_role() in ('admin', 'therapist')
+);
+create policy medical_notes_admin_all on public.medical_notes for all using (
+  current_role() = 'admin'
+);
+
+-- ============================================================================
+-- STORAGE BUCKETS (avatars, exercise-media, biometric-data)
+-- ============================================================================
+insert into storage.buckets (id, name, public)
+values 
+  ('avatars', 'avatars', true),
+  ('exercise-media', 'exercise-media', true),
+  ('biometric-data', 'biometric-data', false)
+on conflict (id) do update set public = excluded.public;
+
+-- Storage bucket RLS policies
+drop policy if exists "Public Access for avatars" on storage.objects;
+create policy "Public Access for avatars" on storage.objects for select using (bucket_id in ('avatars', 'exercise-media'));
+
+drop policy if exists "Staff Upload avatars" on storage.objects;
+create policy "Staff Upload avatars" on storage.objects for insert with check (
+  bucket_id in ('avatars', 'exercise-media', 'biometric-data')
+);
+
+drop policy if exists "Staff Update avatars" on storage.objects;
+create policy "Staff Update avatars" on storage.objects for update using (
+  bucket_id in ('avatars', 'exercise-media', 'biometric-data')
+);
+
+-- ============================================================================
 -- REALTIME
 -- ============================================================================
 do $$
@@ -288,5 +372,20 @@ begin
   ) then
     alter publication supabase_realtime add table public.patients;
   end if;
+
+  if not exists (
+    select 1 from pg_publication_tables 
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'temporary_coverages'
+  ) then
+    alter publication supabase_realtime add table public.temporary_coverages;
+  end if;
+
+  if not exists (
+    select 1 from pg_publication_tables 
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'medical_notes'
+  ) then
+    alter publication supabase_realtime add table public.medical_notes;
+  end if;
 end;
 $$;
+

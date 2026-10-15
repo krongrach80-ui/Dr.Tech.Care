@@ -12,7 +12,7 @@
  */
 
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { UserAccount, UserRole, PhysicalTherapist, HospitalExercise, ActivityLog, AiSystemSettings } from '../types/hospital';
+import { UserAccount, UserRole, PhysicalTherapist, HospitalExercise, ActivityLog, AiSystemSettings, TemporaryCaseDelegation, MedicalNoteItem } from '../types/hospital';
 import { Patient } from '../types/patient';
 import { Session } from '../types/session';
 
@@ -1110,5 +1110,144 @@ export const supabaseService = {
     }
 
     return results;
+  },
+
+  // =========================================================================
+  // 10. TEMPORARY CASE DELEGATIONS & MEDICAL NOTES
+  // =========================================================================
+
+  /**
+   * ดึงข้อมูลการมอบหมายเคสชั่วคราวทั้งหมดจาก Supabase
+   */
+  async fetchTemporaryCoverages(): Promise<TemporaryCaseDelegation[]> {
+    if (!isSupabaseConfigured()) return [];
+    try {
+      const { data, error } = await supabase
+        .from('temporary_coverages')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('fetchTemporaryCoverages error:', error);
+        return [];
+      }
+
+      return (data || []).map((row: any) => ({
+        id: row.id,
+        patientId: row.patient_id,
+        patientName: row.patient_name,
+        patientCode: row.patient_code,
+        originalTherapistId: row.original_therapist_id,
+        originalTherapistName: row.original_therapist_name,
+        coveringTherapistId: row.covering_therapist_id,
+        coveringTherapistName: row.covering_therapist_name,
+        startDate: row.start_date,
+        endDate: row.end_date,
+        reason: row.reason || '-',
+        status: row.status || 'active',
+        createdAt: row.created_at,
+      }));
+    } catch (e) {
+      console.warn('fetchTemporaryCoverages catch:', e);
+      return [];
+    }
+  },
+
+  /**
+   * บันทึกหรือสร้างการฝากเคสชั่วคราวใหม่
+   */
+  async saveTemporaryCoverage(delegation: Omit<TemporaryCaseDelegation, 'id' | 'createdAt' | 'status'>): Promise<{ success: boolean; data?: any; error?: string }> {
+    if (!isSupabaseConfigured()) return { success: true };
+    try {
+      const payload: any = {
+        patient_code: delegation.patientCode,
+        patient_name: delegation.patientName,
+        original_therapist_name: delegation.originalTherapistName,
+        covering_therapist_name: delegation.coveringTherapistName,
+        start_date: delegation.startDate,
+        end_date: delegation.endDate,
+        reason: delegation.reason || '-',
+        status: 'active',
+      };
+
+      const isUuid = (val: any) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+      if (isUuid(delegation.patientId)) payload.patient_id = delegation.patientId;
+      if (isUuid(delegation.originalTherapistId)) payload.original_therapist_id = delegation.originalTherapistId;
+      if (isUuid(delegation.coveringTherapistId)) payload.covering_therapist_id = delegation.coveringTherapistId;
+
+      const { data, error } = await supabase
+        .from('temporary_coverages')
+        .insert(payload)
+        .select()
+        .single();
+
+      if (error) {
+        console.warn('saveTemporaryCoverage error:', error);
+        return { success: false, error: error.message };
+      }
+
+      return { success: true, data };
+    } catch (e: any) {
+      console.warn('saveTemporaryCoverage catch:', e);
+      return { success: false, error: e.message };
+    }
+  },
+
+  /**
+   * ยกเลิกหรือดึงเคสฝากกลับ
+   */
+  async revokeTemporaryCoverage(delegationId: string | number): Promise<{ success: boolean; error?: string }> {
+    if (!isSupabaseConfigured()) return { success: true };
+    try {
+      const { error } = await supabase
+        .from('temporary_coverages')
+        .update({ status: 'revoked' })
+        .eq('id', delegationId);
+
+      if (error) {
+        console.warn('revokeTemporaryCoverage error:', error);
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  /**
+   * บันทึกเวชระเบียนแบบต่อท้ายถาวร (Append-Only Medical Note)
+   */
+  async appendMedicalNote(patientId: string | number, noteText: string, authorName: string, authorRole: 'admin' | 'therapist' = 'therapist', authorId?: string | number): Promise<{ success: boolean; data?: any; error?: string }> {
+    if (!isSupabaseConfigured()) return { success: true };
+    try {
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const formattedDate = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+      const isUuid = (val: any) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+      const payload: any = {
+        author_name: authorName,
+        author_role: authorRole,
+        note: noteText,
+        formatted_date: formattedDate,
+      };
+
+      if (isUuid(patientId)) payload.patient_id = patientId;
+      if (isUuid(authorId)) payload.author_id = authorId;
+
+      const { data, error } = await supabase
+        .from('medical_notes')
+        .insert(payload)
+        .select()
+        .single();
+
+      if (error) {
+        console.warn('appendMedicalNote error:', error);
+        return { success: false, error: error.message };
+      }
+      return { success: true, data };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
   },
 };
