@@ -27,6 +27,7 @@ import {
   ChevronLeft,
   Menu,
   Phone,
+  Mail,
   FileText,
   HeartPulse,
   X,
@@ -53,7 +54,7 @@ import {
 } from 'lucide-react';
 import { useHospitalStore } from '../../store/hospitalStore';
 import { validatePasswordStrength } from '../../services/authSecurityService';
-import { UserAccount, UserRole, PhysicalTherapist, HospitalExercise, ActivityLog, TreatmentPlan } from '../../types/hospital';
+import { UserAccount, UserRole, PhysicalTherapist, HospitalExercise, ActivityLog, TreatmentPlan, TemporaryCaseDelegation } from '../../types/hospital';
 import { ReceptionOnboardingModal } from '../../components/Reception/ReceptionOnboardingModal';
 import { AddUserModal } from '../../components/Hospital/AddUserModal';
 import { EditUserModal } from '../../components/Hospital/EditUserModal';
@@ -77,6 +78,8 @@ import { PtAssignedPatientsModal } from '../../components/Hospital/PtAssignedPat
 import { PatientCalendarModal } from '../../components/Hospital/PatientCalendarModal';
 import { DailyRoutineAssignmentModal } from '../../components/Hospital/DailyRoutineAssignmentModal';
 import { SecurityControlModal } from '../../components/Hospital/SecurityControlModal';
+import { TemporaryCaseDelegationModal } from '../../components/Hospital/TemporaryCaseDelegationModal';
+import { EditMyProfileModal } from '../../components/Hospital/EditMyProfileModal';
 import { defaultDash, formatThaiDate, formatThaiDateTime } from '../../utils/dashboardUtils';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 
@@ -129,6 +132,11 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     exercises,
     modpacks,
     treatmentPlans,
+    delegations,
+    addDelegation,
+    revokeDelegation,
+    isPatientCoveredByTherapist,
+    getCoveringDelegationForPatient,
     activityLogs,
     bannedDevices,
     bannedIps,
@@ -452,8 +460,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   // Guard against forbidden tab navigation for Physiotherapist
   useEffect(() => {
     if (currentRole === 'therapist' && (activeTab === 'logs' || activeTab === 'settings')) {
-      setActiveTab('users');
-      showToast('ไม่มีสิทธิ์เข้าถึง: หน้านี้สงวนสิทธิ์เฉพาะผู้อำนวยการ / แอดมินใหญ่ (Admin)');
+      setActiveTab('therapists');
+      showToast('⛔ 403 Forbidden: สิทธิ์ไม่เพียงพอ หน้านี้สงวนสิทธิ์เฉพาะผู้อำนวยการ รพ. / Super Admin เท่านั้น');
     }
   }, [currentRole, activeTab]);
 
@@ -471,6 +479,80 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       therapists[0]
     );
   }, [therapists, users, currentUserId]);
+
+  // Temporary Case Delegation Modal State & PT Profile Modal State
+  const [isDelegationModalOpen, setIsDelegationModalOpen] = useState<boolean>(false);
+  const [isEditMyProfileModalOpen, setIsEditMyProfileModalOpen] = useState<boolean>(false);
+
+  // My Assigned Patients under primary care
+  const myAssignedPatients = useMemo(() => {
+    return users.filter((u) => {
+      if (u.role !== 'patient') return false;
+      const isAssigned =
+        u.assignedTherapistId === currentUserId ||
+        (currentTherapist && (u.assignedTherapistId === currentTherapist.id || (u.assignedTherapistName && u.assignedTherapistName.includes(currentTherapist.name))));
+      return isAssigned;
+    });
+  }, [users, currentUserId, currentTherapist]);
+
+  // Covered Cases (Assigned to other PTs, but delegated to this PT)
+  const myCoveredPatients = useMemo(() => {
+    return users.filter((u) => {
+      if (u.role !== 'patient') return false;
+      return (
+        isPatientCoveredByTherapist(u.id, currentUserId) ||
+        (currentTherapist && isPatientCoveredByTherapist(u.id, currentTherapist.id))
+      );
+    });
+  }, [users, currentUserId, currentTherapist, isPatientCoveredByTherapist, delegations]);
+
+  // Cases this PT has delegated out to peer PTs
+  const myDelegatedOutCases = useMemo(() => {
+    return delegations.filter((d) => {
+      if (d.status !== 'active') return false;
+      return (
+        d.originalTherapistId === currentUserId ||
+        (currentTherapist && d.originalTherapistId === currentTherapist.id)
+      );
+    });
+  }, [delegations, currentUserId, currentTherapist]);
+
+  // Access Control Helpers for Schedules (Case-Based Write Access)
+  const canWriteScheduleForPlan = (plan: TreatmentPlan): boolean => {
+    if (currentRole === 'admin') return true;
+    if (currentRole === 'therapist') {
+      const isOwner =
+        plan.therapistId === currentUserId ||
+        (currentTherapist && (plan.therapistId === currentTherapist.id || (plan.therapistName && currentTherapist.name && plan.therapistName.includes(currentTherapist.name))));
+      if (isOwner) return true;
+      if (
+        isPatientCoveredByTherapist(plan.patientId, currentUserId) ||
+        (currentTherapist && isPatientCoveredByTherapist(plan.patientId, currentTherapist.id))
+      ) {
+        return true;
+      }
+      return false;
+    }
+    return false;
+  };
+
+  const canWriteScheduleForPatient = (pat: UserAccount): boolean => {
+    if (currentRole === 'admin') return true;
+    if (currentRole === 'therapist') {
+      const isOwner =
+        pat.assignedTherapistId === currentUserId ||
+        (currentTherapist && (pat.assignedTherapistId === currentTherapist.id || (pat.assignedTherapistName && currentTherapist.name && pat.assignedTherapistName.includes(currentTherapist.name))));
+      if (isOwner) return true;
+      if (
+        isPatientCoveredByTherapist(pat.id, currentUserId) ||
+        (currentTherapist && isPatientCoveredByTherapist(pat.id, currentTherapist.id))
+      ) {
+        return true;
+      }
+      return false;
+    }
+    return false;
+  };
 
   // Reception Onboarding Modal
   const [isReceptionOpen, setIsReceptionOpen] = useState<boolean>(false);
@@ -816,7 +898,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [deletingPlan, setDeletingPlan] = useState<TreatmentPlan | null>(null);
   const [planSearch, setPlanSearch] = useState<string>('');
   const [planStatusFilter, setPlanStatusFilter] = useState<'all' | 'active' | 'paused' | 'completed'>('all');
-  const [planCareFilter, setPlanCareFilter] = useState<'all' | 'assigned'>('all');
+  const [planCareFilter, setPlanCareFilter] = useState<'my_patients' | 'covered_cases' | 'all'>('my_patients');
 
   // Timetable scheduling states (ตารางเรียนกายภาพ) & Approval Gate (P2-10)
   const [scheduleViewMode, setScheduleViewMode] = useState<'today' | 'weekly' | 'timetable' | 'list' | 'approvals'>('today');
@@ -940,12 +1022,20 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const filteredTreatmentPlans = useMemo(() => {
     return treatmentPlans.filter((plan) => {
       // PT Care filter
-      if (currentRole === 'therapist' && planCareFilter === 'assigned') {
-        const isMyPlan =
-          plan.therapistId === currentUserId ||
-          (currentUser?.name &&
-            plan.therapistName.includes(currentUser.name.replace(/^(กภ\.|นาย|นางสาว|ดร\.)\s*/, '')));
-        if (!isMyPlan) return false;
+      if (currentRole === 'therapist') {
+        if (planCareFilter === 'my_patients') {
+          const isMyPlan =
+            plan.therapistId === currentUserId ||
+            (currentTherapist && (plan.therapistId === currentTherapist.id || (plan.therapistName && currentTherapist.name && plan.therapistName.includes(currentTherapist.name)))) ||
+            (currentUser?.name &&
+              plan.therapistName.includes(currentUser.name.replace(/^(กภ\.|นาย|นางสาว|ดร\.)\s*/, '')));
+          if (!isMyPlan) return false;
+        } else if (planCareFilter === 'covered_cases') {
+          const isCovered =
+            isPatientCoveredByTherapist(plan.patientId, currentUserId) ||
+            (currentTherapist && isPatientCoveredByTherapist(plan.patientId, currentTherapist.id));
+          if (!isCovered) return false;
+        }
       }
 
       // Status filter
@@ -979,7 +1069,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
       return matchPatient || matchTherapist || matchDiagnosis || matchExercise || matchSchedule;
     });
-  }, [treatmentPlans, currentRole, planCareFilter, planStatusFilter, planSearch, scheduleDayFilter, currentUserId, currentUser]);
+  }, [treatmentPlans, currentRole, planCareFilter, planStatusFilter, planSearch, scheduleDayFilter, currentUserId, currentUser, currentTherapist, isPatientCoveredByTherapist, delegations]);
 
   // =========================================================================
   // 4. STATE FOR PHYSIOTHERAPIST DATA (Tab 4: therapists)
@@ -1885,10 +1975,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   <button
                     onClick={() => setIsAddUserModalOpen(true)}
                     className="flex items-center gap-1.5 px-3.5 py-1.5 sm:py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-bold shadow-md shadow-cyan-500/25 hover:brightness-105 transition active:scale-95 cursor-pointer whitespace-nowrap"
-                    title="ลงทะเบียนผู้ใช้ใหม่ พร้อมสแกนใบหน้า 10 ช็อต"
+                    title={currentRole === 'therapist' ? "ลงทะเบียนคนไข้ใหม่ พร้อมสแกนใบหน้า 10 ช็อต" : "ลงทะเบียนผู้ใช้ใหม่ พร้อมสแกนใบหน้า 10 ช็อต"}
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>+ Add New User</span>
+                    <span>{currentRole === 'therapist' ? '+ Add New Patient' : '+ Add New User'}</span>
                   </button>
                 </div>
               </div>
@@ -2039,62 +2129,70 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                               {/* 7. Actions: Edit Account (Modal B), Biometric Reset (Modal C), Delete */}
                               <td className="py-2.5 px-3 sm:px-4 text-right whitespace-nowrap">
                                 <div className="inline-flex items-center gap-1.5 justify-end">
-                                  {/* Modal B: Edit Account button */}
-                                  <button
-                                    onClick={() => {
-                                      if (canEdit) {
-                                        setEditingUser(user);
-                                      } else {
-                                        showToast('สิทธิ์ไม่เพียงพอ: นักกายภาพสามารถแก้ไขได้เฉพาะคนไข้ที่ตนเองดูแลเท่านั้น');
-                                      }
-                                    }}
-                                    disabled={!canEdit}
-                                    title="Edit Account (แก้ไขข้อมูลบัญชี, สิทธิ์, รหัสผ่าน, สถานะ)"
-                                    className={`px-2.5 py-1 rounded-xl border text-xs font-bold transition flex items-center gap-1 ${
-                                      canEdit
-                                        ? 'border-slate-200 text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 cursor-pointer shadow-xs'
-                                        : 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50'
-                                    }`}
-                                  >
-                                    <Pencil className="w-3 h-3" />
-                                    <span>Edit</span>
-                                  </button>
+                                  {currentRole === 'therapist' && user.role !== 'patient' ? (
+                                    <span className="px-2.5 py-1 rounded-xl bg-slate-100 text-slate-400 font-semibold text-[11px] border border-slate-200" title="สิทธิ์ไม่เพียงพอ: นักกายภาพไม่สามารถแก้ไขข้อมูลของเพื่อนร่วมงานหรือผู้ดูแลระบบได้">
+                                      🔒 Read-Only
+                                    </span>
+                                  ) : (
+                                    <>
+                                      {/* Modal B: Edit Account button */}
+                                      <button
+                                        onClick={() => {
+                                          if (canEdit) {
+                                            setEditingUser(user);
+                                          } else {
+                                            showToast('สิทธิ์ไม่เพียงพอ: นักกายภาพสามารถแก้ไขได้เฉพาะคนไข้เท่านั้น');
+                                          }
+                                        }}
+                                        disabled={!canEdit}
+                                        title="Edit Account (แก้ไขข้อมูลบัญชี, สิทธิ์, รหัสผ่าน, สถานะ)"
+                                        className={`px-2.5 py-1 rounded-xl border text-xs font-bold transition flex items-center gap-1 ${
+                                          canEdit
+                                            ? 'border-slate-200 text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 cursor-pointer shadow-xs'
+                                            : 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50'
+                                        }`}
+                                      >
+                                        <Pencil className="w-3 h-3" />
+                                        <span>Edit</span>
+                                      </button>
 
-                                  {/* Modal C: Biometric Reset button */}
-                                  <button
-                                    onClick={() => {
-                                      setBiometricResetUser(user);
-                                    }}
-                                    title="Biometric Reset (ดูเวกเตอร์ใบหน้า, ลบอัตลักษณ์ หรือเปิดกล้องสแกน 10 ช็อตใหม่)"
-                                    className="px-2.5 py-1 rounded-xl border border-cyan-300 bg-cyan-50/70 text-cyan-800 hover:bg-cyan-100 text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-xs"
-                                  >
-                                    <Camera className="w-3 h-3 text-cyan-700" />
-                                    <span>Face Reset</span>
-                                  </button>
+                                      {/* Modal C: Biometric Reset button */}
+                                      <button
+                                        onClick={() => {
+                                          setBiometricResetUser(user);
+                                        }}
+                                        title="Biometric Reset (ดูเวกเตอร์ใบหน้า, ลบอัตลักษณ์ หรือเปิดกล้องสแกน 10 ช็อตใหม่)"
+                                        className="px-2.5 py-1 rounded-xl border border-cyan-300 bg-cyan-50/70 text-cyan-800 hover:bg-cyan-100 text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-xs"
+                                      >
+                                        <Camera className="w-3 h-3 text-cyan-700" />
+                                        <span>Face Reset</span>
+                                      </button>
 
-                                  {/* Delete User */}
-                                  <button
-                                    onClick={() => {
-                                      if (canDelete) {
-                                        setDeletingUser(user);
-                                      } else {
-                                        showToast(
-                                          user.role === 'admin'
-                                            ? 'ไม่สามารถลบบัญชีแอดมินใหญ่ได้'
-                                            : 'คุณสามารถลบได้เฉพาะคนไข้ที่ตนเองดูแล'
-                                        );
-                                      }
-                                    }}
-                                    disabled={!canDelete}
-                                    title={canDelete ? 'ลบบัญชีผู้ใช้งาน' : 'ลบได้เฉพาะคนไข้ที่ตนเองดูแลเท่านั้น'}
-                                    className={`p-1.5 rounded-xl border transition ${
-                                      canDelete
-                                        ? 'border-slate-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300 cursor-pointer shadow-xs'
-                                        : 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50'
-                                    }`}
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                  </button>
+                                      {/* Delete User */}
+                                      <button
+                                        onClick={() => {
+                                          if (canDelete) {
+                                            setDeletingUser(user);
+                                          } else {
+                                            showToast(
+                                              user.role === 'admin'
+                                                ? 'ไม่สามารถลบบัญชีแอดมินใหญ่ได้'
+                                                : 'คุณสามารถลบได้เฉพาะคนไข้ที่ตนเองดูแล'
+                                            );
+                                          }
+                                        }}
+                                        disabled={!canDelete}
+                                        title={canDelete ? 'ลบบัญชีผู้ใช้งาน' : 'ลบได้เฉพาะคนไข้ที่ตนเองดูแลเท่านั้น'}
+                                        className={`p-1.5 rounded-xl border transition ${
+                                          canDelete
+                                            ? 'border-slate-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300 cursor-pointer shadow-xs'
+                                            : 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50'
+                                        }`}
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
+                                    </>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -2636,24 +2734,45 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   {currentRole === 'therapist' && (
                     <div className="flex items-center gap-1 p-1 bg-white border border-emerald-200 rounded-full shadow-2xs">
                       <button
-                        onClick={() => setPlanCareFilter('assigned')}
-                        className={`px-2.5 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
-                          planCareFilter === 'assigned'
+                        onClick={() => setPlanCareFilter('my_patients')}
+                        className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                          planCareFilter === 'my_patients'
                             ? 'bg-[#10B981] text-white shadow-xs'
                             : 'text-slate-600 hover:text-emerald-800'
                         }`}
+                        title="แสดงเฉพาะตารางฝึกของคนไข้ภายใต้การดูแลหลักของฉัน"
                       >
-                        เฉพาะที่ฉันดูแล
+                        <span>คนไข้ของฉัน (My Patients)</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${planCareFilter === 'my_patients' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'}`}>
+                          {myAssignedPatients.length}
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => setPlanCareFilter('covered_cases')}
+                        className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                          planCareFilter === 'covered_cases'
+                            ? 'bg-cyan-600 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-cyan-800'
+                        }`}
+                        title="แสดงตารางฝึกของเคสที่ได้รับมอบหมายให้ดูแลแทนชั่วคราว (ฝากเคส)"
+                      >
+                        <span>เคสดูแลแทน (Covered)</span>
+                        {myCoveredPatients.length > 0 && (
+                          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${planCareFilter === 'covered_cases' ? 'bg-white/20 text-white' : 'bg-cyan-100 text-cyan-800'}`}>
+                            {myCoveredPatients.length}
+                          </span>
+                        )}
                       </button>
                       <button
                         onClick={() => setPlanCareFilter('all')}
-                        className={`px-2.5 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
+                        className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
                           planCareFilter === 'all'
                             ? 'bg-[#0F2F2B] text-emerald-300 shadow-xs'
                             : 'text-slate-600 hover:text-emerald-800'
                         }`}
+                        title="ดูตารางนัดหมายทั้งหมดในโรงพยาบาล (อ่านอย่างเดียวสำหรับเคสที่ไม่ได้ดูแล)"
                       >
-                        ตารางทั้งหมด
+                        คนไข้ทั้งหมด (All Patients)
                       </button>
                     </div>
                   )}
@@ -3852,30 +3971,416 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
           {/* ================================================================== */}
           {/* PAGE 3: ข้อมูลนักกายภาพ (Physiotherapist Data)                        */}
           {/* ================================================================== */}
+          {/* ================================================================== */}
+          {/* PAGE 4: ข้อมูลนักกายภาพ & PT WORKSPACE                              */}
+          {/* ================================================================== */}
           {activeTab === 'therapists' && (
-            <div className="space-y-6 animate-fadeIn">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h3 className="font-bold text-lg text-[#0F2F2B]">ข้อมูลนักกายภาพบำบัดประจำโรงพยาบาล</h3>
-                  <p className="text-xs text-slate-500">
-                    แสดง: ชื่อ, เคสที่รับผิดชอบ, เบอร์โทร, ประวัติส่วนตัว
-                    {currentRole === 'therapist' && ' (คุณสามารถแก้ไขได้เฉพาะข้อมูลบัญชีของตนเอง)'}
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <div className="w-64 relative">
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={therapistSearch}
-                      onChange={(e) => setTherapistSearch(e.target.value)}
-                      placeholder="ค้นหานักกายภาพ..."
-                      className="w-full pl-9 pr-3 py-2 rounded-full bg-white border border-emerald-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#10B981]"
-                    />
+            currentRole === 'therapist' ? (
+              /* ============================================================= */
+              /* PT WORKSPACE & CASE MANAGEMENT (MODULE 4 SPECIFICATION)       */
+              /* ============================================================= */
+              <div className="space-y-6 animate-fadeIn text-left">
+                {/* Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="font-black text-xl text-[#0F2F2B] flex items-center gap-2">
+                      <Stethoscope className="w-6 h-6 text-emerald-600" />
+                      <span>PT Workspace & การจัดการเคสคนไข้</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1">
+                      พื้นที่ทำงานส่วนบุคคลสำหรับนักกายภาพบำบัด: ข้อมูลเวชปฏิบัติ, เคสคนไข้ในความดูแลหลัก และระบบฝากเคสชั่วคราว (Temporary Delegation)
+                    </p>
                   </div>
 
-                  {currentRole === 'admin' && (
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      onClick={() => setIsDelegationModalOpen(true)}
+                      className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-black shadow-md shadow-cyan-500/25 hover:opacity-95 transition flex items-center gap-2 cursor-pointer active:scale-95"
+                      title="มอบหมายสิทธิ์ดูแลคนไข้ให้เพื่อนนักกายภาพบำบัดดูแลแทนชั่วคราว พร้อมระบุช่วงเวลา"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>+ ฝากเคสชั่วคราว (Assign Temporary Coverage)</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* SECTION 1: PERSONAL PROFILE CARD (MY PROFILE) */}
+                <div className="bg-white rounded-3xl p-6 sm:p-7 border border-emerald-200 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-emerald-100/40 via-cyan-100/30 to-transparent rounded-full -mr-20 -mt-20 pointer-events-none" />
+
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
+                      {/* Avatar / Photo */}
+                      <div className="relative group">
+                        {currentTherapist?.photoUrl ? (
+                          <img
+                            src={currentTherapist.photoUrl}
+                            alt={currentTherapist.name}
+                            className="w-20 h-20 rounded-3xl object-cover border-2 border-emerald-400 shadow-md shadow-emerald-500/20"
+                          />
+                        ) : (
+                          <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-[#0F2F2B] via-emerald-900 to-[#0A2540] text-emerald-200 font-black text-2xl flex items-center justify-center shadow-md shadow-emerald-950/20">
+                            {currentTherapist?.name ? currentTherapist.name.charAt(currentTherapist.name.startsWith('กภ.') ? 4 : 0) : 'ก'}
+                          </div>
+                        )}
+                        <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-500 border-2 border-white flex items-center justify-center text-[10px] text-white" title="Active">
+                          ✓
+                        </span>
+                      </div>
+
+                      {/* Name & Credentials */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <h4 className="font-black text-lg sm:text-xl text-[#0F2F2B]">
+                            {currentTherapist?.name || currentUser?.name || 'กภ. ธนากร วงศ์สวัสดิ์'}
+                          </h4>
+                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 font-extrabold text-[11px] border border-emerald-300">
+                            นักกายภาพบำบัดวิชาชีพ (PT Specialist)
+                          </span>
+                          <span className="px-2.5 py-0.5 rounded-full bg-cyan-100 text-cyan-900 font-mono text-[11px] font-bold border border-cyan-300">
+                            {currentTherapist?.code || 'T-101'}
+                          </span>
+                        </div>
+
+                        {/* Read-Only License and Specialty Badges */}
+                        <div className="flex items-center gap-2 flex-wrap text-xs">
+                          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-100 text-slate-700 font-bold border border-slate-200" title="เลขที่ใบอนุญาตประกอบวิชาชีพ (กำหนดจากระบบส่วนกลาง - Read-Only)">
+                            <Lock className="w-3.5 h-3.5 text-slate-400" />
+                            <span>เลขที่ใบอนุญาต: <strong>{currentTherapist?.licenseNumber || 'กภ. 8920'}</strong></span>
+                          </div>
+                          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-50 text-emerald-900 font-bold border border-emerald-200" title="ความเชี่ยวชาญทางคลินิก (กำหนดจากระบบส่วนกลาง - Read-Only)">
+                            <HeartPulse className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>แผนก/ความเชี่ยวชาญ: <strong>{currentTherapist?.specialty || 'กายภาพบำบัดระบบกระดูกและกล้ามเนื้อ'}</strong></span>
+                          </div>
+                        </div>
+
+                        {/* Contacts */}
+                        <div className="flex items-center gap-4 text-xs text-slate-600 flex-wrap pt-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>โทรศัพท์: <strong>{currentTherapist?.phone || currentUser?.phone || '081-234-5678'}</strong></span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <Mail className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>อีเมล: <strong>{currentTherapist?.email || currentUser?.email || 'pt.thanakorn@drtechcare.hospital'}</strong></span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Edit My Profile Button */}
+                    <div className="flex items-center gap-2 flex-shrink-0 self-start sm:self-auto">
+                      <button
+                        onClick={() => setIsEditMyProfileModalOpen(true)}
+                        className="px-4 py-2.5 rounded-2xl bg-white hover:bg-emerald-50 text-emerald-900 border border-emerald-300 font-extrabold text-xs shadow-xs transition flex items-center gap-2 cursor-pointer active:scale-95"
+                        title="แก้ไขรูปโปรไฟล์ เบอร์โทรศัพท์ อีเมล และประวัติส่วนตัว"
+                      >
+                        <Pencil className="w-4 h-4 text-emerald-600" />
+                        <span>แก้ไขข้อมูลของฉัน (Edit My Profile)</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Bio statement */}
+                  <div className="mt-4 pt-4 border-t border-emerald-100/80 text-xs text-slate-600 space-y-1">
+                    <span className="font-extrabold text-slate-800">ประวัติส่วนตัว & การศึกษา (Bio):</span>
+                    <p className="text-[12px] leading-relaxed text-slate-600 bg-emerald-50/40 p-3 rounded-2xl border border-emerald-100">
+                      {currentTherapist?.bio || 'สำเร็จการศึกษากายภาพบำบัดบัณฑิต มีประสบการณ์ฟื้นฟูกระดูกและข้อ 6 ปี เชี่ยวชาญการรักษาอาการข้อไหล่ติด ออฟฟิศซินโดรม และข้อเข่าเสื่อม'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* SECTION 2: METRICS & SUMMARY CARDS */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                  <div className="bg-white rounded-2xl p-4 border border-emerald-200 shadow-2xs flex items-center gap-3.5">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+                      <Users className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-black text-[#0F2F2B] leading-none">
+                        {myAssignedPatients.length}
+                      </div>
+                      <div className="text-xs font-bold text-slate-500 mt-1">คนไข้ในความดูแลหลัก (Primary Cases)</div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-2xl p-4 border border-cyan-200 shadow-2xs flex items-center gap-3.5">
+                    <div className="w-12 h-12 rounded-2xl bg-cyan-100 text-cyan-800 flex items-center justify-center font-bold">
+                      <ShieldCheck className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-black text-cyan-900 leading-none">
+                        {myCoveredPatients.length}
+                      </div>
+                      <div className="text-xs font-bold text-slate-500 mt-1">เคสที่ได้รับฝากดูแลแทน (Covering Cases)</div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-2xl p-4 border border-amber-200 shadow-2xs flex items-center gap-3.5">
+                    <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
+                      <Clock className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-black text-amber-900 leading-none">
+                        {myDelegatedOutCases.length}
+                      </div>
+                      <div className="text-xs font-bold text-slate-500 mt-1">เคสที่ฝากเพื่อนดูแล (Delegated Out)</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SECTION 3: MY ASSIGNED PATIENTS TABLE */}
+                <div className="bg-white rounded-3xl border border-emerald-200 shadow-sm overflow-hidden">
+                  <div className="p-5 border-b border-emerald-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold">
+                        <Users className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="font-black text-base text-[#0F2F2B]">
+                          คนไข้ในความรับผิดชอบหลัก ({myAssignedPatients.length} ราย)
+                        </h4>
+                        <p className="text-xs text-slate-500">
+                          คนไข้ที่มีคุณเป็นนักกายภาพประจำตัว มีสิทธิ์เต็มในการปรับตารางฝึกและบันทึกเวชระเบียน
+                        </p>
+                      </div>
+                    </div>
+
+                    <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
+                      Primary Care
+                    </span>
+                  </div>
+
+                  {myAssignedPatients.length === 0 ? (
+                    <div className="py-12 text-center space-y-2 bg-emerald-50/30">
+                      <div className="text-2xl">📋</div>
+                      <div className="font-bold text-sm text-[#0F2F2B]">ยังไม่มีคนไข้ที่มอบหมายให้คุณดูแลโดยตรง</div>
+                      <p className="text-xs text-slate-400">
+                        คุณสามารถเพิ่มคนไข้ใหม่ได้จากแท็บ "1. จัดการผู้ใช้งาน" หรือรับฝากเคสจากเพื่อนร่วมงาน
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-emerald-100 bg-emerald-50/70 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
+                            <th className="py-3 px-4">คนไข้ (HN / ชื่อ)</th>
+                            <th className="py-3 px-4">อายุ / เพศ</th>
+                            <th className="py-3 px-4">วันที่รับเข้า (Admission)</th>
+                            <th className="py-3 px-4">อาการเริ่มต้น / การวินิจฉัย</th>
+                            <th className="py-3 px-4">สถานะ</th>
+                            <th className="py-3 px-4 text-right">ทางลัดการทำงาน</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-emerald-50">
+                          {myAssignedPatients.map((pat) => (
+                            <tr key={pat.id} className="hover:bg-emerald-50/40 transition">
+                              <td className="py-3 px-4">
+                                <div className="flex items-center gap-2.5">
+                                  <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center text-xs flex-shrink-0">
+                                    {pat.name.charAt(pat.name.startsWith('นาย') || pat.name.startsWith('นาง') ? 3 : 0)}
+                                  </div>
+                                  <div>
+                                    <div className="font-black text-sm text-[#0F2F2B]">{pat.name}</div>
+                                    <div className="font-mono text-[11px] text-emerald-800 font-bold">HN: {pat.code}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="py-3 px-4 font-semibold text-slate-700">
+                                {pat.age || 65} ปี • {pat.gender === 'female' ? 'หญิง' : pat.gender === 'other' ? 'อื่นๆ' : 'ชาย'}
+                              </td>
+                              <td className="py-3 px-4 font-mono text-slate-600">
+                                {pat.admissionDate || '2026-10-01'}
+                              </td>
+                              <td className="py-3 px-4 text-slate-700 max-w-[220px] truncate" title={pat.chiefComplaint || pat.diagnosis || '-'}>
+                                {pat.chiefComplaint || pat.diagnosis || 'ฟื้นฟูกายภาพบำบัดตามอาการ'}
+                              </td>
+                              <td className="py-3 px-4">
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[11px]">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                                  <span>Active</span>
+                                </span>
+                              </td>
+                              <td className="py-3 px-4 text-right">
+                                <div className="inline-flex items-center gap-1.5 justify-end">
+                                  {/* Shortcut to Module 3: Schedule & Routine */}
+                                  <button
+                                    onClick={() => setCalendarPatientModal(pat)}
+                                    className="px-3 py-1.5 rounded-xl bg-white hover:bg-emerald-50 text-emerald-900 border border-emerald-300 font-extrabold text-xs shadow-2xs transition flex items-center gap-1 cursor-pointer"
+                                    title="เปิดปฏิทินนัดหมายและจัดโปรแกรมฝึกของคนไข้รายนี้ (Module 3)"
+                                  >
+                                    <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span>Schedule & Routine</span>
+                                  </button>
+
+                                  {/* Shortcut to Module 2: Medical Records */}
+                                  <button
+                                    onClick={() => setPatientDetailModal(pat)}
+                                    className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 font-extrabold text-xs transition flex items-center gap-1 cursor-pointer"
+                                    title="ดูเวชระเบียนและบันทึกความคืบหน้า (Module 2)"
+                                  >
+                                    <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span>Medical Records</span>
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* SECTION 4: TEMPORARY CASE DELEGATIONS OVERSIGHT (INCOMING & OUTGOING) */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                  {/* Incoming Covered Cases */}
+                  <div className="bg-white rounded-3xl border border-cyan-200 shadow-sm overflow-hidden flex flex-col justify-between">
+                    <div>
+                      <div className="p-4 bg-cyan-50/60 border-b border-cyan-100 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <ShieldCheck className="w-5 h-5 text-cyan-700" />
+                          <h4 className="font-black text-sm text-cyan-950">
+                            เคสที่ได้รับฝากดูแลแทนชั่วคราว ({myCoveredPatients.length} เคส)
+                          </h4>
+                        </div>
+                        <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-cyan-200 text-cyan-900">
+                          สิทธิ์ Full Write Access
+                        </span>
+                      </div>
+
+                      {myCoveredPatients.length === 0 ? (
+                        <div className="py-8 text-center text-xs text-slate-400">
+                          ขณะนี้ไม่มีเคสที่เพื่อนร่วมงานฝากให้คุณดูแลแทน
+                        </div>
+                      ) : (
+                        <div className="p-4 space-y-3">
+                          {myCoveredPatients.map((pat) => {
+                            const cov = getCoveringDelegationForPatient(pat.id);
+                            return (
+                              <div key={pat.id} className="p-3.5 rounded-2xl bg-cyan-50/40 border border-cyan-200 flex items-center justify-between gap-3">
+                                <div>
+                                  <div className="font-black text-sm text-[#0F2F2B] flex items-center gap-2">
+                                    <span>{pat.name}</span>
+                                    <span className="font-mono text-xs font-bold text-cyan-800">({pat.code})</span>
+                                  </div>
+                                  <div className="text-xs text-slate-600 mt-0.5">
+                                    ฝากโดย: <strong>{cov?.originalTherapistName || 'เพื่อนร่วมงาน'}</strong>
+                                  </div>
+                                  <div className="text-[11px] text-cyan-800 font-mono mt-0.5">
+                                    ช่วงเวลา: {cov?.startDate} ถึง {cov?.endDate}
+                                  </div>
+                                  {cov?.reason && (
+                                    <div className="text-[11px] text-slate-500 mt-1 italic">
+                                      "{cov.reason}"
+                                    </div>
+                                  )}
+                                </div>
+
+                                <button
+                                  onClick={() => setCalendarPatientModal(pat)}
+                                  className="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs flex items-center gap-1 shadow-xs cursor-pointer flex-shrink-0"
+                                  title="เข้าจัดตารางฝึกและประเมินผลเคสฝาก"
+                                >
+                                  <Calendar className="w-3.5 h-3.5" />
+                                  <span>จัดตารางฝึก</span>
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Outgoing Delegated Cases */}
+                  <div className="bg-white rounded-3xl border border-amber-200 shadow-sm overflow-hidden flex flex-col justify-between">
+                    <div>
+                      <div className="p-4 bg-amber-50/60 border-b border-amber-100 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-5 h-5 text-amber-700" />
+                          <h4 className="font-black text-sm text-amber-950">
+                            เคสที่คุณฝากเพื่อนร่วมงานดูแล ({myDelegatedOutCases.length} รายการ)
+                          </h4>
+                        </div>
+                        <button
+                          onClick={() => setIsDelegationModalOpen(true)}
+                          className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-200 hover:bg-amber-300 text-amber-900 cursor-pointer"
+                        >
+                          + ฝากเคสเพิ่ม
+                        </button>
+                      </div>
+
+                      {myDelegatedOutCases.length === 0 ? (
+                        <div className="py-8 text-center text-xs text-slate-400">
+                          คุณยังไม่ได้ส่งมอบเคสใดให้เพื่อนร่วมงานดูแลแทน
+                        </div>
+                      ) : (
+                        <div className="p-4 space-y-3">
+                          {myDelegatedOutCases.map((del) => (
+                            <div key={del.id} className="p-3.5 rounded-2xl bg-amber-50/40 border border-amber-200 flex items-center justify-between gap-3">
+                              <div>
+                                <div className="font-black text-sm text-[#0F2F2B] flex items-center gap-2">
+                                  <span>{del.patientName}</span>
+                                  <span className="font-mono text-xs font-bold text-amber-900">({del.patientCode})</span>
+                                </div>
+                                <div className="text-xs text-slate-600 mt-0.5">
+                                  ผู้ดูแลแทน: <strong className="text-emerald-800">{del.coveringTherapistName}</strong>
+                                </div>
+                                <div className="text-[11px] text-amber-900 font-mono mt-0.5">
+                                  ช่วงเวลา: {del.startDate} ถึง {del.endDate}
+                                </div>
+                                {del.reason && (
+                                  <div className="text-[11px] text-slate-500 mt-1 italic">
+                                    "{del.reason}"
+                                  </div>
+                                )}
+                              </div>
+
+                              <button
+                                onClick={() => {
+                                  revokeDelegation(del.id);
+                                  showToast(`ดึงเคส ${del.patientName} กลับมาดูแลเองเรียบร้อยแล้ว`);
+                                }}
+                                className="px-3 py-1.5 rounded-xl bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-bold text-xs flex items-center gap-1 shadow-2xs cursor-pointer flex-shrink-0"
+                                title="ยกเลิกการฝากและดึงเคสกลับทันที"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                                <span>ดึงเคสกลับ</span>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* ============================================================= */
+              /* SUPER ADMIN PT DIRECTORY & GOVERNANCE VIEW                     */
+              /* ============================================================= */
+              <div className="space-y-6 animate-fadeIn text-left">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="font-bold text-lg text-[#0F2F2B]">ข้อมูลนักกายภาพบำบัดประจำโรงพยาบาล</h3>
+                    <p className="text-xs text-slate-500">
+                      แสดง: ชื่อ, เคสที่รับผิดชอบ, เบอร์โทร, ประวัติส่วนตัว (สิทธิ์ Super Admin บริหารจัดการรายชื่อและสิทธิ์การฝากเคส)
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="w-64 relative">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={therapistSearch}
+                        onChange={(e) => setTherapistSearch(e.target.value)}
+                        placeholder="ค้นหานักกายภาพ..."
+                        className="w-full pl-9 pr-3 py-2 rounded-full bg-white border border-emerald-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#10B981]"
+                      />
+                    </div>
+
                     <button
                       onClick={() => setIsAddTherapistOpen(true)}
                       className="px-4 py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-bold shadow-md shadow-cyan-500/25 hover:opacity-95 transition flex items-center gap-2 cursor-pointer whitespace-nowrap active:scale-95"
@@ -3883,129 +4388,208 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       <Plus className="w-4 h-4" />
                       <span>+ เพิ่มนักกายภาพ</span>
                     </button>
+                  </div>
+                </div>
+
+                {/* Therapist Cards Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {filteredTherapists.map((therapist) => {
+                    const canEdit = canEditTherapist(therapist);
+
+                    return (
+                      <div
+                        key={therapist.id}
+                        className="bg-white rounded-3xl p-6 border border-emerald-100 shadow-sm space-y-4 transition"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-12 h-12 rounded-2xl bg-[#0F2F2B] text-emerald-200 font-bold flex items-center justify-center text-base shadow-md">
+                              {therapist.name.charAt(therapist.name.startsWith('กภ.') ? 4 : 0)}
+                            </div>
+                            <div>
+                              <div className="font-bold text-sm text-[#0F2F2B] flex items-center gap-1.5">
+                                <span>{therapist.name}</span>
+                              </div>
+                              <div className="text-[11px] font-mono text-emerald-700 font-bold">
+                                {therapist.code} • ใบอนุญาต {therapist.licenseNumber}
+                              </div>
+                            </div>
+                          </div>
+
+                          <span
+                            className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+                              therapist.status === 'active'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {therapist.status === 'active' ? 'ปฏิบัติงาน' : 'ลาพัก'}
+                          </span>
+                        </div>
+
+                        {/* Contact & Specialty */}
+                        <div className="text-xs text-slate-600 bg-slate-50 p-3.5 rounded-2xl space-y-1.5 border border-slate-100">
+                          <div className="font-semibold text-emerald-900">{therapist.specialty}</div>
+                          <div className="flex items-center gap-1 text-slate-600">
+                            <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>โทรศัพท์: <strong>{therapist.phone}</strong></span>
+                          </div>
+                          <div className="text-slate-500 text-[11px]">อีเมล: {therapist.email}</div>
+                        </div>
+
+                        {/* Bio & Background */}
+                        <div className="text-xs text-slate-600 bg-emerald-50/50 p-3 rounded-2xl border border-emerald-100">
+                          <div className="font-bold text-emerald-950 mb-1">ประวัติส่วนตัว & การศึกษา:</div>
+                          <p className="text-[11px] text-slate-600 leading-relaxed">
+                            {therapist.bio || 'สำเร็จการศึกษากายภาพบำบัดบัณฑิต มีประสบการณ์ฟื้นฟูกระดูกและข้อ 6 ปี'}
+                          </p>
+                        </div>
+
+                        {/* Responsible Cases */}
+                        <div className="text-xs space-y-1.5 pt-1">
+                          <div className="flex items-center justify-between font-bold">
+                            <span className="text-slate-700">เคสที่รับผิดชอบ ({therapist.activePatientsCount} เคส):</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {(therapist.assignedCases && therapist.assignedCases.length > 0
+                              ? therapist.assignedCases
+                              : ['นายสมชาย ใจดี', 'นางมาลี รักสุข']
+                            ).map((pName, idx) => (
+                              <span
+                                key={idx}
+                                className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-900 font-semibold text-[11px] border border-emerald-100"
+                              >
+                                {pName}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Action Buttons: Assigned Patients & Edit Details */}
+                        <div className="pt-2 border-t border-emerald-50 flex items-center justify-between flex-wrap gap-2">
+                          <button
+                            onClick={() => setPtAssignedModalTherapist(therapist)}
+                            className="px-3.5 py-1.5 rounded-full border border-cyan-300 bg-cyan-50/80 hover:bg-cyan-100 text-cyan-800 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                            title="ดูและจัดการเคสคนไข้ที่รับผิดชอบ พร้อมโอนย้ายเคส (Modal B)"
+                          >
+                            <Users className="w-3.5 h-3.5 text-cyan-600" />
+                            <span>Assigned Patients ({therapist.activePatientsCount || therapist.assignedCases?.length || 0})</span>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              if (canEdit) {
+                                setEditingTherapist(therapist);
+                              } else {
+                                showToast('คุณสามารถแก้ไขได้เฉพาะข้อมูลของตนเอง');
+                              }
+                            }}
+                            className="px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer bg-[#10B981] text-white hover:bg-emerald-600 shadow-sm"
+                            title="แก้ไขข้อมูลนักกายภาพ (Modal A)"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                            <span>Edit Details</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* SUPER ADMIN GOVERNANCE: ALL TEMPORARY CASE DELEGATIONS OVERSIGHT */}
+                <div className="bg-white rounded-3xl p-6 border border-emerald-200 shadow-sm space-y-4 mt-8">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-emerald-100">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center font-bold">
+                        <Shield className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="font-black text-base text-[#0F2F2B]">
+                          Super Admin Governance: การกำกับดูแลการฝากเคสคนไข้ทั่วทั้งโรงพยาบาล
+                        </h4>
+                        <p className="text-xs text-slate-500">
+                          ผู้อำนวยการ รพ. และ Super Admin สามารถตรวจสอบและเพิกถอนสิทธิ์การฝากเคส (Override Revocation) ได้ตลอดเวลา
+                        </p>
+                      </div>
+                    </div>
+
+                    <span className="text-xs font-bold px-3 py-1 rounded-full bg-purple-100 text-purple-900 border border-purple-200">
+                      Super Admin Override
+                    </span>
+                  </div>
+
+                  {delegations.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-slate-400 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
+                      ขณะนี้ไม่มีประวัติการฝากเคสชั่วคราวในระบบ
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
+                            <th className="py-2.5 px-3">คนไข้ (HN / ชื่อ)</th>
+                            <th className="py-2.5 px-3">นักกายภาพผู้รับผิดชอบหลัก</th>
+                            <th className="py-2.5 px-3">นักกายภาพที่รับฝากดูแลแทน</th>
+                            <th className="py-2.5 px-3">ช่วงวันที่ฝากเคส</th>
+                            <th className="py-2.5 px-3">เหตุผล / บันทึกทางคลินิก</th>
+                            <th className="py-2.5 px-3">สถานะ</th>
+                            <th className="py-2.5 px-3 text-right">อำนาจผู้บริหาร</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {delegations.map((d) => (
+                            <tr key={d.id} className="hover:bg-slate-50/60 transition">
+                              <td className="py-2.5 px-3">
+                                <div className="font-bold text-slate-900">{d.patientName}</div>
+                                <div className="text-[10px] font-mono text-emerald-800 font-bold">HN: {d.patientCode}</div>
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-700 font-medium">
+                                {d.originalTherapistName}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-900 font-bold text-[11px]">
+                                  <span>{d.coveringTherapistName}</span>
+                                  <span className="text-[9px] bg-cyan-200 px-1 rounded">Covering</span>
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 font-mono text-slate-600 text-[11px]">
+                                {d.startDate} ถึง {d.endDate}
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-600 max-w-[200px] truncate" title={d.reason || '-'}>
+                                {d.reason || '-'}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  d.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
+                                }`}>
+                                  {d.status === 'active' ? 'Active 🟢' : 'Revoked ⚪'}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right">
+                                {d.status === 'active' ? (
+                                  <button
+                                    onClick={() => {
+                                      revokeDelegation(d.id);
+                                      showToast(`เพิกถอนสิทธิ์การฝากเคส ${d.patientName} สำเร็จ (Super Admin Override)`);
+                                    }}
+                                    className="px-2.5 py-1 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 font-bold text-[11px] transition cursor-pointer"
+                                    title="ใช้อำนาจผู้อำนวยการเพิกถอนสิทธิ์การฝากเคสทันที"
+                                  >
+                                    Revoke Coverage
+                                  </button>
+                                ) : (
+                                  <span className="text-[10px] text-slate-400">เพิกถอนแล้ว</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </div>
               </div>
-
-              {/* Therapist Cards Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {filteredTherapists.map((therapist) => {
-                  const canEdit = canEditTherapist(therapist);
-                  const isCurrentLoggedTherapist =
-                    currentRole === 'therapist' &&
-                    (therapist.id === currentUserId || therapist.name.includes('ธนากร'));
-
-                  return (
-                    <div
-                      key={therapist.id}
-                      className={`bg-white rounded-3xl p-6 border shadow-sm space-y-4 transition ${
-                        isCurrentLoggedTherapist ? 'border-emerald-400 ring-2 ring-emerald-100' : 'border-emerald-100'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 rounded-2xl bg-[#0F2F2B] text-emerald-200 font-bold flex items-center justify-center text-base shadow-md">
-                            {therapist.name.charAt(therapist.name.startsWith('กภ.') ? 4 : 0)}
-                          </div>
-                          <div>
-                            <div className="font-bold text-sm text-[#0F2F2B] flex items-center gap-1.5">
-                              <span>{therapist.name}</span>
-                              {isCurrentLoggedTherapist && (
-                                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                                  บัญชีของคุณ
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[11px] font-mono text-emerald-700 font-bold">
-                              {therapist.code} • ใบอนุญาต {therapist.licenseNumber}
-                            </div>
-                          </div>
-                        </div>
-
-                        <span
-                          className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
-                            therapist.status === 'active'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}
-                        >
-                          {therapist.status === 'active' ? 'ปฏิบัติงาน' : 'ลาพัก'}
-                        </span>
-                      </div>
-
-                      {/* Contact & Specialty */}
-                      <div className="text-xs text-slate-600 bg-slate-50 p-3.5 rounded-2xl space-y-1.5 border border-slate-100">
-                        <div className="font-semibold text-emerald-900">{therapist.specialty}</div>
-                        <div className="flex items-center gap-1 text-slate-600">
-                          <Phone className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>โทรศัพท์: <strong>{therapist.phone}</strong></span>
-                        </div>
-                        <div className="text-slate-500 text-[11px]">อีเมล: {therapist.email}</div>
-                      </div>
-
-                      {/* Bio & Background */}
-                      <div className="text-xs text-slate-600 bg-emerald-50/50 p-3 rounded-2xl border border-emerald-100">
-                        <div className="font-bold text-emerald-950 mb-1">ประวัติส่วนตัว & การศึกษา:</div>
-                        <p className="text-[11px] text-slate-600 leading-relaxed">
-                          {therapist.bio || 'สำเร็จการศึกษากายภาพบำบัดบัณฑิต มีประสบการณ์ฟื้นฟูกระดูกและข้อ 6 ปี'}
-                        </p>
-                      </div>
-
-                      {/* Responsible Cases */}
-                      <div className="text-xs space-y-1.5 pt-1">
-                        <div className="flex items-center justify-between font-bold">
-                          <span className="text-slate-700">เคสที่รับผิดชอบ ({therapist.activePatientsCount} เคส):</span>
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {(therapist.assignedCases && therapist.assignedCases.length > 0
-                            ? therapist.assignedCases
-                            : ['นายสมชาย ใจดี', 'นางมาลี รักสุข']
-                          ).map((pName, idx) => (
-                            <span
-                              key={idx}
-                              className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-900 font-semibold text-[11px] border border-emerald-100"
-                            >
-                              {pName}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Action Buttons: Assigned Patients & Edit Details */}
-                      <div className="pt-2 border-t border-emerald-50 flex items-center justify-between flex-wrap gap-2">
-                        <button
-                          onClick={() => setPtAssignedModalTherapist(therapist)}
-                          className="px-3.5 py-1.5 rounded-full border border-cyan-300 bg-cyan-50/80 hover:bg-cyan-100 text-cyan-800 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                          title="ดูและจัดการเคสคนไข้ที่รับผิดชอบ พร้อมโอนย้ายเคส (Modal B)"
-                        >
-                          <Users className="w-3.5 h-3.5 text-cyan-600" />
-                          <span>Assigned Patients ({therapist.activePatientsCount || therapist.assignedCases?.length || 0})</span>
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            if (canEdit) {
-                              setEditingTherapist(therapist);
-                            } else {
-                              showToast('คุณสามารถแก้ไขได้เฉพาะข้อมูลของตนเอง');
-                            }
-                          }}
-                          className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                            canEdit
-                              ? 'bg-[#10B981] text-white hover:bg-emerald-600 shadow-sm'
-                              : 'bg-slate-100 text-slate-500 hover:bg-slate-200 border border-slate-200'
-                          }`}
-                          title={canEdit ? 'แก้ไขข้อมูลนักกายภาพ (Modal A)' : 'คุณสามารถแก้ไขได้เฉพาะข้อมูลของตนเอง'}
-                        >
-                          {canEdit ? <Pencil className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-                          <span>Edit Details</span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            )
           )}
 
           {/* ================================================================== */}
@@ -4262,23 +4846,49 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                           {/* Card Action Buttons */}
                           <div className="pt-3 border-t border-emerald-50 flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => setEditingExercise(exercise)}
-                                className="px-2.5 py-1.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition flex items-center gap-1 cursor-pointer border border-emerald-200"
-                                title="แก้ไขข้อมูลท่าทางกายภาพนี้"
-                              >
-                                <Pencil className="w-3.5 h-3.5 text-emerald-600" />
-                                <span>แก้ไข</span>
-                              </button>
+                              {(() => {
+                                const isSelfCreated =
+                                  currentRole === 'admin' ||
+                                  (exercise.createdBy &&
+                                    currentUser?.name &&
+                                    exercise.createdBy.includes(
+                                      currentUser.name.replace(/^(กภ\.|นาย|นางสาว|ดร\.)\s*/, '')
+                                    ));
 
-                              <button
-                                onClick={() => setDeletingExercise(exercise)}
-                                className="px-2.5 py-1.5 rounded-full hover:bg-rose-50 text-rose-600 hover:text-rose-800 text-xs font-bold transition flex items-center gap-1 cursor-pointer border border-transparent hover:border-rose-200"
-                                title="ลบท่านี้ออกจากคลัง"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                                <span>ลบท่านี้</span>
-                              </button>
+                                if (currentRole === 'therapist' && !isSelfCreated) {
+                                  return (
+                                    <span
+                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 text-slate-500 font-bold text-xs border border-slate-200"
+                                      title="มาตรฐานโรงพยาบาล: กำหนดโดยผู้บริหาร รพ. สงวนสิทธิ์การแก้ไขและลบ (Read-Only)"
+                                    >
+                                      <Lock className="w-3.5 h-3.5 text-slate-400" />
+                                      <span>มาตรฐาน รพ. (Read-Only)</span>
+                                    </span>
+                                  );
+                                }
+
+                                return (
+                                  <>
+                                    <button
+                                      onClick={() => setEditingExercise(exercise)}
+                                      className="px-2.5 py-1.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition flex items-center gap-1 cursor-pointer border border-emerald-200"
+                                      title="แก้ไขข้อมูลท่าทางกายภาพนี้"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5 text-emerald-600" />
+                                      <span>แก้ไข</span>
+                                    </button>
+
+                                    <button
+                                      onClick={() => setDeletingExercise(exercise)}
+                                      className="px-2.5 py-1.5 rounded-full hover:bg-rose-50 text-rose-600 hover:text-rose-800 text-xs font-bold transition flex items-center gap-1 cursor-pointer border border-transparent hover:border-rose-200"
+                                      title="ลบท่านี้ออกจากคลัง"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                      <span>ลบท่านี้</span>
+                                    </button>
+                                  </>
+                                );
+                              })()}
                             </div>
 
                             {onLaunchKioskExercise && (
@@ -4384,17 +4994,24 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
                           {/* Card Footer Actions */}
                           <div className="pt-3 border-t border-emerald-50 flex items-center justify-between">
-                            <button
-                              onClick={() => {
-                                deleteModpack(mp.id);
-                                showToast(`ลบชุดท่าฝึก ${mp.name} เรียบร้อยแล้ว`);
-                              }}
-                              className="px-2.5 py-1.5 rounded-full hover:bg-rose-50 text-rose-600 hover:text-rose-800 text-xs font-bold transition flex items-center gap-1 cursor-pointer border border-transparent hover:border-rose-200"
-                              title="ลบชุดท่าฝึกนี้"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>ลบชุดนี้</span>
-                            </button>
+                            {currentRole === 'admin' ? (
+                              <button
+                                onClick={() => {
+                                  deleteModpack(mp.id);
+                                  showToast(`ลบชุดท่าฝึก ${mp.name} เรียบร้อยแล้ว`);
+                                }}
+                                className="px-2.5 py-1.5 rounded-full hover:bg-rose-50 text-rose-600 hover:text-rose-800 text-xs font-bold transition flex items-center gap-1 cursor-pointer border border-transparent hover:border-rose-200"
+                                title="ลบชุดท่าฝึกนี้"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>ลบชุดนี้</span>
+                              </button>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 text-slate-500 font-bold text-[11px] border border-slate-200">
+                                <Lock className="w-3 h-3 text-slate-400" />
+                                <span>ชุดมาตรฐาน รพ.</span>
+                              </span>
+                            )}
 
                             <button
                               onClick={() => {
@@ -5346,6 +5963,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       <AddExerciseModal
         isOpen={isAddExerciseOpen}
         onClose={() => setIsAddExerciseOpen(false)}
+        currentUserName={currentUser?.name || (currentRole === 'therapist' ? 'นักกายภาพบำบัด' : 'ผู้อำนวยการ นพ.วรชัย')}
         onSubmitExercise={addExercise}
         onSuccessToast={showToast}
       />
@@ -5581,6 +6199,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         isOpen={Boolean(calendarPatientModal)}
         onClose={() => setCalendarPatientModal(null)}
         patient={calendarPatientModal}
+        canWrite={calendarPatientModal ? canWriteScheduleForPatient(calendarPatientModal) : true}
         exercises={exercises}
         onOpenRoutineAssignment={(pat, dateStr) => {
           setDailyRoutineDate({ isOpen: true, patient: pat, date: dateStr });
@@ -5595,6 +6214,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         isOpen={dailyRoutineDate.isOpen}
         onClose={() => setDailyRoutineDate({ isOpen: false, patient: null, date: '' })}
         patient={dailyRoutineDate.patient}
+        canWrite={dailyRoutineDate.patient ? canWriteScheduleForPatient(dailyRoutineDate.patient) : true}
         dateStr={dailyRoutineDate.date}
         exercises={exercises}
         existingPlan={
@@ -5646,6 +6266,39 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
           }
           setDailyRoutineDate({ isOpen: false, patient: null, date: '' });
           showToast(`บันทึกและซิงค์โปรแกรมกายภาพของ ${dailyRoutineDate.patient.name} ไปยังตู้ Kiosk สำเร็จ!`);
+        }}
+        onSuccessToast={showToast}
+      />
+
+      {/* ==================================================================== */}
+      {/* 25B. MODULE 4: TEMPORARY CASE DELEGATION MODAL                       */}
+      {/* ==================================================================== */}
+      <TemporaryCaseDelegationModal
+        isOpen={isDelegationModalOpen}
+        onClose={() => setIsDelegationModalOpen(false)}
+        currentTherapist={currentTherapist}
+        assignedPatients={myAssignedPatients}
+        activeTherapists={therapists}
+        onSubmitDelegation={(data) => {
+          addDelegation(data);
+          showToast(`ฝากเคส ${data.patientName} ให้ ${data.coveringTherapistName} สำเร็จ`);
+        }}
+        onSuccessToast={showToast}
+      />
+
+      {/* ==================================================================== */}
+      {/* 25C. MODULE 4: EDIT MY PROFILE MODAL                                 */}
+      {/* ==================================================================== */}
+      <EditMyProfileModal
+        isOpen={isEditMyProfileModalOpen}
+        onClose={() => setIsEditMyProfileModalOpen(false)}
+        therapist={currentTherapist}
+        userAccount={currentUser}
+        onSaveProfile={(updated) => {
+          if (currentTherapist) {
+            updateTherapist(currentTherapist.id, updated);
+            showToast('อัปเดตข้อมูลโปรไฟล์ส่วนตัวสำเร็จ');
+          }
         }}
         onSuccessToast={showToast}
       />

@@ -22,6 +22,7 @@ interface PatientCalendarModalProps {
   onClose: () => void;
   patient: UserAccount | null;
   exercises: HospitalExercise[];
+  canWrite?: boolean;
   onOpenRoutineAssignment: (patient: UserAccount, dateStr: string) => void;
   onSuccessToast: (msg: string) => void;
 }
@@ -37,6 +38,7 @@ export const PatientCalendarModal: React.FC<PatientCalendarModalProps> = ({
   onClose,
   patient,
   exercises,
+  canWrite = true,
   onOpenRoutineAssignment,
   onSuccessToast,
 }) => {
@@ -151,6 +153,13 @@ export const PatientCalendarModal: React.FC<PatientCalendarModalProps> = ({
 
         {/* Legend & Month Controls */}
         <div className="px-6 py-3 border-b border-slate-100 bg-slate-50 flex flex-wrap items-center justify-between gap-3 text-xs">
+          {!canWrite && (
+            <div className="w-full p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-bold flex items-center gap-2 mb-1">
+              <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              <span>สิทธิ์การใช้งาน: อ่านอย่างเดียว (Read-Only Access) — นักกายภาพสามารถดูตารางนัดหมายได้เท่านั้น ปุ่มปรับเปลี่ยนวันและจัดตารางถูกปิดการใช้งาน</span>
+            </div>
+          )}
+
           {/* Status Badges Legend */}
           <div className="flex items-center gap-3 font-bold text-[11px]">
             <span className="flex items-center gap-1.5 text-emerald-800">
@@ -220,11 +229,17 @@ export const PatientCalendarModal: React.FC<PatientCalendarModalProps> = ({
                 return (
                   <div
                     key={dateStr}
-                    onClick={() => onOpenRoutineAssignment(patient, dateStr)}
-                    className={`min-h-[72px] p-1.5 flex flex-col justify-between transition cursor-pointer hover:bg-emerald-50/40 relative group ${
-                      isToday ? 'bg-amber-50/50' : 'bg-white'
-                    }`}
-                    title="คลิกเพื่อกำหนด/แก้ไขโปรแกรมกายภาพประจำวันนี้"
+                    onClick={() => {
+                      if (canWrite) {
+                        onOpenRoutineAssignment(patient, dateStr);
+                      } else {
+                        onSuccessToast('โหมดดูอย่างเดียว: คุณไม่มีสิทธิ์แก้ไขตารางกายภาพของเคสนี้');
+                      }
+                    }}
+                    className={`min-h-[72px] p-1.5 flex flex-col justify-between transition relative group ${
+                      canWrite ? 'cursor-pointer hover:bg-emerald-50/40' : 'cursor-default'
+                    } ${isToday ? 'bg-amber-50/50' : 'bg-white'}`}
+                    title={canWrite ? 'คลิกเพื่อกำหนด/แก้ไขโปรแกรมกายภาพประจำวันนี้' : 'โหมดดูอย่างเดียว (Read-Only)'}
                   >
                     <div className="flex items-center justify-between">
                       <span
@@ -274,28 +289,34 @@ export const PatientCalendarModal: React.FC<PatientCalendarModalProps> = ({
           </div>
 
           {/* Quick Add Appointment Date */}
-          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-slate-700">เพิ่ม/นัดหมายวันฝึกเพิ่ม:</span>
-              <input
-                type="date"
-                value={newDateInput}
-                onChange={(e) => setNewDateInput(e.target.value)}
-                className="px-3 py-1.5 rounded-xl bg-white border border-slate-300 font-bold text-xs"
-              />
-              <button
-                type="button"
-                onClick={handleAddNewDate}
-                className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs transition cursor-pointer"
-              >
-                บันทึกวันนัด
-              </button>
-            </div>
+          {canWrite ? (
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-slate-700">เพิ่ม/นัดหมายวันฝึกเพิ่ม:</span>
+                <input
+                  type="date"
+                  value={newDateInput}
+                  onChange={(e) => setNewDateInput(e.target.value)}
+                  className="px-3 py-1.5 rounded-xl bg-white border border-slate-300 font-bold text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddNewDate}
+                  className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                >
+                  บันทึกวันนัด
+                </button>
+              </div>
 
-            <div className="text-[11px] text-slate-500">
-              💡 คลิกที่ช่องวันที่เพื่อกำหนดท่ากายภาพและจำนวนเซ็ตประจำวัน
+              <div className="text-[11px] text-slate-500">
+                💡 คลิกที่ช่องวันที่เพื่อกำหนดท่ากายภาพและจำนวนเซ็ตประจำวัน
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="p-3 rounded-2xl bg-slate-100 border border-slate-200 text-center text-xs text-slate-500 font-semibold">
+              🔒 ฟังก์ชันเพิ่มวันนัดหมายและจัดตารางถูกปิดการใช้งานในโหมด Read-Only
+            </div>
+          )}
         </div>
 
         {/* Footer */}

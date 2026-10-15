@@ -10,6 +10,7 @@ import {
   ActivityLog,
   PatientSymptomReport,
   AiSystemSettings,
+  TemporaryCaseDelegation,
 } from '../types/hospital';
 import { faceService } from '../services/faceService';
 import { supabaseService } from '../services/supabaseService';
@@ -85,6 +86,41 @@ const INITIAL_THERAPISTS: PhysicalTherapist[] = [
     licenseNumber: 'กภ.18902',
   },
 ];
+
+const INITIAL_DELEGATIONS: TemporaryCaseDelegation[] = [
+  {
+    id: 'del-1',
+    patientId: 34,
+    patientName: 'นายประเสริฐ มั่นคง',
+    patientCode: 'P-0034',
+    originalTherapistId: 2, // pt_pimchanok (T-007)
+    originalTherapistName: 'กภ. พิมพ์ชนก สุขเกษม',
+    coveringTherapistId: 1, // pt_thanakorn (T-003)
+    coveringTherapistName: 'กภ. ธนากร วงศ์สวัสดิ์',
+    startDate: '2026-10-10',
+    endDate: '2026-10-25',
+    reason: 'ไปสัมมนาวิชาการกายภาพบำบัดระบบประสาทต่างจังหวัด',
+    status: 'active',
+    createdAt: '2026-10-09',
+  },
+];
+
+const getStoredDelegations = (): TemporaryCaseDelegation[] => {
+  try {
+    const raw = localStorage.getItem('strongcare_temporary_delegations');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {}
+  return INITIAL_DELEGATIONS;
+};
+
+const persistDelegations = (delegations: TemporaryCaseDelegation[]) => {
+  try {
+    localStorage.setItem('strongcare_temporary_delegations', JSON.stringify(delegations));
+  } catch {}
+};
 
 const INITIAL_USERS: UserAccount[] = [
   {
@@ -890,6 +926,13 @@ interface HospitalState {
   banIp: (ip: string) => void;
   unbanIp: (ip: string) => void;
 
+  // Temporary Case Delegation Management
+  delegations: TemporaryCaseDelegation[];
+  addDelegation: (delegation: Omit<TemporaryCaseDelegation, 'id' | 'createdAt' | 'status'>) => TemporaryCaseDelegation;
+  revokeDelegation: (id: string | number) => void;
+  isPatientCoveredByTherapist: (patientId: string | number, therapistId: string | number, date?: string) => boolean;
+  getCoveringDelegationForPatient: (patientId: string | number) => TemporaryCaseDelegation | undefined;
+
   // AI Configuration
   updateAiSettings: (settings: Partial<AiSystemSettings>) => void;
 }
@@ -902,6 +945,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   exercises: getStoredExercises(),
   modpacks: getStoredModpacks(),
   treatmentPlans: getStoredTreatmentPlans(),
+  delegations: getStoredDelegations(),
   activityLogs: INITIAL_LOGS,
   bannedDevices: ['Linux / Curl Automation Client', 'Unknown Android Emulator #99'],
   bannedIps: ['198.51.100.44', '203.0.113.19'],
@@ -1911,6 +1955,59 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     if (supabaseService.isConfigured()) {
       supabaseService.unbanIp(ip);
     }
+  },
+
+  addDelegation: (data) => {
+    const newDelegation: TemporaryCaseDelegation = {
+      ...data,
+      id: `del-${Date.now()}`,
+      status: 'active',
+      createdAt: new Date().toISOString().split('T')[0],
+    };
+    const updated = [newDelegation, ...get().delegations];
+    set({ delegations: updated });
+    persistDelegations(updated);
+    get().addActivityLog(
+      'มอบหมายเคสชั่วคราว (Case Delegation)',
+      'PATIENT',
+      `${data.originalTherapistName} มอบหมายเคส ${data.patientName} (${data.patientCode}) ให้ ${data.coveringTherapistName} ดูแลชั่วคราว (${data.startDate} ถึง ${data.endDate})`
+    );
+    return newDelegation;
+  },
+
+  revokeDelegation: (id) => {
+    const delegation = get().delegations.find((d) => d.id === id);
+    const updated = get().delegations.map((d) =>
+      d.id === id ? { ...d, status: 'revoked' as const } : d
+    );
+    set({ delegations: updated });
+    persistDelegations(updated);
+    get().addActivityLog(
+      'ยกเลิกการมอบหมายเคสชั่วคราว (Revoke Delegation)',
+      'PATIENT',
+      `ยกเลิกการมอบหมายเคส ${delegation?.patientName || id} จาก ${delegation?.coveringTherapistName || '-'}`
+    );
+  },
+
+  isPatientCoveredByTherapist: (patientId, therapistId, checkDate) => {
+    const today = checkDate || new Date().toISOString().split('T')[0];
+    return get().delegations.some((d) => {
+      if (d.status !== 'active') return false;
+      const matchPatient = String(d.patientId) === String(patientId);
+      const matchTherapist = String(d.coveringTherapistId) === String(therapistId);
+      const inRange = today >= d.startDate && today <= d.endDate;
+      return matchPatient && matchTherapist && inRange;
+    });
+  },
+
+  getCoveringDelegationForPatient: (patientId) => {
+    const today = new Date().toISOString().split('T')[0];
+    return get().delegations.find((d) => {
+      if (d.status !== 'active') return false;
+      const matchPatient = String(d.patientId) === String(patientId);
+      const inRange = today >= d.startDate && today <= d.endDate;
+      return matchPatient && inRange;
+    });
   },
 
   updateAiSettings: (newSettings) => {

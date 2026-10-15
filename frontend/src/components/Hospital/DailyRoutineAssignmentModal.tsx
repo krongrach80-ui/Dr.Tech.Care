@@ -29,6 +29,7 @@ interface DailyRoutineAssignmentModalProps {
   dateStr: string; // YYYY-MM-DD
   exercises: HospitalExercise[];
   existingPlan?: TreatmentPlan | null;
+  canWrite?: boolean;
   onSaveRoutine: (assignedExercises: PrescribedExercise[], instructions: string) => void;
   onSuccessToast: (msg: string) => void;
 }
@@ -40,6 +41,7 @@ export const DailyRoutineAssignmentModal: React.FC<DailyRoutineAssignmentModalPr
   dateStr,
   exercises,
   existingPlan,
+  canWrite = true,
   onSaveRoutine,
   onSuccessToast,
 }) => {
@@ -144,12 +146,20 @@ export const DailyRoutineAssignmentModal: React.FC<DailyRoutineAssignmentModalPr
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-5 text-xs">
-          {/* Add Exercise Selector */}
-          <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200/80 space-y-3">
-            <div className="font-bold text-slate-800 text-sm flex items-center gap-2">
-              <Plus className="w-4 h-4 text-emerald-600" />
-              <span>เพิ่มท่ากายภาพจากคลัง (Exercise Library):</span>
+          {!canWrite && (
+            <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 font-bold flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              <span>สิทธิ์การใช้งาน: อ่านอย่างเดียว (Read-Only) — ไม่สามารถปรับเปลี่ยนท่าหรือจำนวนเซ็ตได้เนื่องจากไม่ใช่เคสในความรับผิดชอบหรือเคสที่ได้รับฝาก</span>
             </div>
+          )}
+
+          {/* Add Exercise Selector */}
+          {canWrite && (
+            <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200/80 space-y-3">
+              <div className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                <Plus className="w-4 h-4 text-emerald-600" />
+                <span>เพิ่มท่ากายภาพจากคลัง (Exercise Library):</span>
+              </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="sm:col-span-2">
@@ -229,6 +239,7 @@ export const DailyRoutineAssignmentModal: React.FC<DailyRoutineAssignmentModalPr
               </button>
             </div>
           </div>
+        )}
 
           {/* Assigned Exercises List */}
           <div className="space-y-2">
@@ -260,14 +271,16 @@ export const DailyRoutineAssignmentModal: React.FC<DailyRoutineAssignmentModalPr
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveExercise(idx)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                      title="ลบท่านี้"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {canWrite && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveExercise(idx)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                        title="ลบท่านี้"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -282,9 +295,12 @@ export const DailyRoutineAssignmentModal: React.FC<DailyRoutineAssignmentModalPr
             <textarea
               rows={2}
               value={instructions}
+              readOnly={!canWrite}
               onChange={(e) => setInstructions(e.target.value)}
               placeholder="เช่น ทำอย่างช้าๆ สม่ำเสมอ หากมีอาการเจ็บเสียวให้หยุดพักทันที"
-              className="w-full p-3 rounded-2xl bg-white border border-slate-300 font-medium text-xs text-[#0F2F2B] outline-none focus:border-emerald-500"
+              className={`w-full p-3 rounded-2xl border border-slate-300 font-medium text-xs text-[#0F2F2B] outline-none ${
+                canWrite ? 'bg-white focus:border-emerald-500' : 'bg-slate-100 cursor-not-allowed'
+              }`}
             />
           </div>
         </div>
@@ -296,17 +312,19 @@ export const DailyRoutineAssignmentModal: React.FC<DailyRoutineAssignmentModalPr
             onClick={onClose}
             className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 font-bold hover:bg-slate-100 transition text-xs cursor-pointer"
           >
-            ยกเลิก
+            {canWrite ? 'ยกเลิก' : 'ปิดหน้าต่าง'}
           </button>
 
-          <button
-            type="button"
-            onClick={handleSave}
-            className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-extrabold text-xs shadow-md shadow-cyan-500/25 transition active:scale-95 cursor-pointer flex items-center gap-2"
-          >
-            <Check className="w-4 h-4" />
-            <span>บันทึกและซิงค์ตู้ Kiosk (Save & Sync Kiosk)</span>
-          </button>
+          {canWrite && (
+            <button
+              type="button"
+              onClick={handleSave}
+              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-extrabold text-xs shadow-md shadow-cyan-500/25 transition active:scale-95 cursor-pointer flex items-center gap-2"
+            >
+              <Check className="w-4 h-4" />
+              <span>บันทึกและซิงค์ตู้ Kiosk (Save & Sync Kiosk)</span>
+            </button>
+          )}
         </div>
       </div>
     </div>

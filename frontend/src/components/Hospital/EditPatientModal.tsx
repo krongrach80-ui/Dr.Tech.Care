@@ -140,11 +140,18 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
   const handleAddNote = () => {
     if (!newNoteText.trim()) return;
 
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const formattedDateTime = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const ptName = currentUserName || 'กภ. ผู้ดูแล';
+    const immutableStamp = `[${formattedDateTime} - Logged by PT: ${ptName}]`;
+    const finalNoteText = `${immutableStamp} ${newNoteText.trim()}`;
+
     const newNote: MedicalNoteItem = {
       id: Date.now(),
-      date: new Date().toISOString().replace('T', ' ').slice(0, 16),
-      author: currentUserName || 'กภ. ผู้ดูแล',
-      text: newNoteText.trim(),
+      date: formattedDateTime,
+      author: ptName,
+      text: finalNoteText,
     };
 
     const updated = [newNote, ...notesHistory];
@@ -155,7 +162,7 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
     onSavePatient(patient.id, {
       medicalNotesHistory: updated,
     });
-    onSuccessToast('บันทึกบันทึกทางการแพทย์ (Clinical Note) เรียบร้อยแล้ว');
+    onSuccessToast('บันทึกความก้าวหน้าทางการแพทย์ (Append Medical Note) สำเร็จ');
   };
 
   // Mock performance data for Tab 3 (sourced directly from Kiosk session logs)
@@ -423,20 +430,27 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
 
             {/* Medical Notes Log */}
             <div className="space-y-3">
+              <div className="p-3 rounded-2xl bg-emerald-50/80 border border-emerald-200 text-emerald-950 flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                <div className="text-[11px] leading-relaxed">
+                  <strong>ระบบบันทึกเวชระเบียนแบบต่อท้ายถาวร (Append-Only Progress Notes System):</strong> บันทึกทางการแพทย์ในอดีตไม่สามารถแก้ไขหรือลบได้โดยนักกายภาพ เพื่อความถูกต้องของประวัติการรักษาตามมาตรฐานวิชาชีพ ทุกการบันทึกจะประทับเวลาและชื่อผู้บันทึกอัตโนมัติ
+                </div>
+              </div>
+
               <div className="flex items-center justify-between">
                 <div className="font-bold text-slate-800 text-sm flex items-center gap-2">
                   <FileText className="w-4 h-4 text-emerald-600" />
-                  <span>ประวัติบันทึกทางการแพทย์ (Medical Notes History):</span>
+                  <span>ประวัติบันทึกทางการแพทย์ (Append-Only Medical Notes):</span>
                 </div>
 
                 {!isAddingNote && (
                   <button
                     type="button"
                     onClick={() => setIsAddingNote(true)}
-                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs transition active:scale-95 cursor-pointer"
+                    className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs transition active:scale-95 cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>+ เพิ่มบันทึกใหม่ (+ Add Note)</span>
+                    <span>+ Append Medical Note</span>
                   </button>
                 )}
               </div>
@@ -444,12 +458,17 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
               {/* Add Note Form Inline */}
               {isAddingNote && (
                 <div className="p-4 rounded-2xl bg-slate-50 border border-cyan-300 space-y-3 animate-fadeIn">
-                  <label className="block font-bold text-slate-700">เขียนบันทึกความก้าวหน้าทางการแพทย์:</label>
+                  <div className="flex items-center justify-between">
+                    <label className="block font-bold text-slate-700">New Note (บันทึกความก้าวหน้าทางการแพทย์ใหม่):</label>
+                    <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                      Stamps [DD/MM/YYYY HH:mm - Logged by PT: {currentUserName || 'PT'}]
+                    </span>
+                  </div>
                   <textarea
                     rows={3}
                     value={newNoteText}
                     onChange={(e) => setNewNoteText(e.target.value)}
-                    placeholder="พิมพ์บันทึกผลการรักษา อาการที่เปลี่ยนแปลง หรือคำแนะนำ..."
+                    placeholder="พิมพ์บันทึกผลการรักษา อาการที่เปลี่ยนแปลง หรือคำแนะนำทางการแพทย์..."
                     className="w-full p-3 rounded-xl bg-white border border-slate-300 text-xs text-[#0F2F2B] outline-none focus:border-emerald-500"
                   />
                   <div className="flex justify-end gap-2">
@@ -466,9 +485,10 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
                     <button
                       type="button"
                       onClick={handleAddNote}
-                      className="px-4 py-1.5 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-500 shadow-xs"
+                      className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold hover:opacity-95 shadow-xs flex items-center gap-1.5"
                     >
-                      บันทึกข้อความ
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ Append Medical Note</span>
                     </button>
                   </div>
                 </div>

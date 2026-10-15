@@ -22,6 +22,7 @@ import { HospitalExercise } from '../../types/hospital';
 interface AddExerciseModalProps {
   isOpen: boolean;
   onClose: () => void;
+  currentUserName?: string;
   onSubmitExercise: (exerciseData: Omit<HospitalExercise, 'id'>) => void;
   onSuccessToast: (msg: string) => void;
 }
@@ -38,6 +39,7 @@ const CATEGORIES = [
 export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
   isOpen,
   onClose,
+  currentUserName,
   onSubmitExercise,
   onSuccessToast,
 }) => {
@@ -47,7 +49,7 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
   const [category, setCategory] = useState<string>('ฟื้นฟูข้อไหล่และแขน (Shoulder & Arm)');
   const [type, setType] = useState<'single' | 'preset'>('single');
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
-  const [createdBy, setCreatedBy] = useState<string>('ผู้อำนวยการ นพ.วรชัย');
+  const [createdBy, setCreatedBy] = useState<string>(currentUserName || 'ผู้อำนวยการ นพ.วรชัย');
 
   // Section 2: Kinematics & Training Targets
   const [targetJoint, setTargetJoint] = useState<string>('');
@@ -101,10 +103,11 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
       setContraindications('');
       setDemoImage('');
       setImageFileName('');
+      setCreatedBy(currentUserName || 'ผู้อำนวยการ นพ.วรชัย');
       setErrors({});
       setIsSubmitting(false);
     }
-  }, [isOpen]);
+  }, [isOpen, currentUserName]);
 
   if (!isOpen) return null;
 
@@ -354,15 +357,19 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
 
               <div>
                 <label className="block text-slate-700 font-bold mb-1">
-                  ผู้สร้าง (Created By)
+                  ผู้สร้าง (Created By - Auto-filled)
                 </label>
-                <input
-                  type="text"
-                  value={createdBy}
-                  onChange={(e) => setCreatedBy(e.target.value)}
-                  placeholder="เช่น ผู้อำนวยการ นพ.วรชัย"
-                  className="w-full px-3.5 py-2.5 rounded-2xl border border-stone-200 bg-white text-xs text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-[#10B981]"
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={createdBy}
+                    readOnly
+                    className="w-full px-3.5 py-2.5 rounded-2xl border border-stone-200 bg-stone-100/80 text-xs text-slate-700 font-bold outline-none cursor-not-allowed"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
+                    Read-Only
+                  </span>
+                </div>
               </div>
             </div>
 

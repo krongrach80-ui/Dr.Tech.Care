@@ -61,8 +61,25 @@ export interface PhysicalTherapist {
   activePatientsCount: number;
   assignedCases?: string[];      // รายชื่อเคสที่รับผิดชอบ
   bio?: string;                  // ประวัติส่วนตัว & การศึกษา
+  photoUrl?: string;             // รูปโปรไฟล์
   status: 'active' | 'on_leave' | 'suspended';
   licenseNumber: string;
+}
+
+export interface TemporaryCaseDelegation {
+  id: string | number;
+  patientId: number | string;
+  patientName: string;
+  patientCode: string;
+  originalTherapistId: number | string;
+  originalTherapistName: string;
+  coveringTherapistId: number | string;
+  coveringTherapistName: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string;   // YYYY-MM-DD
+  reason: string;
+  status: 'active' | 'revoked' | 'expired';
+  createdAt: string;
 }
 
 export interface HospitalExercise {
