@@ -36,6 +36,7 @@ interface LivenessScanHUDProps {
   activeNonce: LivenessNonce | null;
   currentChallenge: LivenessChallenge;
   completedChallenges: Record<LivenessChallenge, boolean>;
+  challenges?: { id: LivenessChallenge; label: string }[];
   holdProgress: number; // 0 - 100
   holdElapsedMs?: number;
   targetHoldMs?: number;
@@ -53,6 +54,7 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
   activeNonce,
   currentChallenge,
   completedChallenges,
+  challenges = [{ id: 'front' as LivenessChallenge, label: '1. หน้าตรง (มองเข้าหากล้อง ค้างไว้ 1.2 วินาที)' }],
   holdProgress,
   holdElapsedMs = 0,
   targetHoldMs = 1200,
@@ -111,7 +113,7 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
         <div className="flex items-center justify-between mb-1">
           <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-800 bg-emerald-200/80 px-2.5 py-0.5 rounded-full">
             <Shield className="w-3.5 h-3.5 text-emerald-700" />
-            <span>ระบบสแกนชีวมิติ 3 มิติ (3D Liveness)</span>
+            <span>ระบบสแกนชีวมิติใบหน้า (Face Biometrics)</span>
           </span>
 
           {activeNonce && (
@@ -127,42 +129,71 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
         <h2 className="text-lg sm:text-xl font-black text-[#0B2B2B]">
           {isProcessingBiometrics
             ? '🧬 กำลังประมวลผลเวกเตอร์อัตลักษณ์ 128 มิติ...'
+            : challenges.length === 1
+            ? 'กรุณามองตรงเข้าหากล้อง'
             : 'กรุณาปฏิบัติตามคำแนะนำบนหน้าจอ'}
         </h2>
 
-        {/* 3-Step Checklist Pills */}
-        <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mt-2">
-          {[
-            { id: 'front' as LivenessChallenge, label: '1. หน้าตรง' },
-            { id: 'turn_left' as LivenessChallenge, label: '2. หันซ้าย' },
-            { id: 'turn_right' as LivenessChallenge, label: '3. หันขวา' },
-          ].map((item) => {
-            const isDone = completedChallenges[item.id];
-            const isCurrent = currentChallenge === item.id && !isProcessingBiometrics;
+        {/* Step Checklist Pills: Single Straight Face or Multi-Step */}
+        {challenges.length === 1 ? (
+          <div className="max-w-md mx-auto mt-2">
+            {challenges.map((item) => {
+              const isDone = completedChallenges[item.id];
+              const isCurrent = currentChallenge === item.id && !isProcessingBiometrics;
 
-            return (
-              <div
-                key={item.id}
-                className={`py-1.5 px-2 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1 ${
-                  isDone
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : isCurrent
-                    ? holdProgress > 0
-                      ? 'bg-emerald-500 text-white ring-2 ring-emerald-400 scale-102 shadow-md animate-pulse'
-                      : 'bg-amber-400 text-slate-900 ring-2 ring-amber-500 scale-102 shadow-md'
-                    : 'bg-white/80 text-slate-500 border border-slate-200'
-                }`}
-              >
-                {isDone ? (
-                  <CheckCircle2 className="w-4 h-4 stroke-[3]" />
-                ) : (
-                  <span>{isCurrent ? (holdProgress > 0 ? '⚡' : '👉') : '⏳'}</span>
-                )}
-                <span>{item.label}</span>
-              </div>
-            );
-          })}
-        </div>
+              return (
+                <div
+                  key={item.id}
+                  className={`py-2 px-4 rounded-2xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 ${
+                    isDone
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : isCurrent
+                      ? holdProgress > 0
+                        ? 'bg-emerald-500 text-white ring-2 ring-emerald-400 scale-102 shadow-md animate-pulse'
+                        : 'bg-amber-400 text-slate-900 ring-2 ring-amber-500 shadow-md'
+                      : 'bg-white/80 text-slate-500 border border-slate-200'
+                  }`}
+                >
+                  {isDone ? (
+                    <CheckCircle2 className="w-4 h-4 stroke-[3]" />
+                  ) : (
+                    <span>{isCurrent ? (holdProgress > 0 ? '⚡' : '👉') : '⏳'}</span>
+                  )}
+                  <span>{item.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mt-2">
+            {challenges.map((item) => {
+              const isDone = completedChallenges[item.id];
+              const isCurrent = currentChallenge === item.id && !isProcessingBiometrics;
+
+              return (
+                <div
+                  key={item.id}
+                  className={`py-1.5 px-2 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1 ${
+                    isDone
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : isCurrent
+                      ? holdProgress > 0
+                        ? 'bg-emerald-500 text-white ring-2 ring-emerald-400 scale-102 shadow-md animate-pulse'
+                        : 'bg-amber-400 text-slate-900 ring-2 ring-amber-500 scale-102 shadow-md'
+                      : 'bg-white/80 text-slate-500 border border-slate-200'
+                  }`}
+                >
+                  {isDone ? (
+                    <CheckCircle2 className="w-4 h-4 stroke-[3]" />
+                  ) : (
+                    <span>{isCurrent ? (holdProgress > 0 ? '⚡' : '👉') : '⏳'}</span>
+                  )}
+                  <span>{item.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* 2. Main Camera Viewport with Oval Target & HUD Overlays */}

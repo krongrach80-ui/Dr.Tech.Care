@@ -1773,10 +1773,10 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     const isCompleted =
       bypassChallengeCheck ||
       isDemoMode ||
-      (challengeProgressRef.current.front && challengeProgressRef.current.left && challengeProgressRef.current.right);
+      challengeProgressRef.current.front;
 
     if (!isCompleted) {
-      setScanStatusMessage('⚠️ กรุณาทำท่า หน้าตรง, หันซ้าย และหันขวา ให้ครบก่อน หรือใช้รหัส PIN');
+      setScanStatusMessage('⚠️ กรุณามองตรงเข้าหากล้อง ค้างไว้ 1.2 วินาที หรือใช้รหัส PIN');
       audioFeedback.playHoldTick();
       return;
     }
@@ -2210,26 +2210,15 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   };
 
   // Step 4: Manual button click handler for face scan challenges
-  const handleManualChallenge = (step: 'front' | 'left' | 'right') => {
-    challengeProgressRef.current[step] = true;
-    setChallengeProgress((prev) => ({ ...prev, [step]: true }));
+  const handleManualChallenge = (_step?: 'front' | 'left' | 'right') => {
+    challengeProgressRef.current = { front: true, left: true, right: true };
+    setChallengeProgress({ front: true, left: true, right: true });
     audioFeedback.playRepSuccess();
-
-    if (step === 'front') {
-      setScanStep('left');
-      setScanStatusMessage('✓ 1. หน้าตรง สำเร็จ! ต่อไปค่อยๆ หันศีรษะไปทางซ้าย (ค้างไว้ 1.5 วินาที)');
-    } else if (step === 'left') {
-      setScanStep('right');
-      setScanStatusMessage('✓ 2. หันซ้าย สำเร็จ! ต่อไปค่อยๆ หันศีรษะไปทางขวา (ค้างไว้ 1.5 วินาที)');
-    } else if (step === 'right') {
-      challengeProgressRef.current = { front: true, left: true, right: true };
-      setChallengeProgress({ front: true, left: true, right: true });
-      setScanStep('done');
-      setScanStatusMessage('✓ ครบทุกท่าแล้ว! กำลังตรวจสอบข้อมูลชีวมิติ...');
-      setTimeout(() => {
-        handlePerformFaceScan(true);
-      }, 350);
-    }
+    setScanStep('done');
+    setScanStatusMessage('✓ สแกนใบหน้าตรงสำเร็จ! กำลังตรวจสอบข้อมูลชีวมิติ...');
+    setTimeout(() => {
+      handlePerformFaceScan(true);
+    }, 350);
   };
 
   // Step 4: Reset / Retry Face Scan
@@ -2615,22 +2604,10 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   setHoldElapsedMs(0);
 
                   if (scanStep === 'front') {
-                    challengeProgressRef.current.front = true;
-                    setChallengeProgress((prev) => ({ ...prev, front: true }));
-                    setScanStep('left');
-                    setScanStatusMessage('✓ 1. หน้าตรง สำเร็จ! ค่อยๆ หันศีรษะไปทางซ้าย (ค้างไว้ 1.2 วินาที)');
-                    audioFeedback.playRepSuccess();
-                  } else if (scanStep === 'left') {
-                    challengeProgressRef.current.left = true;
-                    setChallengeProgress((prev) => ({ ...prev, left: true }));
-                    setScanStep('right');
-                    setScanStatusMessage('✓ 2. หันซ้าย สำเร็จ! ค่อยๆ หันศีรษะไปทางขวา (ค้างไว้ 1.2 วินาที)');
-                    audioFeedback.playRepSuccess();
-                  } else if (scanStep === 'right') {
-                    challengeProgressRef.current.right = true;
+                    challengeProgressRef.current = { front: true, left: true, right: true };
                     setChallengeProgress({ front: true, left: true, right: true });
                     setScanStep('done');
-                    setScanStatusMessage('✓ ครบ 3 ท่าแล้ว! กำลังตรวจสอบข้อมูลชีวมิติ...');
+                    setScanStatusMessage('✓ สแกนใบหน้าตรงสำเร็จ! กำลังตรวจสอบข้อมูลชีวมิติ...');
                     audioFeedback.playRepSuccess();
                     handlePerformFaceScan(true);
                   }
@@ -3247,13 +3224,12 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             }}
             frameData={currentLivenessFrame}
             activeNonce={livenessEngine.getActiveNonce()}
-            currentChallenge={
-              scanStep === 'front' ? 'front' : scanStep === 'left' ? 'turn_left' : 'turn_right'
-            }
+            challenges={[{ id: 'front', label: '1. หน้าตรง (มองเข้าหากล้อง ค้างไว้ 1.2 วินาที)' }]}
+            currentChallenge="front"
             completedChallenges={{
               front: challengeProgress.front,
-              turn_left: challengeProgress.left,
-              turn_right: challengeProgress.right,
+              turn_left: true,
+              turn_right: true,
             }}
             holdProgress={faceHoldProgress}
             holdElapsedMs={holdElapsedMs}
