@@ -519,8 +519,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       addTherapist(therapistExtra);
     }
 
+    const code = createdUser.code || userData.code || `P-${Math.floor(1000 + Math.random() * 9000)}`;
+    const resolvedVector: number[] | undefined = Array.isArray(userData.face_vector)
+      ? (userData.face_vector as number[])
+      : typeof userData.face_vector === 'string'
+      ? patientFaceStorageService.parseVector(userData.face_vector) || undefined
+      : undefined;
+
     if (userData.role === 'patient') {
-      const code = createdUser.code || userData.code || `P-${Math.floor(1000 + Math.random() * 9000)}`;
       patientFaceStorageService.savePatientRecord(code, {
         patient_profile: {
           patient_id: code,
@@ -534,12 +540,31 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
           phone: userData.phone?.trim(),
           status: 'active',
         },
+        biometric_data: resolvedVector ? {
+          face_vector: resolvedVector,
+          registered_face_url: userData.face_image_url || '',
+          enrolled_at: new Date().toISOString(),
+          model_version: 'face-resnet34-v2',
+        } : undefined,
         medical_records: {
           diagnosis: userData.chiefComplaint || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
           chief_complaint: userData.chiefComplaint,
           treatment_plan: userData.patientBackground,
         },
-      });
+      }, userData.face_image_url);
+
+      if (resolvedVector) {
+        faceRegistryService.saveProfile({
+          patientId: createdUser.id,
+          patientCode: code,
+          name: userData.name.trim(),
+          age: Number(userData.age) || 65,
+          gender: userData.gender,
+          embeddings: [resolvedVector],
+          face_image_url: userData.face_image_url,
+          enrolledAt: new Date().toISOString(),
+        });
+      }
 
       try {
         await supabase.from('patients').upsert({
@@ -549,7 +574,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
           gender: userData.gender || 'male',
           phone: userData.phone?.trim() || null,
           chief_complaint: userData.chiefComplaint || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
-          medical_history: userData.patientBackground || 'ลงทะเบียนผู้ป่วยใหม่ผ่านระบบแอดมิน',
+          medical_history: userData.patientBackground || 'ลงทะเบียนผู้ป่วยใหม่ผ่านระบบแอดมิน (10-Snap Biometric)',
+          face_vector: resolvedVector ? JSON.stringify(resolvedVector) : null,
+          face_image_url: userData.face_image_url || null,
+          face_registered: !!resolvedVector,
           status: 'active',
           updated_at: new Date().toISOString(),
         }, { onConflict: 'patient_code' });
@@ -569,6 +597,18 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       } catch (sbErr) {
         console.warn('[SUPABASE] handleAddUser sync error:', sbErr);
       }
+    } else if (userData.face_vector) {
+      // Save face biometrics for therapist/staff as well if enrolled
+      faceRegistryService.saveProfile({
+        patientId: createdUser.id,
+        patientCode: code,
+        name: userData.name.trim(),
+        embeddings: Array.isArray(userData.face_vector) && Array.isArray((userData.face_vector as any)[0])
+          ? (userData.face_vector as any)
+          : [userData.face_vector as number[]],
+        face_image_url: userData.face_image_url,
+        enrolledAt: new Date().toISOString(),
+      });
     }
   };
 
@@ -1767,9 +1807,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   <button
                     onClick={() => setIsAddUserModalOpen(true)}
                     className="flex items-center gap-1.5 px-3.5 py-1.5 sm:py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-bold shadow-md shadow-cyan-500/25 hover:brightness-105 transition active:scale-95 cursor-pointer whitespace-nowrap"
+                    title="ลงทะเบียนผู้ใช้ใหม่ พร้อมสแกนใบหน้า 10 ช็อต"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>{currentRole === 'admin' ? 'เพิ่มบัญชีใหม่' : 'เพิ่มคนไข้'}</span>
+                    <span>ลงทะเบียนผู้ใช้ใหม่</span>
                   </button>
                 </div>
               </div>
