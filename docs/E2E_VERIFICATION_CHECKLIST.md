@@ -121,7 +121,26 @@
 - [x] **Session Logging:**
   - สรุปผลการฝึก บันทึกคะแนนและ Reps ส่งเข้าฐานข้อมูล `/api/kiosk/session-logs` ทันที
 - [x] **Production Deployment Scripts:**
-  - `launch_kiosk.bat`: สคริปต์เปิด Google Chrome โหมด Kiosk แนวตั้ง (1080×1920) ปิด Pinch Zoom
+  - `launch_kiosk.bat`: สคริปต์เปิด Google Chrome โหมด Kiosk แนวตั้ง (1080×1920) ปิด Pinch Zoom และมี Crash Auto-Restart Guard
   - `launch_system.bat`: สคริปต์เปิดระบบ Full-Stack แบบรวมศูนย์ (Backend + Frontend)
   - `backend/cron/auto_reschedule.php`: ระบบยกยอดการนัดหมายและตารางฝึกอัตโนมัติประจำวัน
   - `docs/APACHE_VHOST.conf` และ `docs/XAMPP_DEPLOYMENT_GUIDE.md`: คู่มือการติดตั้งสำหรับ Apache และ XAMPP
+
+---
+
+## 9. ตารางตรวจสอบเกณฑ์การยอมรับ (Acceptance Criteria per Master Prompt v2.1)
+
+| รายการทดสอบ (Acceptance Criteria) | การบังคับใช้ในระบบ | ผลการตรวจสอบ |
+| :--- | :--- | :---: |
+| **1. PT write on an Admin or PT user -> 403 and audited** | บล็อกผ่าน `PolicyEngine::canEditUser` ป้องกัน PT แก้ไข/รีเซ็ต Admin และ PT ท่านอื่น พร้อมบันทึก `audit_logs` | **PASSED (403)** |
+| **2. PATCH / DELETE on medical_notes fails** | ป้องกัน 2 ชั้น: ไม่มี Endpoint ให้แก้ไข/ลบใน REST API และมี MySQL Triggers `trg_medical_notes_no_update` และ `trg_medical_notes_no_delete` คืนค่า SQLSTATE '45000' | **PASSED (Blocked)** |
+| **3. PT write on patient ownership & coverage** | บล็อกผ่าน `PolicyEngine::canWriteSchedule`: ไม่ใช่เคสของตนเองและไม่มี Active Coverage -> 403; มี Active Coverage -> 200; หลังวัน `end_date` -> 403 | **PASSED** |
+| **4. Pose exercise while flag is off -> 422** | เมื่อ `FEATURE_PT_POSE_EXERCISES = false`: ปฏิเสธการจัด Routine ที่มี Pose ด้วย **HTTP 422 Unprocessable Entity** ทั้ง Admin และ PT | **PASSED (422)** |
+| **5. PT edits an Admin-created exercise -> 403. Own item -> 200** | บังคับใช้ผ่าน `PolicyEngine::canEditExercise`: ตรวจสอบ `created_by = self` อนุญาตเฉพาะแบบฝึกหัดที่ตนเองสร้าง | **PASSED** |
+| **6. PT calls the audit API -> 403; nav hides Audit; direct URL redirects** | `RbacMiddleware::requireAuditAccess` ส่งคืน 403; เมนูถูกซ่อนจาก PT Dashboard; เข้า URL ตรงจะ Redirect ไปยัง PT Workspace | **PASSED** |
+| **7. Kiosk token allowlist & isolation** | โทเค็น `kiosk_token` ถูกจำกัดให้เรียกได้เฉพาะ 4 Endpoints: `GET routine`, `POST session-logs`, `GET next-appointment`, `POST reset`; เรียกนอกเหนือจากนี้ส่งคืน 403 ทันที และโทเค็นถูกเพิกถอนเมื่อเข้าสู่ `RESET` | **PASSED (403)** |
+| **8. Kiosk has no credential input of any kind for patients** | ตัดช่องทางกรอกรหัสผ่าน, Username และ PIN ออกจากหน้าตู้ทั้งหมด (`KIOSK_PIN_FALLBACK = false`) สแกนไม่ติดแจ้งเรียกเจ้าหน้าที่ | **PASSED** |
+| **9. Typing /admin or /pt on kiosk device returns to /kiosk** | Router Guard ใน `App.tsx` ตรวจสอบสถานะการยืนยันตัวตน หากไม่มีสิทธิ์เจ้าหน้าที่จะ Redirect กลับไปที่ `#/kiosk` ทันที | **PASSED** |
+| **10. Full Flow STANDBY -> ... -> SUMMARY -> RESET** | ทดสอบการทำงานครบวงจรทั้ง Mini-Game (เล่นจริง บันทึกผล) และ Pose Placeholder (ค้าง 4 วินาที บันทึกสถานะ `placeholder` แล้วเลื่อนไปต่อ) เมื่อถึง `RESET` ล้างข้อมูลใน Memory หมดจด | **PASSED** |
+| **11. Placeholder-only visits are not marked missed by the cron** | ปรับ Query ใน `backend/cron/auto_reschedule.php` ให้รองรับ `status = 'placeholder'` เป็นการ Check-in ที่ถูกต้อง ไม่ถูกยกยอดเป็น Missed | **PASSED** |
+

@@ -3,6 +3,7 @@ title Moh Tech Care - Patient Kiosk Launcher (1080x1920 Portrait)
 echo ========================================================
 echo   Moh Tech Care - Intelligent Physical Therapy System
 echo   Launching Vertical Portrait Kiosk Terminal (1080x1920)
+echo   Lockdown: No Pinch, No Overscroll, Auto-Restart on Crash
 echo ========================================================
 
 set "KIOSK_URL=http://localhost:3000/#/kiosk"
@@ -28,9 +29,10 @@ if "%CHROME_BIN%"=="" (
 
 echo Found browser: "%CHROME_BIN%"
 echo Target URL: %KIOSK_URL%
-echo Starting in full kiosk portrait mode...
+echo Starting in full kiosk portrait mode with crash auto-restart guard...
 
-start "" "%CHROME_BIN%" ^
+:kiosk_loop
+"%CHROME_BIN%" ^
   --kiosk "%KIOSK_URL%" ^
   --app="%KIOSK_URL%" ^
   --window-size=1080,1920 ^
@@ -43,5 +45,9 @@ start "" "%CHROME_BIN%" ^
   --autoplay-policy=no-user-gesture-required ^
   --check-for-update-interval=31536000
 
+echo.
+echo [GUARD] Kiosk session ended or crashed at %time%. Auto-restarting in 2 seconds...
+timeout /t 2 /nobreak >nul
+goto :kiosk_loop
+
 :end
-echo Kiosk launched successfully.

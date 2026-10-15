@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, UserPlus, Shield, UserCheck, Key, Edit, RefreshCw } from 'lucide-react';
+import { Search, UserPlus, Shield, UserCheck, Key, Edit, RefreshCw, Trash2 } from 'lucide-react';
 import { Table, Column } from '../../components/common/Table';
 import { Badge } from '../../components/common/Badge';
 import { Button } from '../../components/common/Button';
@@ -54,6 +54,16 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
     try {
       const res = await api.users.resetPassword(u.id);
       alert(`รีเซ็ตรหัสผ่านสำเร็จ!\nรหัสผ่านชั่วคราวใหม่คือ: ${res.temporary_password}\n(ผู้ใช้ต้องเปลี่ยนรหัสผ่านเมื่อเข้าสู่ระบบครั้งแรก)`);
+      loadUsers();
+    } catch (err: any) {
+      alert('เกิดข้อผิดพลาด: ' + err?.message);
+    }
+  };
+
+  const handleSoftDelete = async (u: User) => {
+    if (!confirm(`ต้องการระงับการใช้งานบัญชี (Soft Delete) สำหรับ ${u.full_name} (${u.id}) หรือไม่?\n(เวชระเบียนทางการแพทย์และประวัติการฝึกจะไม่สูญหาย)`)) return;
+    try {
+      await api.users.delete(u.id);
       loadUsers();
     } catch (err: any) {
       alert('เกิดข้อผิดพลาด: ' + err?.message);
@@ -172,6 +182,16 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
             >
               <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
             </Button>
+            {actorRole === 'admin' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                title="ระงับการใช้งานบัญชี (Soft Delete)"
+                onClick={() => handleSoftDelete(u)}
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              </Button>
+            )}
           </div>
         );
       },

@@ -1,11 +1,12 @@
 <?php
 /**
- * Moh Tech Care - Auth Middleware
+ * Moh Tech Care - Auth Middleware (v2.1)
  * Validates DB-backed session tokens from auth_sessions.
- * Enforces Force Logout and Session Expiry.
+ * Enforces Force Logout, Session Expiry, and Kiosk Token Scoped Allowlist.
  */
 
 require_once __DIR__ . '/../Repositories/SessionRepository.php';
+require_once __DIR__ . '/../Services/PolicyEngine.php';
 
 class AuthMiddleware {
     private static ?array $currentUser = null;
@@ -45,6 +46,25 @@ class AuthMiddleware {
                 'message' => 'Access Denied: Your account has been disabled'
             ], JSON_UNESCAPED_UNICODE);
             exit();
+        }
+
+        // Kiosk Scoped Token Security Check (v2.1)
+        // Kiosk tokens (role = 'kiosk') are restricted to allowlisted endpoints only
+        $role = strtolower($session['role'] ?? '');
+        if ($role === 'kiosk') {
+            $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+            $uri = $_SERVER['REQUEST_URI'] ?? '';
+            $check = PolicyEngine::isKioskTokenAllowed($session, $method, $uri);
+
+            if (!$check['allowed']) {
+                http_response_code($check['statusCode'] ?? 403);
+                echo json_encode([
+                    'status' => 'error',
+                    'code' => 'KIOSK_TOKEN_FORBIDDEN',
+                    'message' => $check['message'] ?? 'Forbidden: Kiosk token is restricted to interactive session endpoints only'
+                ], JSON_UNESCAPED_UNICODE);
+                exit();
+            }
         }
 
         self::$currentUser = $session;

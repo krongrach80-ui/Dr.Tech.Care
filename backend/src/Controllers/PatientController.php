@@ -246,6 +246,10 @@ class PatientController {
         $totalScore = 0;
 
         foreach ($logs as $l) {
+            // Placeholder items excluded from analytics per v2.1 Section 2
+            if (($l['status'] ?? '') === 'placeholder') {
+                continue;
+            }
             $totalCorrect += (int)$l['correct_reps'];
             $totalIncorrect += (int)$l['incorrect_reps'];
             $totalScore += (int)$l['score'];

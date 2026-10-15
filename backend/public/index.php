@@ -118,6 +118,10 @@ if (preg_match('#^/api/users/([^/]+)$#', $uri, $m)) {
         (new UserController())->updateUser($m[1]);
         exit();
     }
+    if ($method === 'DELETE') {
+        (new UserController())->deleteUser($m[1]);
+        exit();
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -231,8 +235,16 @@ if ($uri === '/api/kiosk/routine' && $method === 'GET') {
     (new KioskController())->getTodayRoutine();
     exit();
 }
+if ($uri === '/api/kiosk/next-appointment' && $method === 'GET') {
+    (new KioskController())->getNextAppointment();
+    exit();
+}
 if ($uri === '/api/kiosk/session-logs' && $method === 'POST') {
     (new KioskController())->logSession();
+    exit();
+}
+if ($uri === '/api/kiosk/reset' && $method === 'POST') {
+    (new KioskController())->resetKioskSession();
     exit();
 }
 

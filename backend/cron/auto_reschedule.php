@@ -20,6 +20,8 @@ $auditRepo = new AuditRepository();
 $today = date('Y-m-d');
 
 // 1. Find appointments with status 'scheduled' and date < today
+// Note: per v2.1, placeholder-only visits (status = 'placeholder') count as valid check-in
+// and must NOT be marked missed or rolled over!
 $stmt = $db->prepare("
     SELECT a.*
     FROM appointments a
@@ -27,7 +29,8 @@ $stmt = $db->prepare("
       AND a.appointment_date < :today
       AND NOT EXISTS (
           SELECT 1 FROM session_logs sl
-          WHERE sl.appointment_id = a.id
+          WHERE (sl.appointment_id = a.id OR (sl.patient_id = a.patient_id AND DATE(sl.started_at) = a.appointment_date))
+            AND sl.status IN ('completed', 'partial', 'placeholder')
       )
 ");
 $stmt->execute([':today' => $today]);

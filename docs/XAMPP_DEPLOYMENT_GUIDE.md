@@ -93,4 +93,28 @@ npm run build
 | **Super Admin** | `admin` | `admin1234` | บริหารจัดการผู้ใช้ทุกระดับ, ปลดล็อกสิทธิ์, ดู Audit Log, สั่ง Force Logout, แบน IP |
 | **Physiotherapist** | `pt_somchai` | `pt123456` | หน้าจอ PT Workspace, บันทึกเวชระเบียน, มอบหมายงานแทน (Temporary Coverage) |
 | **Physiotherapist** | `pt_kanok` | `pt123456` | ทดสอบการรับเคสรักษาและการคุ้มครองผู้ป่วยแทน |
-| **Patient** | `P-1001` (นายสมศักดิ์ มีสุข) | รหัสผ่านชั่วคราว / ใบหน้า | ตู้ Kiosk สแกนใบหน้า, เล่นมินิเกม Balloon Pop, Reach & Catch |
+| **Patient** | `P-1001` (นายสมศักดิ์ มีสุข) | สแกนใบหน้า (Biometrics) หรือ Staff Fallback | ตู้ Kiosk สแกนใบหน้า, เล่นมินิเกม Balloon Pop, Reach & Catch |
+
+---
+
+## 9. การล็อกระบบตู้ Kiosk ขั้นสูง (Enterprise Lockdown Guide per v2.1)
+
+เพื่อป้องกันไม่ให้ผู้ป่วยออกจากแอปพลิเคชันหรือเปิดเว็บไซต์อื่นบนตู้คีออสจริง:
+
+### 9.1 นโยบายเบราว์เซอร์ Google Chrome (Chrome Enterprise Policies)
+สร้างหรือแก้ไข Registry ใน Windows (`HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome`):
+1. **DeveloperToolsAvailability = 2**
+   - ปิดการใช้งาน DevTools (F12, Inspect Element) 100%
+2. **URLBlocklist = ["*"]**
+   - บล็อกการเข้าถึง URL ทั้งหมดบนอินเทอร์เน็ต
+3. **URLAllowlist = ["http://localhost*", "http://127.0.0.1*", "https://krongrach80-ui.github.io*"]**
+   - อนุญาตเฉพาะโดเมนของระบบ Moh Tech Care เท่านั้น
+4. **VideoCaptureAllowedUrls = ["http://localhost*", "http://127.0.0.1*", "https://krongrach80-ui.github.io*"]**
+   - อนุญาตสิทธิ์การเข้าถึงกล้อง Webcam อัตโนมัติ โดยไม่ต้องให้ผู้ป่วยกดยืนยัน
+
+### 9.2 นโยบายระบบปฏิบัติการ Windows (Windows Assigned Access)
+1. ติดตั้งแอปในบัญชี Windows Standard User (ไม่ใช่ Admin)
+2. เปิดใช้งาน **Assigned Access (โหมดคีออสของ Windows)** โดยกำหนดให้รันสคริปต์ `launch_kiosk.bat`
+3. ตั้งค่านโยบาย Local Group Policy เพื่อปิดปุ่ม `Alt+F4`, `Windows Key`, และ `Ctrl+Alt+Del`
+4. ไม่ต่อแป้นพิมพ์ภายนอก (No Physical Keyboard) ให้ใช้งานผ่านหน้าจอสัมผัสและการตรวจจับใบหน้า/ท่าทางเท่านั้น
+5. หาก Chrome ปิดตัวลงหรือแครช สคริปต์ `launch_kiosk.bat` จะเปิด Chrome ขึ้นมาใหม่ภายใน 2 วินาทีโดยอัตโนมัติ

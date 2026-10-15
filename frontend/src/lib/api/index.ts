@@ -104,6 +104,12 @@ export const api = {
         body: JSON.stringify({ frames, embedding: averageEmbedding }),
       });
     },
+
+    delete: async (userId: string) => {
+      return apiClient<{ status: string; message: string }>(`/users/${userId}`, {
+        method: 'DELETE',
+      });
+    },
   },
 
   // ---------------------------------------------------------------------------
@@ -306,6 +312,24 @@ export const api = {
       }>(`/kiosk/routine?patient_id=${patientId}`);
     },
 
+    getNextAppointment: async (patientId?: string) => {
+      const qs = patientId ? `?patient_id=${patientId}` : '';
+      return apiClient<{
+        status: string;
+        next_appointment_date?: string | null;
+      }>(`/kiosk/next-appointment${qs}`);
+    },
+
+    reset: async () => {
+      try {
+        return await apiClient<{ status: string; message: string }>('/kiosk/reset', {
+          method: 'POST',
+        });
+      } finally {
+        setAuthToken(null);
+      }
+    },
+
     logSession: async (logData: {
       appointment_id?: number | null;
       patient_id: string;
@@ -318,7 +342,9 @@ export const api = {
       accuracy_percent: number;
       score: number;
       duration_seconds: number;
-      status: 'completed' | 'partial';
+      status: 'completed' | 'partial' | 'placeholder';
+      assisted?: boolean;
+      staff_id?: string | null;
     }) => {
       return apiClient<{ status: string; log_id: number }>('/kiosk/session-logs', {
         method: 'POST',

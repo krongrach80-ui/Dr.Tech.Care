@@ -1,22 +1,30 @@
 <?php
 /**
- * Moh Tech Care - RBAC Middleware
+ * Moh Tech Care - RBAC Middleware (v2.1)
  * Strict Server-Side Role-Based Access Control and Authorization Guards.
+ * Delegates to PolicyEngine with automatic 403 audit logging.
  */
 
 require_once __DIR__ . '/AuthMiddleware.php';
+require_once __DIR__ . '/../Services/PolicyEngine.php';
 require_once __DIR__ . '/../../config/Database.php';
 
 class RbacMiddleware {
     /**
-     * Require one of the specified roles, otherwise return 403
+     * Require one of the specified roles, otherwise return 403 and write audit_logs
      */
     public static function requireRole(array $allowedRoles): void {
         AuthMiddleware::check();
         $user = AuthMiddleware::getUser();
-        $role = $user['role'] ?? '';
+        $role = strtolower($user['role'] ?? '');
 
-        if (!in_array($role, $allowedRoles, true)) {
+        if (!in_array($role, array_map('strtolower', $allowedRoles), true)) {
+            PolicyEngine::auditDenial(
+                ['id' => $user['user_id'] ?? $user['id'] ?? 'UNKNOWN', 'role' => $role],
+                'ROLE_PERMISSION_DENIED',
+                "Role '{$role}' not in allowed roles: " . implode(', ', $allowedRoles)
+            );
+
             http_response_code(403);
             echo json_encode([
                 'status' => 'error',
@@ -30,59 +38,51 @@ class RbacMiddleware {
 
     /**
      * Check if the authenticated user has write permission to a patient's schedule (M3)
-     * Admin: has write permission to all patients
-     * PT: only has write permission if owner PT or active covering PT
      */
-    public static function canWriteSchedule(string $patientId): bool {
+    public static function canWriteSchedule(string $patientId, ?array $routineItems = null): array {
         AuthMiddleware::check();
         $user = AuthMiddleware::getUser();
-        $userId = $user['user_id'];
-        $role = $user['role'];
+        $actor = [
+            'id' => $user['user_id'] ?? $user['id'] ?? '',
+            'role' => $user['role'] ?? ''
+        ];
 
-        if ($role === 'admin') {
-            return true;
-        }
-
-        if ($role !== 'pt') {
-            return false;
-        }
-
-        $db = Database::getConnection();
-
-        // 1. Check if PT is the primary assigned PT
-        $stmt = $db->prepare("SELECT assigned_pt_id FROM patient_profiles WHERE patient_id = :pid LIMIT 1");
-        $stmt->execute([':pid' => $patientId]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        if ($row && $row['assigned_pt_id'] === $userId) {
-            return true;
-        }
-
-        // 2. Check if PT has an ACTIVE temporary coverage today
-        $today = date('Y-m-d');
-        $covStmt = $db->prepare("
-            SELECT id FROM temporary_coverages
-            WHERE patient_id = :pid
-              AND cover_pt_id = :pt_id
-              AND status = 'active'
-              AND :today BETWEEN start_date AND end_date
-            LIMIT 1
-        ");
-        $covStmt->execute([':pid' => $patientId, ':pt_id' => $userId, ':today' => $today]);
-
-        return (bool)$covStmt->fetch();
+        return PolicyEngine::canWriteSchedule($actor, $patientId, $routineItems);
     }
 
     /**
-     * Guard write access to patient schedule: aborts with 403 if user cannot write
+     * Guard write access to patient schedule: aborts with 403 / 422 if user cannot write
      */
-    public static function requireScheduleWrite(string $patientId): void {
-        if (!self::canWriteSchedule($patientId)) {
+    public static function requireScheduleWrite(string $patientId, ?array $routineItems = null): void {
+        $result = self::canWriteSchedule($patientId, $routineItems);
+        if (!$result['allowed']) {
+            http_response_code($result['statusCode'] ?? 403);
+            echo json_encode([
+                'status' => 'error',
+                'code' => $result['statusCode'] === 422 ? 'POSE_EXERCISES_DISABLED' : 'SCHEDULE_WRITE_FORBIDDEN',
+                'message' => $result['message']
+            ], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
+    }
+
+    /**
+     * Guard Audit Logs access (Admin only)
+     */
+    public static function requireAuditAccess(): void {
+        AuthMiddleware::check();
+        $user = AuthMiddleware::getUser();
+        $actor = [
+            'id' => $user['user_id'] ?? $user['id'] ?? '',
+            'role' => $user['role'] ?? ''
+        ];
+
+        if (!PolicyEngine::canViewAudit($actor)) {
             http_response_code(403);
             echo json_encode([
                 'status' => 'error',
-                'code' => 'SCHEDULE_WRITE_FORBIDDEN',
-                'message' => 'Forbidden: You only have read-only access to this patient\'s schedule planner'
+                'code' => 'AUDIT_FORBIDDEN',
+                'message' => 'Forbidden: Audit logs and security controls are restricted to Super Admin.'
             ], JSON_UNESCAPED_UNICODE);
             exit();
         }

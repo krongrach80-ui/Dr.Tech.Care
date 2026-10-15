@@ -1,13 +1,15 @@
 <?php
 /**
- * Moh Tech Care - Patient Kiosk Controller
- * Handles Facial Recognition Matching, Today's Routine Sync, and Session Logging
+ * Moh Tech Care - Patient Kiosk Controller (v2.1)
+ * Handles Facial Recognition Matching, Today's Routine Sync,
+ * Next Appointment (Date Only), Session Reset, and Session Logging (including 'placeholder' & 'assisted')
  */
 
 require_once __DIR__ . '/../Repositories/UserRepository.php';
 require_once __DIR__ . '/../Repositories/SessionRepository.php';
 require_once __DIR__ . '/../Repositories/AuditRepository.php';
 require_once __DIR__ . '/../Middleware/BannedIpMiddleware.php';
+require_once __DIR__ . '/../Middleware/AuthMiddleware.php';
 require_once __DIR__ . '/../../config/Database.php';
 
 class KioskController {
@@ -25,6 +27,10 @@ class KioskController {
         $this->config = require __DIR__ . '/../../config/config.php';
     }
 
+    /**
+     * Automatic Face ID login by straight-face scan
+     * Issues short-lived scoped kiosk token (role: 'kiosk')
+     */
     public function faceLogin(): void {
         $ip = BannedIpMiddleware::getClientIp();
         $body = json_decode(file_get_contents('php://input'), true) ?? [];
@@ -40,7 +46,7 @@ class KioskController {
             return;
         }
 
-        // Fetch all registered face templates
+        // Fetch all registered face templates for active patients
         $stmt = $this->db->prepare("
             SELECT ft.user_id, ft.embedding, u.full_name, u.role, u.status
             FROM face_templates ft
@@ -79,14 +85,14 @@ class KioskController {
             $patientId = $bestMatch['user_id'];
             $fullPatient = $this->userRepo->findById($patientId);
 
-            // Generate kiosk-scoped session token
-            $token = bin2hex(random_bytes(32));
-            $lifetime = (int)($this->config['security']['kiosk_session_lifetime_seconds'] ?? 3600);
+            // Generate short-lived kiosk-scoped session token (role = 'kiosk')
+            $token = 'kiosk_' . bin2hex(random_bytes(24));
+            $lifetime = 1800; // 30 minutes short TTL
 
             $this->sessionRepo->createSession(
                 $token,
                 $patientId,
-                $bestMatch['role'],
+                'kiosk', // Scoped role
                 $ip,
                 $_SERVER['HTTP_USER_AGENT'] ?? 'Kiosk Terminal',
                 'Kiosk',
@@ -96,7 +102,7 @@ class KioskController {
             $this->auditRepo->log(
                 $patientId,
                 $bestMatch['full_name'],
-                $bestMatch['role'],
+                'patient',
                 $ip,
                 'Kiosk',
                 'KIOSK_FACE_LOGIN_SUCCESS',
@@ -133,8 +139,27 @@ class KioskController {
         }
     }
 
+    /**
+     * Fetch today's routine for authenticated patient
+     * Enforces that kiosk token can only read OWN routine for TODAY
+     */
     public function getTodayRoutine(): void {
-        $patientId = $_GET['patient_id'] ?? null;
+        AuthMiddleware::check();
+        $caller = AuthMiddleware::getUser();
+        $callerRole = strtolower($caller['role'] ?? '');
+        $requestedPatientId = $_GET['patient_id'] ?? null;
+
+        // If called by kiosk token, MUST match caller's user_id
+        if ($callerRole === 'kiosk') {
+            $patientId = $caller['user_id'];
+            if ($requestedPatientId && $requestedPatientId !== $patientId) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'Forbidden: Kiosk token cannot access other patients\' data'], JSON_UNESCAPED_UNICODE);
+                return;
+            }
+        } else {
+            $patientId = $requestedPatientId ?: $caller['user_id'];
+        }
 
         if (!$patientId) {
             http_response_code(400);
@@ -158,7 +183,7 @@ class KioskController {
         if ($appt) {
             // Fetch routine items with exercise details
             $rStmt = $this->db->prepare("
-                SELECT ri.*, e.name_th, e.name_en, e.category, e.instructions, e.benefits, e.media_path
+                SELECT ri.*, e.name_th, e.name_en, e.category, e.exercise_type, e.instructions, e.benefits, e.media_path
                 FROM routine_items ri
                 JOIN exercises e ON ri.exercise_id = e.id
                 WHERE ri.appointment_id = :aid
@@ -174,30 +199,71 @@ class KioskController {
                 'items' => $items
             ], JSON_UNESCAPED_UNICODE);
         } else {
-            // Find next appointment date
-            $nextStmt = $this->db->prepare("
-                SELECT appointment_date
-                FROM appointments
-                WHERE patient_id = :pid AND appointment_date > :today
-                ORDER BY appointment_date ASC
-                LIMIT 1
-            ");
-            $nextStmt->execute([':pid' => $patientId, ':today' => $today]);
-            $nextRow = $nextStmt->fetch(PDO::FETCH_ASSOC);
+            // Find next appointment date (date only!)
+            $nextDate = $this->fetchNextAppointmentDateOnly($patientId);
 
             echo json_encode([
                 'status' => 'success',
                 'has_routine' => false,
                 'items' => [],
-                'next_appointment_date' => $nextRow['appointment_date'] ?? null
+                'next_appointment_date' => $nextDate
             ], JSON_UNESCAPED_UNICODE);
         }
     }
 
+    /**
+     * GET /api/kiosk/next-appointment
+     * Returns next appointment DATE ONLY (formatted as DD/MM/YYYY)
+     */
+    public function getNextAppointment(): void {
+        AuthMiddleware::check();
+        $caller = AuthMiddleware::getUser();
+        $callerRole = strtolower($caller['role'] ?? '');
+
+        $patientId = ($callerRole === 'kiosk') ? $caller['user_id'] : ($_GET['patient_id'] ?? $caller['user_id']);
+        if (!$patientId) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Patient ID is required'], JSON_UNESCAPED_UNICODE);
+            return;
+        }
+
+        $nextDateFormatted = $this->fetchNextAppointmentDateOnly($patientId);
+
+        echo json_encode([
+            'status' => 'success',
+            'next_appointment_date' => $nextDateFormatted
+        ], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * POST /api/kiosk/reset
+     * Revokes the kiosk token immediately from auth_sessions
+     */
+    public function resetKioskSession(): void {
+        $token = AuthMiddleware::getToken();
+        if ($token) {
+            $this->sessionRepo->revokeSession($token);
+        }
+
+        echo json_encode([
+            'status' => 'success',
+            'message' => 'Kiosk session reset and token revoked'
+        ], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * POST /api/kiosk/session-logs
+     * Logs session result (including 'placeholder' & 'assisted')
+     */
     public function logSession(): void {
+        AuthMiddleware::check();
+        $caller = AuthMiddleware::getUser();
+        $callerRole = strtolower($caller['role'] ?? '');
+
         $body = json_decode(file_get_contents('php://input'), true) ?? [];
 
-        $patientId = trim($body['patient_id'] ?? '');
+        // If called by kiosk token, ensure patient_id matches
+        $patientId = ($callerRole === 'kiosk') ? $caller['user_id'] : trim($body['patient_id'] ?? '');
         $exerciseId = trim($body['exercise_id'] ?? '');
         $apptId = !empty($body['appointment_id']) ? (int)$body['appointment_id'] : null;
         $routineItemId = !empty($body['routine_item_id']) ? (int)$body['routine_item_id'] : null;
@@ -209,7 +275,9 @@ class KioskController {
         $accuracy = (float)($body['accuracy_percent'] ?? 0.0);
         $score = (int)($body['score'] ?? 0);
         $duration = (int)($body['duration_seconds'] ?? 0);
-        $status = $body['status'] ?? 'completed';
+        $status = strtolower($body['status'] ?? 'completed'); // 'completed', 'partial', 'placeholder'
+        $assisted = !empty($body['assisted']) ? 1 : 0;
+        $staffId = $body['staff_id'] ?? null;
 
         if (!$patientId || !$exerciseId) {
             http_response_code(400);
@@ -219,9 +287,10 @@ class KioskController {
 
         $this->db->beginTransaction();
         try {
+            // Ensure assisted column exists
             $stmt = $this->db->prepare("
-                INSERT INTO session_logs (appointment_id, patient_id, exercise_id, routine_item_id, started_at, ended_at, correct_reps, incorrect_reps, accuracy_percent, score, duration_seconds, status)
-                VALUES (:aid, :pid, :exid, :riid, :started, :ended, :creps, :ireps, :acc, :score, :dur, :status)
+                INSERT INTO session_logs (appointment_id, patient_id, exercise_id, routine_item_id, started_at, ended_at, correct_reps, incorrect_reps, accuracy_percent, score, duration_seconds, status, assisted)
+                VALUES (:aid, :pid, :exid, :riid, :started, :ended, :creps, :ireps, :acc, :score, :dur, :status, :assisted)
             ");
             $stmt->execute([
                 ':aid' => $apptId,
@@ -235,12 +304,13 @@ class KioskController {
                 ':acc' => $accuracy,
                 ':score' => $score,
                 ':dur' => $duration,
-                ':status' => $status
+                ':status' => $status,
+                ':assisted' => $assisted
             ]);
 
             $logId = (int)$this->db->lastInsertId();
 
-            // If routine item exists, mark as completed
+            // Mark routine item as completed
             if ($routineItemId) {
                 $updRi = $this->db->prepare("UPDATE routine_items SET status = 'completed' WHERE id = :id");
                 $updRi->execute([':id' => $routineItemId]);
@@ -264,14 +334,21 @@ class KioskController {
 
             $this->db->commit();
 
+            // Audit log (with staff_id if assisted)
+            $auditAction = $assisted ? 'KIOSK_ASSISTED_SESSION_LOG' : 'KIOSK_SESSION_LOG';
+            $auditDetails = "Logged exercise {$exerciseId} status={$status} reps={$correctReps}/{$incorrectReps}";
+            if ($assisted && $staffId) {
+                $auditDetails .= " (Staff Assisted by {$staffId})";
+            }
+
             $this->auditRepo->log(
-                $patientId,
-                'Patient via Kiosk',
-                'patient',
+                $staffId ?: $patientId,
+                $staffId ? "Staff {$staffId}" : 'Patient via Kiosk',
+                $staffId ? 'staff' : 'patient',
                 BannedIpMiddleware::getClientIp(),
                 'Kiosk',
-                'KIOSK_SESSION_LOG',
-                "Logged exercise {$exerciseId} status={$status} reps={$correctReps}/{$incorrectReps} acc={$accuracy}%",
+                $auditAction,
+                $auditDetails,
                 'Normal'
             );
 
@@ -284,6 +361,26 @@ class KioskController {
             http_response_code(500);
             echo json_encode(['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()], JSON_UNESCAPED_UNICODE);
         }
+    }
+
+    private function fetchNextAppointmentDateOnly(string $patientId): ?string {
+        $today = date('Y-m-d');
+        $stmt = $this->db->prepare("
+            SELECT appointment_date
+            FROM appointments
+            WHERE patient_id = :pid AND appointment_date > :today AND status = 'scheduled'
+            ORDER BY appointment_date ASC
+            LIMIT 1
+        ");
+        $stmt->execute([':pid' => $patientId, ':today' => $today]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($row && !empty($row['appointment_date'])) {
+            $time = strtotime($row['appointment_date']);
+            return date('d/m/Y', $time);
+        }
+
+        return null;
     }
 
     private function computeCosineSimilarity(array $vecA, array $vecB): float {

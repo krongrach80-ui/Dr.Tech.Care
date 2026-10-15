@@ -90,29 +90,9 @@ class ScheduleController {
             return;
         }
 
-        // Server-Side RBAC Guard: Verify write authorization on this patient's schedule!
-        RbacMiddleware::requireScheduleWrite($patientId);
-
-        // Feature flag validation: FEATURE_PT_POSE_EXERCISES
-        $featurePoseAllowed = $this->config['feature_flags']['FEATURE_PT_POSE_EXERCISES'] ?? false;
-
-        if (!$featurePoseAllowed) {
-            foreach ($items as $item) {
-                $exId = $item['exercise_id'] ?? '';
-                $exStmt = $this->db->prepare("SELECT category FROM exercises WHERE id = :id LIMIT 1");
-                $exStmt->execute([':id' => $exId]);
-                $exRow = $exStmt->fetch(PDO::FETCH_ASSOC);
-
-                if ($exRow && $exRow['category'] !== 'Minigame') {
-                    http_response_code(400);
-                    echo json_encode([
-                        'status' => 'error',
-                        'message' => "ท่าฝึก '{$exId}' อยู่ระหว่างพัฒนา ไม่สามารถจัดโปรแกรมได้ในขณะนี้ (เลือกได้เฉพาะมินิเกม)"
-                    ], JSON_UNESCAPED_UNICODE);
-                    return;
-                }
-            }
-        }
+        // Server-Side RBAC Guard & Pose Gating:
+        // Returns 403 if unauthorized, 422 if pose exercises assigned while FEATURE_PT_POSE_EXERCISES = false
+        RbacMiddleware::requireScheduleWrite($patientId, $items);
 
         $this->db->beginTransaction();
         try {

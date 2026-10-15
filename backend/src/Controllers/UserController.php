@@ -8,6 +8,7 @@ require_once __DIR__ . '/../Repositories/UserRepository.php';
 require_once __DIR__ . '/../Repositories/AuditRepository.php';
 require_once __DIR__ . '/../Middleware/AuthMiddleware.php';
 require_once __DIR__ . '/../Middleware/RbacMiddleware.php';
+require_once __DIR__ . '/../Services/PolicyEngine.php';
 require_once __DIR__ . '/../../config/Database.php';
 
 class UserController {
@@ -382,6 +383,57 @@ class UserController {
         echo json_encode([
             'status' => 'success',
             'message' => 'Biometric registration completed successfully'
+        ], JSON_UNESCAPED_UNICODE);
+    }
+
+    public function deleteUser(string $id): void {
+        AuthMiddleware::check();
+        $actor = AuthMiddleware::getUser();
+        $target = $this->userRepo->findById($id);
+
+        if (!$target) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'User not found'], JSON_UNESCAPED_UNICODE);
+            return;
+        }
+
+        // Central policy check: Super Admin only!
+        if (!PolicyEngine::canEditUser($actor, $target, 'delete')) {
+            http_response_code(403);
+            echo json_encode([
+                'status' => 'error',
+                'code' => 'FORBIDDEN',
+                'message' => 'Forbidden: Only Super Admin can delete or deactivate user accounts'
+            ], JSON_UNESCAPED_UNICODE);
+            return;
+        }
+
+        // Soft Delete: deactivate + hide (never cascade-delete medical_notes, session_logs or audit_logs)
+        $db = Database::getConnection();
+        $stmt = $db->prepare("
+            UPDATE users
+            SET status = 'disabled', updated_at = :upd
+            WHERE id = :id
+        ");
+        $stmt->execute([
+            ':upd' => date('Y-m-d H:i:s'),
+            ':id' => $id
+        ]);
+
+        $this->auditRepo->log(
+            $actor['user_id'],
+            $actor['full_name'],
+            $actor['role'],
+            BannedIpMiddleware::getClientIp(),
+            'Desktop',
+            'USER_SOFT_DELETE',
+            "Soft-deleted (deactivated) user {$id} ({$target['full_name']})",
+            'Warning'
+        );
+
+        echo json_encode([
+            'status' => 'success',
+            'message' => 'User successfully soft-deleted (deactivated)'
         ], JSON_UNESCAPED_UNICODE);
     }
 }
