@@ -34,7 +34,6 @@ import {
   ShieldAlert,
   Sliders,
   Users,
-  UserPlus,
   Laptop,
   Radio,
   FileText,
@@ -44,7 +43,6 @@ import {
   FlipVertical,
   RotateCw,
   FlipHorizontal,
-  Plus,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Patient } from '../../types/patient';
@@ -2219,38 +2217,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     triggerSlideUp(4);
   }, [triggerSlideUp]);
 
-  // Step 1: New Patient Registration (เมื่อกดปุ่ม "+ ลงทะเบียนใหม่")
-  const handleStartNewRegistration = useCallback(() => {
-    setIsEnrollmentFlow(true);
-    setScanStep('front');
-    challengeProgressRef.current = { front: false, left: false, right: false };
-    setChallengeProgress({ front: false, left: false, right: false });
-    setScanStatusMessage('กรุณาจัดใบหน้าให้อยู่ในกรอบวงรีเพื่อบันทึกใบหน้าลงทะเบียนใหม่');
-    audioFeedback.playRepSuccess();
-    try {
-      voiceAssistant.speak('ยินดีต้อนรับผู้รับบริการใหม่ค่ะ เข้าสู่ขั้นตอนลงทะเบียนและบันทึกใบหน้านะคะ', {
-        level: 'system',
-      });
-    } catch {}
-    triggerSlideUp(4);
-  }, [triggerSlideUp]);
-
-  // No Account Found Fallback Modal Handlers
-  const handleGoToRegistration = () => {
-    setShowNoAccountModal(false);
-    setIsEnrollmentFlow(true);
-    setScanStep('front');
-    challengeProgressRef.current = { front: false, left: false, right: false };
-    setChallengeProgress({ front: false, left: false, right: false });
-    setScanStatusMessage('กรุณาจัดใบหน้าให้อยู่ในกรอบวงรีเพื่อบันทึกใบหน้าลงทะเบียนใหม่');
-    audioFeedback.playRepSuccess();
-    try {
-      voiceAssistant.speak('เข้าสู่ขั้นตอนลงทะเบียนผู้ป่วยใหม่ กรุณามองตรงที่กล้องนะคะ', {
-        level: 'system',
-      });
-    } catch {}
-  };
-
   const handleRetryScan = () => {
     setShowNoAccountModal(false);
     handleResetFaceScan();
@@ -2462,9 +2428,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       case 'step1-start':
         handleStartFaceLogin();
         break;
-      case 'step1-register':
-        handleStartNewRegistration();
-        break;
       case 'step1-pin':
       case 'step4-pin':
         setShowPinModal(true);
@@ -2489,7 +2452,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     changeStep,
     selectedTherapyType,
     handleStartFaceLogin,
-    handleStartNewRegistration,
   ]);
 
   // เชื่อมต่อ useHandTracker สำหรับ Step 2 และ Step 3
@@ -3197,16 +3159,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 <ArrowRight className="w-5 h-5 shrink-0" />
               </button>
 
-              {/* 2. ปุ่มลงทะเบียนใหม่ (ดีไซน์ตามภาพที่ 4: rounded-full, gradient, + icon) */}
-              <button
-                data-kiosk-target="step1-register"
-                onClick={handleStartNewRegistration}
-                className="w-full min-h-[52px] sm:min-h-[56px] py-2.5 sm:py-3 px-6 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-black text-sm sm:text-base shadow-lg shadow-cyan-500/25 hover:brightness-105 active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer border-2 border-white/60"
-                id="btnKioskRegisterNew"
-              >
-                <Plus className="w-5 h-5 text-white stroke-[2.5]" />
-                <span>+ ลงทะเบียนใหม่ (ผู้ป่วยใหม่)</span>
-              </button>
 
               {/* 3. ซ่อนปุ่ม PIN ด้านล่างหากมีกล้อง error (เนื่องจากกล่องแจ้งเตือนมีปุ่ม PIN แล้ว) */}
               {!cameraError && (
@@ -4288,7 +4240,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               ไม่พบข้อมูลบัญชีในระบบ
             </h3>
             <p className="text-sm font-extrabold text-amber-800 mt-0.5">
-              โปรดลงทะเบียนผู้ป่วยใหม่
+              กรุณาติดต่อเคาน์เตอร์เจ้าหน้าที่เพื่อเปิดประวัติ
             </p>
 
             {/* Description Card */}
@@ -4296,27 +4248,16 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               <div className="flex items-start gap-2">
                 <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <p className="font-bold text-slate-700">
-                  ระบบไม่พบเวชระเบียนที่ผูกกับใบหน้านี้ หรือท่านยังไม่เคยลงทะเบียนผู้ป่วยในระบบโรงพยาบาล
+                  ระบบไม่พบเวชระเบียนที่ผูกกับใบหน้านี้ในฐานข้อมูลโรงพยาบาล
                 </p>
               </div>
               <p className="text-[11px] text-slate-500 font-medium pl-6">
-                หากท่านเป็นผู้ป่วยใหม่ กรุณากดปุ่ม <span className="font-bold text-emerald-700">"ไปหน้าลงทะเบียนใหม่"</span> เพื่อบันทึกใบหน้าและสร้างประวัติผู้ป่วยใหม่ได้ทันที
+                หากท่านเป็นผู้ป่วยใหม่ กรุณาติดต่อ <span className="font-bold text-emerald-700">"เคาน์เตอร์ต้อนรับ / จุดลงทะเบียน"</span> เพื่อให้เจ้าหน้าที่เปิดประวัติและบันทึกใบหน้าเข้าสู่ระบบ
               </p>
             </div>
 
             {/* Action Buttons */}
             <div className="w-full space-y-2">
-              {/* Primary Button: ไปหน้าลงทะเบียนใหม่ */}
-              <button
-                type="button"
-                onClick={handleGoToRegistration}
-                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-black text-sm shadow-lg shadow-cyan-500/25 active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer"
-                id="btnGoToNewRegistration"
-              >
-                <UserPlus className="w-5 h-5 text-emerald-200" />
-                <span>ไปหน้าลงทะเบียนใหม่</span>
-                <ArrowRight className="w-4 h-4 text-emerald-200" />
-              </button>
 
               {/* Button: ผูกใบหน้ากับบัญชีที่มีอยู่แล้วในระบบ (เช่น กรอกในแอดมินไว้แล้ว) */}
               <button
