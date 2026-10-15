@@ -6,6 +6,8 @@
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
+import { handleMockRequest, isStaticOrOffline } from './mockAdapter';
+
 export class ApiError extends Error {
   public status: number;
   public code?: string;
@@ -36,6 +38,11 @@ export async function apiClient<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
+  // If running on GitHub Pages (static host) or explicit static demo mode without dedicated API URL:
+  if (isStaticOrOffline()) {
+    return handleMockRequest<T>(endpoint, options);
+  }
+
   const token = getAuthToken();
   const headers = new Headers(options.headers || {});
 
@@ -57,8 +64,13 @@ export async function apiClient<T>(
     // Handle 401 Unauthorized / Force Logout
     if (res.status === 401) {
       setAuthToken(null);
-      // Dispatch global event so UI can trigger login modal or redirect
       window.dispatchEvent(new CustomEvent('moh:unauthorized'));
+    }
+
+    // Failover if server endpoint is missing, not allowed, or server error (e.g. 404, 405, 502)
+    if (res.status === 404 || res.status === 405 || res.status === 502 || res.status === 503) {
+      console.warn(`[apiClient] Server returned HTTP ${res.status} for ${endpoint}. Falling back to mock adapter.`);
+      return handleMockRequest<T>(endpoint, options);
     }
 
     const contentType = res.headers.get('content-type') || '';
@@ -80,6 +92,9 @@ export async function apiClient<T>(
     if (err instanceof ApiError) {
       throw err;
     }
-    throw new ApiError(err?.message || 'Network error occurred', 0);
+    // Failover if server is down / network error
+    console.warn(`[apiClient] Network error on ${endpoint}. Falling back to mock adapter.`, err);
+    return handleMockRequest<T>(endpoint, options);
   }
 }
+
