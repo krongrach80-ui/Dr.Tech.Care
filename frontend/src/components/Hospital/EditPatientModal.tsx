@@ -18,6 +18,9 @@ import {
   BarChart3,
   CheckCircle2,
   XCircle,
+  Pencil,
+  Trash2,
+  Save,
 } from 'lucide-react';
 import { UserAccount, UserRole, PhysicalTherapist, MedicalNoteItem } from '../../types/hospital';
 import { useHospitalStore } from '../../store/hospitalStore';
@@ -68,6 +71,11 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
   const [newNoteText, setNewNoteText] = useState<string>('');
   const [isAddingNote, setIsAddingNote] = useState<boolean>(false);
 
+  // Tab 2: Super Admin Retrospective Note Editing
+  const [editingNoteId, setEditingNoteId] = useState<number | string | null>(null);
+  const [editingNoteText, setEditingNoteText] = useState<string>('');
+  const [isSavingHistory, setIsSavingHistory] = useState<boolean>(false);
+
   // Tab 3: Performance Dashboard Time Range
   const [timeRange, setTimeRange] = useState<'1w' | '1m' | 'custom'>('1m');
 
@@ -105,6 +113,8 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
       setNotesHistory(existingNotes);
       setNewNoteText('');
       setIsAddingNote(false);
+      setEditingNoteId(null);
+      setEditingNoteText('');
     }
   }, [isOpen, patient, therapists]);
 
@@ -137,20 +147,63 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
     onClose();
   };
 
+  // Super Admin: Save admissionDate & progressPercent
+  const handleSaveTreatmentHistory = () => {
+    setIsSavingHistory(true);
+    onSavePatient(patient.id, {
+      admissionDate,
+      progressPercent: Number(progressPercent),
+      medicalNotesHistory: notesHistory,
+    });
+    onSuccessToast('บันทึกประวัติการรักษาและ % พัฒนาการเรียบร้อยแล้ว');
+    setIsSavingHistory(false);
+  };
+
+  // Super Admin: Retrospective Note Editing
+  const handleStartEditNote = (note: MedicalNoteItem) => {
+    setEditingNoteId(note.id);
+    setEditingNoteText(note.text || '');
+  };
+
+  const handleSaveEditedNote = () => {
+    if (editingNoteId === null) return;
+    const updated = notesHistory.map((n) =>
+      n.id === editingNoteId ? { ...n, text: editingNoteText.trim() } : n
+    );
+    setNotesHistory(updated);
+    setEditingNoteId(null);
+    setEditingNoteText('');
+    onSavePatient(patient.id, {
+      medicalNotesHistory: updated,
+    });
+    onSuccessToast('แก้ไขบันทึกเวชระเบียนย้อนหลังสำเร็จ');
+  };
+
+  const handleDeleteNote = (noteId: number | string) => {
+    if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบบันทึกประวัติการรักษานี้?')) return;
+    const updated = notesHistory.filter((n) => n.id !== noteId);
+    setNotesHistory(updated);
+    onSavePatient(patient.id, {
+      medicalNotesHistory: updated,
+    });
+    onSuccessToast('ลบบันทึกเวชระเบียนเรียบร้อยแล้ว');
+  };
+
   const handleAddNote = () => {
     if (!newNoteText.trim()) return;
 
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const formattedDateTime = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-    const ptName = currentUserName || 'กภ. ผู้ดูแล';
-    const immutableStamp = `[${formattedDateTime} - Logged by PT: ${ptName}]`;
+    const authorPrefix = currentRole === 'admin' ? 'ผอ.รพ.' : 'PT';
+    const authorName = currentUserName || (currentRole === 'admin' ? 'ผู้อำนวยการโรงพยาบาล' : 'กภ. ผู้ดูแล');
+    const immutableStamp = `[${formattedDateTime} - โดย ${authorPrefix}: ${authorName}]`;
     const finalNoteText = `${immutableStamp} ${newNoteText.trim()}`;
 
     const newNote: MedicalNoteItem = {
       id: Date.now(),
       date: formattedDateTime,
-      author: ptName,
+      author: `${authorPrefix}: ${authorName}`,
       text: finalNoteText,
     };
 
@@ -402,16 +455,27 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
           </form>
         )}
 
-        {/* Tab 2: Treatment History & Notes (Editable) */}
+        {/* Tab 2: Treatment History & Notes (Editable for Super Admin, Append-Only for PT) */}
         {activeTab === 'history' && (
           <div className="flex-1 overflow-y-auto p-6 space-y-5 text-xs">
             {/* Admission & Overall Progress Banner */}
             <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 border border-cyan-200 grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <div className="text-[11px] font-bold text-slate-500">วันที่เริ่มรับการรักษา (Admission Date - Read-Only):</div>
-                <div className="font-extrabold text-sm text-[#0F2F2B] mt-0.5">
-                  {formatThaiDate(admissionDate)}
+                <div className="text-[11px] font-bold text-slate-500 mb-1">
+                  วันที่เริ่มรับการรักษา (Admission Date {currentRole === 'admin' ? '- แก้ไขได้' : '- Read-Only'}):
                 </div>
+                {currentRole === 'admin' ? (
+                  <input
+                    type="date"
+                    value={admissionDate}
+                    onChange={(e) => setAdmissionDate(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-xl bg-white border border-emerald-300 font-bold text-xs text-[#0F2F2B] outline-none focus:ring-2 focus:ring-emerald-400"
+                  />
+                ) : (
+                  <div className="font-extrabold text-sm text-[#0F2F2B] mt-0.5">
+                    {formatThaiDate(admissionDate)}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -419,28 +483,70 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
                   <span>ความก้าวหน้าการฟื้นฟูโดยรวม (Overall Progress):</span>
                   <span className="text-emerald-800 font-extrabold">{progressPercent}%</span>
                 </div>
-                <div className="w-full h-3 rounded-full bg-white border border-emerald-300 overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-all"
-                    style={{ width: `${progressPercent}%` }}
-                  />
-                </div>
+                {currentRole === 'admin' ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={progressPercent}
+                      onChange={(e) => setProgressPercent(Number(e.target.value))}
+                      className="w-full accent-emerald-600 cursor-pointer"
+                    />
+                    <span className="font-mono font-bold text-xs w-9 text-right text-emerald-900">{progressPercent}%</span>
+                  </div>
+                ) : (
+                  <div className="w-full h-3 rounded-full bg-white border border-emerald-300 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-all"
+                      style={{ width: `${progressPercent}%` }}
+                    />
+                  </div>
+                )}
               </div>
+
+              {/* Super Admin Save Button for Admission Date and Progress */}
+              {currentRole === 'admin' && (
+                <div className="sm:col-span-2 flex justify-end pt-2 border-t border-cyan-200/60">
+                  <button
+                    type="button"
+                    disabled={isSavingHistory}
+                    onClick={handleSaveTreatmentHistory}
+                    className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-xs transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>บันทึกวันเริ่มรักษา & % พัฒนาการ (Save Treatment Progress)</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Medical Notes Log */}
             <div className="space-y-3">
-              <div className="p-3 rounded-2xl bg-emerald-50/80 border border-emerald-200 text-emerald-950 flex items-start gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
-                <div className="text-[11px] leading-relaxed">
-                  <strong>ระบบบันทึกเวชระเบียนแบบต่อท้ายถาวร (Append-Only Progress Notes System):</strong> บันทึกทางการแพทย์ในอดีตไม่สามารถแก้ไขหรือลบได้โดยนักกายภาพ เพื่อความถูกต้องของประวัติการรักษาตามมาตรฐานวิชาชีพ ทุกการบันทึกจะประทับเวลาและชื่อผู้บันทึกอัตโนมัติ
+              {currentRole === 'admin' ? (
+                <div className="p-3 rounded-2xl bg-purple-50/90 border border-purple-200 text-purple-950 flex items-start gap-2">
+                  <ShieldCheck className="w-4 h-4 text-purple-600 flex-shrink-0 mt-0.5" />
+                  <div className="text-[11px] leading-relaxed">
+                    <strong>สิทธิ์ผู้บริหารสูงสุด (Super Admin Unrestricted Clinical Edit):</strong> ผู้อำนวยการ รพ. สามารถตรวจสอบ, พิมพ์แก้ไข หรือลบประวัติบันทึกทางการแพทย์ย้อนหลังได้ทุกรายการ รวมถึงบันทึกโน้ตใหม่เพิ่มเติมได้ตลอดเวลา
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="p-3 rounded-2xl bg-emerald-50/80 border border-emerald-200 text-emerald-950 flex items-start gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                  <div className="text-[11px] leading-relaxed">
+                    <strong>ระบบบันทึกเวชระเบียนแบบต่อท้ายถาวร (Append-Only Progress Notes System):</strong> บันทึกทางการแพทย์ในอดีตไม่สามารถแก้ไขหรือลบได้โดยนักกายภาพ เพื่อความถูกต้องของประวัติการรักษาตามมาตรฐานวิชาชีพ ทุกการบันทึกจะประทับเวลาและชื่อผู้บันทึกอัตโนมัติ: <code className="font-bold text-emerald-800">[DD/MM/YYYY HH:mm - โดย PT: ชื่อ-นามสกุล]</code>
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center justify-between">
                 <div className="font-bold text-slate-800 text-sm flex items-center gap-2">
                   <FileText className="w-4 h-4 text-emerald-600" />
-                  <span>ประวัติบันทึกทางการแพทย์ (Append-Only Medical Notes):</span>
+                  <span>
+                    {currentRole === 'admin'
+                      ? 'ประวัติบันทึกทางการแพทย์ (Editable Clinical Notes):'
+                      : 'ประวัติบันทึกทางการแพทย์ (Append-Only Medical Notes):'}
+                  </span>
                 </div>
 
                 {!isAddingNote && (
@@ -450,7 +556,7 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
                     className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs transition active:scale-95 cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>+ Append Medical Note</span>
+                    <span>+ {currentRole === 'admin' ? 'เพิ่มบันทึกโน้ตใหม่' : 'Append Medical Note'}</span>
                   </button>
                 )}
               </div>
@@ -461,7 +567,7 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
                   <div className="flex items-center justify-between">
                     <label className="block font-bold text-slate-700">New Note (บันทึกความก้าวหน้าทางการแพทย์ใหม่):</label>
                     <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                      Stamps [DD/MM/YYYY HH:mm - Logged by PT: {currentUserName || 'PT'}]
+                      Stamps [DD/MM/YYYY HH:mm - โดย {currentRole === 'admin' ? 'ผอ.รพ.' : 'PT'}: {currentUserName || 'ผู้บันทึก'}]
                     </span>
                   </div>
                   <textarea
@@ -478,17 +584,17 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
                         setIsAddingNote(false);
                         setNewNoteText('');
                       }}
-                      className="px-3 py-1.5 rounded-xl border border-slate-300 text-slate-600 font-bold hover:bg-slate-100"
+                      className="px-3 py-1.5 rounded-xl border border-slate-300 text-slate-600 font-bold hover:bg-slate-100 cursor-pointer"
                     >
                       ยกเลิก
                     </button>
                     <button
                       type="button"
                       onClick={handleAddNote}
-                      className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold hover:opacity-95 shadow-xs flex items-center gap-1.5"
+                      className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold hover:opacity-95 shadow-xs flex items-center gap-1.5 cursor-pointer"
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      <span>+ Append Medical Note</span>
+                      <span>+ บันทึกโน้ต (Append Note)</span>
                     </button>
                   </div>
                 </div>
@@ -496,15 +602,75 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
 
               {/* Notes Timeline List */}
               <div className="space-y-2.5">
-                {notesHistory.map((note) => (
-                  <div key={note.id} className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-1">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-extrabold text-emerald-800">{note.author}</span>
-                      <span className="text-slate-500 font-mono">{note.date}</span>
-                    </div>
-                    <p className="text-slate-700 leading-relaxed font-medium">{note.text}</p>
+                {notesHistory.length === 0 ? (
+                  <div className="p-6 text-center text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    ยังไม่มีบันทึกประวัติทางการแพทย์สำหรับคนไข้รายนี้
                   </div>
-                ))}
+                ) : (
+                  notesHistory.map((note) => (
+                    <div key={note.id} className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-1.5 transition">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-extrabold text-emerald-800">{note.author}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-500 font-mono">{note.date}</span>
+                          {/* Super Admin Retrospective Edit / Delete Buttons */}
+                          {currentRole === 'admin' && (
+                            <div className="inline-flex items-center gap-1 ml-2">
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditNote(note)}
+                                className="p-1 rounded-lg hover:bg-emerald-50 text-emerald-700 transition cursor-pointer"
+                                title="แก้ไขโน้ตนี้ย้อนหลัง"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteNote(note.id)}
+                                className="p-1 rounded-lg hover:bg-rose-50 text-rose-600 transition cursor-pointer"
+                                title="ลบโน้ตนี้"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {editingNoteId === note.id ? (
+                        <div className="space-y-2 pt-1 animate-fadeIn">
+                          <textarea
+                            rows={3}
+                            value={editingNoteText}
+                            onChange={(e) => setEditingNoteText(e.target.value)}
+                            className="w-full p-2.5 rounded-xl bg-slate-50 border border-emerald-300 text-xs text-[#0F2F2B] outline-none focus:ring-2 focus:ring-emerald-400"
+                          />
+                          <div className="flex justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingNoteId(null);
+                                setEditingNoteText('');
+                              }}
+                              className="px-2.5 py-1 rounded-lg border border-slate-300 text-slate-600 font-bold hover:bg-slate-100 cursor-pointer"
+                            >
+                              ยกเลิก
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleSaveEditedNote}
+                              className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-xs cursor-pointer"
+                            >
+                              บันทึกการแก้ไข
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-slate-700 leading-relaxed font-medium">{note.text}</p>
+                      )}
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
