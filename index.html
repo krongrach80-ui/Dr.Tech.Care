@@ -12,10 +12,57 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
+    <script>
+      // Asset cache failure auto-recovery
+      window.addEventListener('error', function(e) {
+        if (e.target && (e.target.tagName === 'SCRIPT' || e.target.tagName === 'LINK')) {
+          var key = 'dr_tech_care_reload_' + Math.floor(Date.now() / 20000);
+          if (!sessionStorage.getItem(key)) {
+            sessionStorage.setItem(key, '1');
+            console.warn('[Dr.Tech.Care] Asset loading failed, performing cache-busting reload...');
+            var url = new URL(window.location.href);
+            url.searchParams.set('_t', Date.now());
+            window.location.replace(url.href);
+          }
+        }
+      }, true);
+    </script>
     <script type="module" crossorigin src="/Dr.Tech.Care/assets/index-CvPGtaEd.js"></script>
     <link rel="stylesheet" crossorigin href="/Dr.Tech.Care/assets/index-DVFnH1Zl.css">
   </head>
   <body class="min-h-screen text-[#0B2B2B] antialiased selection:bg-emerald-200 selection:text-emerald-900 font-sans">
-    <div id="root"></div>
+    <div id="root">
+      <div id="app-preloader" style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(135deg, #E6FBF2 0%, #FFFFFF 48%, #E0F2FE 100%); font-family: -apple-system, BlinkMacSystemFont, 'Prompt', 'Noto Sans Thai', sans-serif; text-align: center; padding: 24px; box-sizing: border-box;">
+        <div style="background: white; border: 2px solid rgba(11, 43, 43, 0.2); border-radius: 36px; padding: 36px 28px; max-width: 420px; width: 100%; box-shadow: 0 20px 40px -15px rgba(0,0,0,0.08); display: flex; flex-direction: column; align-items: center; gap: 16px;">
+          <div style="width: 84px; height: 84px; border-radius: 50%; background: #ECFDF5; border: 3px solid #6EE7B7; display: flex; align-items: center; justify-content: center; position: relative;">
+            <svg style="width: 44px; height: 44px; color: #10B981;" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+            </svg>
+          </div>
+          <div>
+            <h1 style="font-size: 26px; font-weight: 800; color: #0B2B2B; margin: 0 0 4px 0; letter-spacing: -0.5px;">Dr.Tech.Care</h1>
+            <p style="font-size: 13px; font-weight: 700; color: #10B981; margin: 0;">ระบบกายภาพบำบัดและดูแลสุขภาพอัจฉริยะ</p>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
+            <div style="width: 14px; height: 14px; border: 2.5px solid #10B981; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+            <span style="font-size: 13px; font-weight: 600; color: #475569;">กำลังเริ่มต้นระบบ...</span>
+          </div>
+          <button id="btn-force-reload" onclick="sessionStorage.clear(); localStorage.clear(); window.location.reload();" style="display: none; margin-top: 12px; font-size: 12px; font-weight: 600; color: #0284C7; background: #F0F9FF; border: 1px solid #BAE6FD; padding: 6px 14px; border-radius: 999px; cursor: pointer;">
+            คลิกที่นี่หากหน้าจอไม่โหลด
+          </button>
+        </div>
+        <style>
+          @keyframes spin { to { transform: rotate(360deg); } }
+        </style>
+      </div>
+      <script>
+        setTimeout(function() {
+          var btn = document.getElementById('btn-force-reload');
+          if (btn && document.getElementById('app-preloader')) {
+            btn.style.display = 'inline-block';
+          }
+        }, 3500);
+      </script>
+    </div>
   </body>
 </html>
