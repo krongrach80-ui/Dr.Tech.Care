@@ -9,6 +9,7 @@
 ### 🌐 ลิงก์ระบบออนไลน์ (Live Deployment)
 - **GitHub Pages (Live Demo)**: [https://krongrach80-ui.github.io/Dr.Tech.Care/](https://krongrach80-ui.github.io/Dr.Tech.Care/)
 - **GitHub Repository**: [https://github.com/krongrach80-ui/Dr.Tech.Care](https://github.com/krongrach80-ui/Dr.Tech.Care)
+- **สเปกระบบเชิงลึก (Backend & RBAC Functional Spec)**: [docs/ULTIMATE_BACKEND_RBAC_SPECIFICATION.md](docs/ULTIMATE_BACKEND_RBAC_SPECIFICATION.md)
 
 ---
 

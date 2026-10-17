@@ -4,8 +4,9 @@
 ### ระบบช่วยติดตามและวิเคราะห์การฝึกกายภาพด้วย AI
 **“เพื่อการฝึกที่ปลอดภัย เหมาะสมกับผู้ใช้แต่ละราย และคำนึงถึงความเป็นส่วนตัว”**
 
-- 🌐 **ทดลองใช้งานจริงออนไลน์ (Live Demo)**: [https://krongrach80-ui.github.io/Strong-Care/](https://krongrach80-ui.github.io/Strong-Care/)
+- 🌐 **ทดลองใช้งานจริงออนไลน์ (Live Demo)**: [https://krongrach80-ui.github.io/Dr.Tech.Care/](https://krongrach80-ui.github.io/Dr.Tech.Care/)
 - 📖 **เอกสารเกี่ยวกับระบบ (About)**: [ABOUT.md](ABOUT.md)
+- 📑 **คู่มือสเปกระบบเชิงลึก (Backend & RBAC Functional Specification)**: [docs/ULTIMATE_BACKEND_RBAC_SPECIFICATION.md](docs/ULTIMATE_BACKEND_RBAC_SPECIFICATION.md)
 
 > **Master Pitch:**
 > “Dr.Tech.Care — แพลตฟอร์ม AI ช่วยติดตามและวิเคราะห์การฝึกกายภาพ เพื่อการฝึกที่ปลอดภัย เหมาะสมกับผู้ใช้แต่ละราย และคำนึงถึงความเป็นส่วนตัว”
