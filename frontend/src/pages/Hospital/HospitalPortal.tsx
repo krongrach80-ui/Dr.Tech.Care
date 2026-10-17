@@ -2734,24 +2734,6 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
                       <span>อนุมัติแผน AI ({aiProposals.filter((p) => p.status === 'PENDING_CLINICAL_APPROVAL').length})</span>
                     </button>
-                    <button
-                      onClick={() => {
-                        if (!activeCalendarPatient) {
-                          const firstPat = users.find((u) => u.role === 'patient');
-                          if (firstPat) setActiveCalendarPatient(firstPat);
-                        }
-                        setScheduleViewMode('calendar');
-                      }}
-                      className={`px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                        scheduleViewMode === 'calendar'
-                          ? 'bg-[#10B981] text-white font-extrabold shadow-xs'
-                          : 'text-slate-600 hover:text-emerald-800'
-                      }`}
-                      title="ปฏิทินคนไข้ (Interactive Calendar)"
-                    >
-                      <Calendar className="w-3.5 h-3.5" />
-                      <span>ปฏิทินคนไข้ (Interactive Calendar)</span>
-                    </button>
                   </div>
 
                   {/* Month & Year Navigator */}
