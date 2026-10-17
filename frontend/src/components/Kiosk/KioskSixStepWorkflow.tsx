@@ -407,6 +407,7 @@ interface KioskSixStepWorkflowProps {
   onOpenHospitalPortal: () => void;
   onOpenAbout?: () => void;
   kioskStationName?: string;
+  isActive?: boolean;
 }
 
 export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
@@ -415,6 +416,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   onOpenHospitalPortal,
   onOpenAbout,
   kioskStationName = 'Dr.Tech.Care (ตู้ Kiosk ประจำสถานี 1)',
+  isActive = true,
 }) => {
   // Query param flags: อนุญาต Demo Mode เฉพาะขณะรัน Local Development Server เท่านั้น (ใน Production Build จะเป็น false เสมอ)
   const isExplicitDemo = Boolean(
@@ -434,6 +436,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   // Settings
   const [isDemoMode, setIsDemoMode] = useState<boolean>(isExplicitDemo);
   const [seniorSimpleMode, setSeniorSimpleMode] = useState<boolean>(true);
+  const [isAutoDetectionPaused, setIsAutoDetectionPaused] = useState<boolean>(false);
 
   // Stretch Modal State
   const [showStretchModal, setShowStretchModal] = useState<boolean>(false);
@@ -800,18 +803,27 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
   // เริ่มต้นกล้องครั้งเดียวเมื่อตู้ Kiosk โหลด และทำความสะอาดทรัพยากรเมื่อ Unmount จาก Kiosk ทั้งหมด
   useEffect(() => {
+    if (!isActive) {
+      stopMediaStream();
+      return;
+    }
     startCamera();
     poseService.initialize().catch(() => {});
     livenessEngine.initialize().catch(() => {});
     return () => {
       stopMediaStream();
+      try {
+        if (typeof window !== 'undefined' && window.speechSynthesis) {
+          window.speechSynthesis.cancel();
+        }
+      } catch {}
       try { delete (window as any).__kioskCameraStream; } catch {}
       poseService.closeHandLandmarker();
       poseService.closeFaceLandmarker();
       biometricTimersRef.current.forEach((t) => clearTimeout(t));
       biometricTimersRef.current = [];
     };
-  }, [startCamera, stopMediaStream]);
+  }, [isActive, startCamera, stopMediaStream]);
 
   // เชื่อมต่อ stream เข้า videoRef ถาวรทุกครั้งที่เปลี่ยน Step หรือกล้องพร้อม
   useEffect(() => {
@@ -827,10 +839,10 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
   // Preload Pose, Hand Tracker และ Face Liveness ล่วงหน้าใน Background ตอนอยู่ Step 1
   useEffect(() => {
-    if (currentStep === 1) {
+    if (currentStep === 1 && isActive) {
       let cancelled = false;
       const timer = setTimeout(() => {
-        if (cancelled) return;
+        if (cancelled || !isActive) return;
         poseService.initialize().catch(() => {});
         poseService.ensureHandLandmarker().catch(() => {});
         poseService.ensureFaceLandmarker().catch(() => {});
@@ -840,7 +852,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         clearTimeout(timer);
       };
     }
-  }, [currentStep]);
+  }, [currentStep, isActive]);
 
   // Central Step Transition
   const changeStep = useCallback((nextStep: number) => {
@@ -1253,7 +1265,12 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
   // 3. Step 1: Automatic Face Presence (3s Hold) + Prolonged No-Face Inquiry Loop
   useEffect(() => {
-    if (currentStep !== 1) return;
+    if (currentStep !== 1 || !isActive || isAutoDetectionPaused) {
+      setPresenceProgress(0);
+      setIsPersonDetected(false);
+      setFaceCountdownSeconds(3);
+      return;
+    }
 
     let cancelled = false;
     let rafId: number | null = null;
@@ -1266,7 +1283,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     let lastAudioTickSec = -1;
 
     const loop = () => {
-      if (cancelled) return;
+      if (cancelled || !isActive || isAutoDetectionPaused) return;
       const now = performance.now();
       const delta = Math.min(200, now - lastTime);
       lastTime = now;
@@ -1511,9 +1528,16 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     return () => {
       cancelled = true;
       if (rafId) cancelAnimationFrame(rafId);
+      try {
+        if (typeof window !== 'undefined' && window.speechSynthesis) {
+          window.speechSynthesis.cancel();
+        }
+      } catch {}
     };
   }, [
     currentStep,
+    isActive,
+    isAutoDetectionPaused,
     showPresenceInquiryModal,
     showPinModal,
     isSlideUpAnimating,
@@ -2250,13 +2274,14 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
   // Step 1: Direct Face Login (เมื่อตรวจพบใบหน้า หรือแตะหน้าจอ)
   const handleStartFaceLogin = useCallback(() => {
+    if (!isActive) return;
     setIsEnrollmentFlow(false);
     audioFeedback.playRepSuccess();
     try {
       voiceAssistant.speak('ตรวจพบใบหน้าเรียบร้อยแล้วค่ะ กำลังเข้าสู่ระบบ', { level: 'system' });
     } catch {}
     triggerSlideUp(4);
-  }, [triggerSlideUp]);
+  }, [isActive, triggerSlideUp]);
 
   const handleRetryScan = () => {
     setShowNoAccountModal(false);
@@ -2519,7 +2544,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
   // Step 4 Face Liveness Detection Hook (สร้างเมื่อเข้า Step 4 และ close() ตอนออก)
   useEffect(() => {
-    if (currentStep !== 4 || isScanning) return;
+    if (currentStep !== 4 || isScanning || !isActive) return;
 
     let cancelled = false;
     let rafId: number | null = null;
@@ -2534,7 +2559,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     livenessEngine.initialize().catch(() => {});
 
     const loop = () => {
-      if (cancelled) return;
+      if (cancelled || !isActive) return;
       const now = performance.now();
       if (now - lastTime >= 50) {
         lastTime = now;
@@ -2646,7 +2671,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       cancelled = true;
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [currentStep, scanStep, isScanning]);
+  }, [currentStep, scanStep, isScanning, isActive]);
 
   // Event listener สำหรับการทดสอบความปลอดภัยและ E2E Testing ในสภาพแวดล้อม Headless/CI
   useEffect(() => {
@@ -3093,17 +3118,54 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   </button>
                 </div>
               </div>
+            ) : isAutoDetectionPaused ? (
+              /* 2.1 กรณีผู้ใช้กดหยุดการตรวจจับอัตโนมัติ */
+              <div className="flex flex-col sm:flex-row items-center gap-2 mb-2 animate-fadeIn">
+                <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-amber-50 border border-amber-300 text-amber-800 text-xs font-bold shadow-2xs">
+                  <span className="w-2 h-2 rounded-full bg-amber-500" />
+                  <span>⏸️ การตรวจจับอัตโนมัติถูกหยุดไว้</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAutoDetectionPaused(false)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition active:scale-95 cursor-pointer"
+                  title="เปิดการตรวจจับอัตโนมัติอีกครั้ง"
+                >
+                  <Play className="w-3 h-3 fill-white" />
+                  <span>เปิดตรวจจับอัตโนมัติ</span>
+                </button>
+              </div>
             ) : isPersonDetected ? (
-              /* 2. กรณีตรวจพบใบหน้า: แสดงแถบความคืบหน้า 3 วินาทีแบบกระชับ ชัดเจน ไม่กินพื้นที่ */
+              /* 2.2 กรณีตรวจพบใบหน้า: แสดงแถบความคืบหน้า 3 วินาทีแบบกระชับ ชัดเจน ไม่กินพื้นที่ พร้อมปุ่มหยุด */
               <div className="w-full max-w-xs bg-emerald-50/95 border-2 border-emerald-400 text-[#0B2B2B] rounded-2xl p-2 sm:p-2.5 mb-2 shadow-md animate-fadeIn flex flex-col items-center">
                 <div className="flex items-center justify-between w-full text-xs font-black mb-1 px-0.5">
                   <span className="flex items-center gap-1.5 text-[#1E8A4C]">
                     <UserCheck className="w-4 h-4 text-emerald-600" />
                     <span>ตรวจพบใบหน้าแล้ว</span>
                   </span>
-                  <span className="font-mono text-[#1E8A4C] font-black text-xs bg-white px-2 py-0.5 rounded-lg border border-emerald-300 shadow-2xs">
-                    {faceCountdownSeconds} วินาที ({presenceProgress}%)
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono text-[#1E8A4C] font-black text-xs bg-white px-2 py-0.5 rounded-lg border border-emerald-300 shadow-2xs">
+                      {faceCountdownSeconds} วินาที ({presenceProgress}%)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAutoDetectionPaused(true);
+                        setPresenceProgress(0);
+                        setIsPersonDetected(false);
+                        setFaceCountdownSeconds(3);
+                        try {
+                          if (typeof window !== 'undefined' && window.speechSynthesis) {
+                            window.speechSynthesis.cancel();
+                          }
+                        } catch {}
+                      }}
+                      className="px-2 py-0.5 text-[11px] font-bold text-slate-600 hover:text-rose-600 bg-white hover:bg-rose-50 border border-slate-300 rounded-lg cursor-pointer transition shadow-2xs"
+                      title="หยุดการเข้าสู่ระบบอัตโนมัติ"
+                    >
+                      หยุด
+                    </button>
+                  </div>
                 </div>
                 <div className="w-full h-2.5 bg-white rounded-full overflow-hidden border border-emerald-300/80 shadow-inner">
                   <div
@@ -3113,10 +3175,31 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 </div>
               </div>
             ) : (
-              /* 3. กรณีกล้องพร้อมแต่ยังไม่พบคน: สถานะกะทัดรัด สบายตา ไม่แย่งสายตา */
-              <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-emerald-50/80 border border-emerald-200 text-[#1E8A4C] text-xs font-bold shadow-2xs mb-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>กำลังตรวจจับใบหน้า...</span>
+              /* 2.3 กรณีกล้องพร้อมแต่ยังไม่พบคน: สถานะกะทัดรัด สบายตา พร้อมปุ่มหยุดตรวจจับ */
+              <div className="flex items-center gap-2 mb-2 animate-fadeIn">
+                <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-emerald-50/80 border border-emerald-200 text-[#1E8A4C] text-xs font-bold shadow-2xs">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>กำลังตรวจจับใบหน้า...</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAutoDetectionPaused(true);
+                    setPresenceProgress(0);
+                    setIsPersonDetected(false);
+                    setFaceCountdownSeconds(3);
+                    try {
+                      if (typeof window !== 'undefined' && window.speechSynthesis) {
+                        window.speechSynthesis.cancel();
+                      }
+                    } catch {}
+                  }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white hover:bg-slate-100 border border-slate-300 text-slate-600 hover:text-slate-900 text-[11px] font-semibold shadow-2xs transition active:scale-95 cursor-pointer"
+                  title="หยุดการตรวจจับอัตโนมัติ"
+                >
+                  <Pause className="w-3 h-3 text-slate-500" />
+                  <span>หยุดตรวจจับ</span>
+                </button>
               </div>
             )}
 
@@ -4558,7 +4641,15 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 flex items-center gap-2 z-30">
         {onOpenAbout && (
           <button
-            onClick={onOpenAbout}
+            onClick={() => {
+              try {
+                if (typeof window !== 'undefined' && window.speechSynthesis) {
+                  window.speechSynthesis.cancel();
+                }
+              } catch {}
+              stopMediaStream();
+              onOpenAbout();
+            }}
             className="bg-white/95 hover:bg-emerald-50 border border-emerald-300 text-[#1E8A4C] font-bold text-xs px-3.5 py-2 rounded-full shadow-md flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
             title="เกี่ยวกับระบบ"
           >
@@ -4568,7 +4659,15 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         )}
 
         <button
-          onClick={onOpenHospitalPortal}
+          onClick={() => {
+            try {
+              if (typeof window !== 'undefined' && window.speechSynthesis) {
+                window.speechSynthesis.cancel();
+              }
+            } catch {}
+            stopMediaStream();
+            onOpenHospitalPortal();
+          }}
           className="bg-white/95 hover:bg-emerald-50 border-2 border-[#1E8A4C] text-[#1E8A4C] font-bold text-xs px-3.5 py-2 rounded-full shadow-md flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
           id="btnKioskHospitalPortal"
           title="เข้าสู่ระบบบุคลากร / รพ."

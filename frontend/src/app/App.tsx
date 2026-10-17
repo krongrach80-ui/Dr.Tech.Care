@@ -53,7 +53,7 @@ const parseRouteFromUrl = (): { screen: number; modal?: 'hospital' | 'reception'
   if (routePath === 'minigame' || routePath === 'game' || routePath === 'screen5') {
     return { screen: 5 };
   }
-  if (routePath === 'hospital' || routePath === 'portal') {
+  if (routePath === 'hospital' || routePath === 'portal' || routePath === 'admin') {
     return { screen: 1, modal: 'hospital' };
   }
   if (routePath === 'reception') {
@@ -215,11 +215,43 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
+  // Stop and completely unmount Kiosk auto-login and camera when navigating to ANY other screen or modal
+  const isKioskActive =
+    currentScreen === 1 &&
+    !isHospitalPortalOpen &&
+    !isReceptionOpen &&
+    !isAboutOpen &&
+    !isProfileModalOpen &&
+    !isAdminOpen;
+
+  // Cleanup speech synthesis and camera whenever Kiosk is not active
+  useEffect(() => {
+    if (!isKioskActive) {
+      try {
+        if (typeof window !== 'undefined' && window.speechSynthesis) {
+          window.speechSynthesis.cancel();
+        }
+      } catch {}
+      try {
+        if ((window as any).__kioskCameraStream) {
+          (window as any).__kioskCameraStream.getTracks().forEach((t: MediaStreamTrack) => t.stop());
+          delete (window as any).__kioskCameraStream;
+        }
+      } catch {}
+    }
+  }, [isKioskActive]);
+
   // Navigate & scroll to top smoothly (หน้า 3 ถูกนำออกไป - วิ่งเข้าหน้า 1 ตู้ Kiosk เสมอ)
   const handleNavigate = (screenNumber: number) => {
     if (screenNumber === 3) {
       screenNumber = 1;
     }
+    // Stop all background speech synthesis and cancel auto-login in progress
+    try {
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    } catch {}
     setCurrentScreen(screenNumber);
     syncHash(screenNumber, null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -311,6 +343,10 @@ export const App: React.FC = () => {
 
   // Login handler -> direct to Screen 2 (/home PatientHomeScreen)
   const handleLoginSuccess = (patient: Patient) => {
+    if (!isKioskActive) {
+      console.info('[AUTH] Suppressed login because user is on another screen/modal');
+      return;
+    }
     setCurrentUserName(patient.name);
     selectPatient(patient);
     showToast(`เข้าสู่ระบบสำเร็จ ยินดีต้อนรับ ${patient.name}`);
@@ -459,12 +495,14 @@ export const App: React.FC = () => {
       >
         
         {/* หน้า 1: ตู้ Kiosk อัจฉริยะ 6 ขั้นตอน (พักหน้าจอ -> ถามความพร้อม -> สแกนหน้า -> ล็อคอินสำเร็จ -> รายการที่หมอเซ็ต) */}
-        {currentScreen === 1 && (
+        {isKioskActive && (
           <KioskSixStepWorkflow
+            isActive={isKioskActive}
             onLoginComplete={(patient) => {
               handleLoginSuccess(patient);
             }}
             onStartExerciseDirectly={(patient, plan, mode, stretchQueue, customHoldTimes) => {
+              if (!isKioskActive) return;
               selectPatient(patient);
               setCurrentUserName(patient.name);
 
@@ -507,8 +545,22 @@ export const App: React.FC = () => {
               showToast(`ยินดีต้อนรับ ${patient.name} เริ่มต้นโปรแกรมการรักษา`);
               handleNavigate(4);
             }}
-            onOpenHospitalPortal={() => setIsHospitalPortalOpen(true)}
-            onOpenAbout={() => setIsAboutOpen(true)}
+            onOpenHospitalPortal={() => {
+              try {
+                if (typeof window !== 'undefined' && window.speechSynthesis) {
+                  window.speechSynthesis.cancel();
+                }
+              } catch {}
+              setIsHospitalPortalOpen(true);
+            }}
+            onOpenAbout={() => {
+              try {
+                if (typeof window !== 'undefined' && window.speechSynthesis) {
+                  window.speechSynthesis.cancel();
+                }
+              } catch {}
+              setIsAboutOpen(true);
+            }}
           />
         )}
 
