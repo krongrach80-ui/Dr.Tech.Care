@@ -81,6 +81,10 @@ import { DailyRoutineAssignmentModal } from '../../components/Hospital/DailyRout
 import { SecurityControlModal } from '../../components/Hospital/SecurityControlModal';
 import { TemporaryCaseDelegationModal } from '../../components/Hospital/TemporaryCaseDelegationModal';
 import { EditMyProfileModal } from '../../components/Hospital/EditMyProfileModal';
+import { PatientQuickInfoModal } from '../../components/Hospital/PatientQuickInfoModal';
+import { SelectTrainingModeModal, TrainingMode } from '../../components/Hospital/SelectTrainingModeModal';
+import { CreateCourseModal } from '../../components/Hospital/CreateCourseModal';
+import { InteractivePatientCalendarView } from '../../components/Hospital/InteractivePatientCalendarView';
 import { defaultDash, formatThaiDate, formatThaiDateTime } from '../../utils/dashboardUtils';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 
@@ -892,10 +896,53 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [planCareFilter, setPlanCareFilter] = useState<'my_patients' | 'covered_cases' | 'all'>('my_patients');
 
   // Timetable scheduling states (ตารางเรียนกายภาพ) & Approval Gate (P2-10)
-  const [scheduleViewMode, setScheduleViewMode] = useState<'today' | 'weekly' | 'timetable' | 'list' | 'approvals'>('today');
+  const [scheduleViewMode, setScheduleViewMode] = useState<'today' | 'weekly' | 'timetable' | 'list' | 'approvals' | 'calendar'>('today');
   const [scheduleSelectedMonth, setScheduleSelectedMonth] = useState<number>(9); // 0-indexed, 9 = ตุลาคม (October)
   const [scheduleSelectedYear, setScheduleSelectedYear] = useState<number>(2026);
   const [scheduleDayFilter, setScheduleDayFilter] = useState<string>('all');
+
+  // 4-Screen Course Schedule Workflow States
+  const [isPatientQuickInfoOpen, setIsPatientQuickInfoOpen] = useState<boolean>(false);
+  const [quickInfoPatient, setQuickInfoPatient] = useState<UserAccount | null>(null);
+  const [quickInfoPlan, setQuickInfoPlan] = useState<TreatmentPlan | null>(null);
+
+  const [activeCalendarPatient, setActiveCalendarPatient] = useState<UserAccount | null>(null);
+
+  const [isSelectModeModalOpen, setIsSelectModeModalOpen] = useState<boolean>(false);
+  const [selectedDateForCourse, setSelectedDateForCourse] = useState<string>('2026-10-16');
+  const [selectedDateFormattedTh, setSelectedDateFormattedTh] = useState<string>('วันศุกร์ที่ 16 ตุลาคม 2569');
+
+  const [isCreateCourseModalOpen, setIsCreateCourseModalOpen] = useState<boolean>(false);
+  const [selectedTrainingMode, setSelectedTrainingMode] = useState<TrainingMode>('minigame');
+
+  const handleOpenPatientQuickInfo = (patient: UserAccount, plan?: TreatmentPlan) => {
+    setQuickInfoPatient(patient);
+    setQuickInfoPlan(plan || null);
+    setIsPatientQuickInfoOpen(true);
+  };
+
+  const handleGoToCalendarFromQuickInfo = (patient: UserAccount) => {
+    setIsPatientQuickInfoOpen(false);
+    setActiveCalendarPatient(patient);
+    setScheduleViewMode('calendar');
+  };
+
+  const handleSelectDateFromCalendar = (dateStr: string, formattedTh: string) => {
+    setSelectedDateForCourse(dateStr);
+    setSelectedDateFormattedTh(formattedTh);
+    setIsSelectModeModalOpen(true);
+  };
+
+  const handleProceedToCourseConfig = (mode: TrainingMode) => {
+    setSelectedTrainingMode(mode);
+    setIsSelectModeModalOpen(false);
+    setIsCreateCourseModalOpen(true);
+  };
+
+  const handleBackToStep1 = () => {
+    setIsCreateCourseModalOpen(false);
+    setIsSelectModeModalOpen(true);
+  };
 
   // AI Clinical Approval Gate States (Human-in-the-Loop Protocol)
   interface AiRecommendationProposal {
@@ -2687,6 +2734,24 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
                       <span>อนุมัติแผน AI ({aiProposals.filter((p) => p.status === 'PENDING_CLINICAL_APPROVAL').length})</span>
                     </button>
+                    <button
+                      onClick={() => {
+                        if (!activeCalendarPatient) {
+                          const firstPat = users.find((u) => u.role === 'patient');
+                          if (firstPat) setActiveCalendarPatient(firstPat);
+                        }
+                        setScheduleViewMode('calendar');
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                        scheduleViewMode === 'calendar'
+                          ? 'bg-[#10B981] text-white font-extrabold shadow-xs'
+                          : 'text-slate-600 hover:text-emerald-800'
+                      }`}
+                      title="ปฏิทินคนไข้ (Interactive Calendar)"
+                    >
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span>ปฏิทินคนไข้ (Interactive Calendar)</span>
+                    </button>
                   </div>
 
                   {/* Month & Year Navigator */}
@@ -2787,15 +2852,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   {/* Interactive Patient Calendar Trigger */}
                   <button
                     onClick={() => {
-                      const firstPat = users.find((u) => u.role === 'patient');
-                      if (firstPat) {
-                        setCalendarPatientModal(firstPat);
-                      } else {
-                        showToast('ไม่พบข้อมูลคนไข้ในระบบ');
+                      if (!activeCalendarPatient) {
+                        const firstPat = users.find((u) => u.role === 'patient');
+                        if (firstPat) setActiveCalendarPatient(firstPat);
                       }
+                      setScheduleViewMode('calendar');
                     }}
                     className="px-3.5 py-2 rounded-2xl bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-50 text-xs font-extrabold shadow-2xs transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap active:scale-95"
-                    title="เปิดปฏิทินนัดหมายคนไข้ พร้อมสถานะ เขียว (สำเร็จ) / น้ำเงิน (นัดหมาย) / แดง (ขาดนัด/เลื่อนอัตโนมัติ)"
+                    title="เปิดปฏิทินนัดหมายคนไข้ (Interactive Calendar) หน้าจัดคอส"
                   >
                     <Calendar className="w-4 h-4 text-emerald-600" />
                     <span>🗓️ ปฏิทินคนไข้ (Interactive Calendar)</span>
@@ -2988,17 +3052,30 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                               String(u.id) === String(p.patientId) ||
                               u.code === p.patientCode ||
                               u.name === p.patientName
-                          );
+                          ) || ({
+                            id: p.patientId,
+                            name: p.patientName,
+                            code: p.patientCode,
+                            role: 'patient',
+                            username: p.patientCode,
+                            status: 'active',
+                            diagnosis: p.diagnosis,
+                            chiefComplaint: p.targetJoint,
+                          } as UserAccount);
                           const isMinigameIncluded = p.includeMinigame ?? (p as any).include_minigame ?? true;
 
                           return (
                             <div
                               key={p.id || idx}
-                              className="p-4 rounded-2xl bg-white border border-emerald-200 hover:border-emerald-400 shadow-2xs hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-left"
+                              className="p-4 rounded-[26px] bg-white border border-emerald-200 hover:border-emerald-400 shadow-2xs hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-left"
                             >
                               {/* Left: Time & Patient Info */}
                               <div className="flex items-start gap-3 min-w-0">
-                                <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 font-extrabold flex items-center justify-center flex-shrink-0 text-sm">
+                                <div
+                                  onClick={() => handleOpenPatientQuickInfo(patientUser as UserAccount, p)}
+                                  className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 font-extrabold flex items-center justify-center flex-shrink-0 text-sm cursor-pointer hover:bg-emerald-200 transition"
+                                  title="ดูข้อมูลคนไข้"
+                                >
                                   {idx + 1}
                                 </div>
                                 <div className="min-w-0 space-y-1">
@@ -3016,12 +3093,19 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                     )}
                                   </div>
 
-                                  <div className="flex items-center gap-2">
-                                    <h4 className="font-black text-sm text-[#0F2F2B] truncate">
+                                  <div
+                                    onClick={() => handleOpenPatientQuickInfo(patientUser as UserAccount, p)}
+                                    className="flex items-center gap-2 cursor-pointer group hover:opacity-95 transition-all"
+                                    title="กดที่ชื่อคนไข้ เพื่อดูข้อมูลคนไข้และตัดคอสใหม่"
+                                  >
+                                    <h4 className="font-black text-sm text-[#0F2F2B] group-hover:text-emerald-700 underline decoration-dotted decoration-emerald-400 underline-offset-2 truncate transition">
                                       👤 {p.patientName}
                                     </h4>
-                                    <span className="font-mono text-xs text-slate-400 font-bold">
+                                    <span className="font-mono text-xs text-slate-400 font-bold group-hover:text-emerald-600 transition">
                                       (HN: {p.patientCode})
+                                    </span>
+                                    <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 shadow-2xs group-hover:bg-emerald-100 transition">
+                                      ดูข้อมูล ℹ️
                                     </span>
                                   </div>
 
@@ -3958,6 +4042,31 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       ))
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* VIEW 5: INTERACTIVE PATIENT CALENDAR VIEW (หน้าปฏิทินนัดหมายคนไข้ - Screen 2) */}
+              {scheduleViewMode === 'calendar' && (
+                <div className="animate-fadeIn">
+                  <InteractivePatientCalendarView
+                    currentPatient={
+                      activeCalendarPatient ||
+                      users.find((u) => u.role === 'patient') || ({
+                        id: 'P-0012',
+                        name: 'นายสมชาย ใจดี',
+                        code: 'P-0012',
+                        role: 'patient',
+                        username: 'P-0012',
+                        diagnosis: 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
+                        chiefComplaint: 'ข้อไหล่และกล้ามเนื้อสะบัก (Shoulder & Scapula)',
+                      } as UserAccount)
+                    }
+                    allPatients={users.filter((u) => u.role === 'patient')}
+                    onChangePatient={(p) => setActiveCalendarPatient(p)}
+                    onSelectDateToCreateCourse={(dateStr, formattedTh) => {
+                      handleSelectDateFromCalendar(dateStr, formattedTh);
+                    }}
+                  />
                 </div>
               )}
             </div>
@@ -6349,6 +6458,81 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         targetDevice={securityControlTarget?.device}
         targetUserCode={securityControlTarget?.userCode || (securityControlTarget as any)?.user}
         onSuccessToast={showToast}
+      />
+
+      {/* ==================================================================== */}
+      {/* 28. SCREEN 1: PATIENT QUICK INFO POPUP (เมื่อกดชื่อคนไข้)            */}
+      {/* ==================================================================== */}
+      <PatientQuickInfoModal
+        isOpen={isPatientQuickInfoOpen}
+        onClose={() => setIsPatientQuickInfoOpen(false)}
+        patient={quickInfoPatient}
+        plan={quickInfoPlan}
+        onGoToCalendar={handleGoToCalendarFromQuickInfo}
+      />
+
+      {/* ==================================================================== */}
+      {/* 29. SCREEN 3: SELECT TRAINING MODE POPUP (ขั้นที่ 1 จาก 2)            */}
+      {/* ==================================================================== */}
+      <SelectTrainingModeModal
+        isOpen={isSelectModeModalOpen}
+        onClose={() => setIsSelectModeModalOpen(false)}
+        patient={
+          activeCalendarPatient ||
+          quickInfoPatient ||
+          users.find((u) => u.role === 'patient') ||
+          null
+        }
+        selectedDateStr={selectedDateForCourse}
+        formattedDateTh={selectedDateFormattedTh}
+        onProceedToCourseConfig={handleProceedToCourseConfig}
+      />
+
+      {/* ==================================================================== */}
+      {/* 30. SCREEN 4: CUT COURSE / COURSE CONFIGURATION POPUP (ขั้นที่ 2 จาก 2) */}
+      {/* ==================================================================== */}
+      <CreateCourseModal
+        isOpen={isCreateCourseModalOpen}
+        onClose={() => setIsCreateCourseModalOpen(false)}
+        onBackToStep1={handleBackToStep1}
+        patient={
+          activeCalendarPatient ||
+          quickInfoPatient ||
+          users.find((u) => u.role === 'patient') ||
+          null
+        }
+        startDateStr={selectedDateForCourse}
+        trainingMode={selectedTrainingMode}
+        onSuccess={(createdPlan) => {
+          setIsCreateCourseModalOpen(false);
+          const finalPlanId = createdPlan.id || `plan_${Date.now()}`;
+          const finalPatId = createdPlan.patientId || activeCalendarPatient?.id || 'P-0012';
+          const finalPatName = createdPlan.patientName || activeCalendarPatient?.name || 'นายสมชาย ใจดี';
+          const finalPatCode = createdPlan.patientCode || activeCalendarPatient?.code || 'P-0012';
+
+          saveTreatmentPlan({
+            id: finalPlanId,
+            patientId: finalPatId,
+            patientName: finalPatName,
+            patientCode: finalPatCode,
+            therapistId: currentUserId,
+            therapistName: currentUser?.name || 'นักกายภาพบำบัด',
+            diagnosis: createdPlan.diagnosis || activeCalendarPatient?.diagnosis || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
+            targetJoint: createdPlan.targetJoint || 'ข้อไหล่และกล้ามเนื้อสะบัก (Shoulder & Scapula)',
+            assignedExercises: createdPlan.assignedExercises || [],
+            clinicalNotes: createdPlan.clinicalNotes || `ตัดคอร์สฝึกกายภาพ ${createdPlan.scheduleDays?.join(', ')} โดย ${currentUser?.name || 'Admin'}`,
+            status: 'active',
+            scheduleDays: createdPlan.scheduleDays || ['ศุกร์'],
+            timeSlot: createdPlan.timeSlot || '09:30 - 10:30',
+            startTime: createdPlan.startTime || '09:30',
+            endTime: createdPlan.endTime || '10:30',
+            startDate: createdPlan.startDate || selectedDateForCourse,
+            endDate: createdPlan.endDate || '2026-11-20',
+            roomStation: createdPlan.roomStation || 'ตู้ Kiosk 1',
+            includeMinigame: createdPlan.includeMinigame ?? (selectedTrainingMode === 'minigame'),
+          } as TreatmentPlan);
+          showToast(`✓ ยืนยันตัดคอสสำเร็จสำหรับ ${finalPatName} (${finalPatCode})`);
+        }}
       />
     </div>
   );

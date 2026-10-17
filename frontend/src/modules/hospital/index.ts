@@ -15,3 +15,8 @@ export { AddUserModal } from '../../components/Hospital/AddUserModal';
 export { EditUserModal } from '../../components/Hospital/EditUserModal';
 export { SecurityControlModal } from '../../components/Hospital/SecurityControlModal';
 export { BannedManagementModal } from '../../components/Hospital/BannedManagementModal';
+export { PatientQuickInfoModal } from '../../components/Hospital/PatientQuickInfoModal';
+export { SelectTrainingModeModal } from '../../components/Hospital/SelectTrainingModeModal';
+export type { TrainingMode } from '../../components/Hospital/SelectTrainingModeModal';
+export { CreateCourseModal } from '../../components/Hospital/CreateCourseModal';
+export { InteractivePatientCalendarView } from '../../components/Hospital/InteractivePatientCalendarView';
