@@ -6642,16 +6642,26 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         patient={selectedCalendarPatient || users.find((u) => u.role === 'patient')}
         dateStr={selectedDateForCourse}
         onSaveCourse={(courseData) => {
-          const dayNum = parseInt(courseData.date.split('-')[2], 10) || selectedCalendarDay;
           const newApt = {
             time: courseData.timeSlot.split(' - ')[0] || '09:30',
             name: courseData.patientName.replace(/^(นาย|นาง|นางสาว)\s*/, '') + (courseData.mode === 'minigame' ? ' 🎮' : ''),
             type: (courseData.mode === 'minigame' ? 'purple' : 'green') as 'purple' | 'green',
           };
-          setCalendarAppointments((prev) => ({
-            ...prev,
-            [dayNum]: [...(prev[dayNum] || []), newApt],
-          }));
+
+          const allDates = courseData.selectedDates && courseData.selectedDates.length > 0
+            ? courseData.selectedDates
+            : [courseData.date];
+
+          setCalendarAppointments((prev) => {
+            const next = { ...prev };
+            allDates.forEach((dStr) => {
+              const dayNum = parseInt(dStr.split('-')[2], 10);
+              if (dayNum) {
+                next[dayNum] = [...(next[dayNum] || []), newApt];
+              }
+            });
+            return next;
+          });
 
           saveTreatmentPlan({
             id: `plan_${Date.now()}`,
@@ -6673,14 +6683,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     holdSeconds: e.holdSeconds || 15,
                     difficulty: 'beginner' as const,
                   })),
-            clinicalNotes: courseData.notes || `ตัดคอร์ส ${courseData.mode === 'minigame' ? 'มินิเกมฝึกสมอง' : 'กายภาพปกติ'} ประจำวันที่ ${courseData.date}`,
+            clinicalNotes: courseData.notes || `ตัดคอร์ส ${courseData.mode === 'minigame' ? 'มินิเกมฝึกสมอง' : 'กายภาพปกติ'} จำนวน ${allDates.length} ครั้ง (เริ่ม ${courseData.date})`,
             status: 'active',
-            scheduleDays: ['จันทร์', 'พุธ', 'ศุกร์'],
+            scheduleDays: ['จันทร์', 'ศุกร์'],
             timeSlot: courseData.timeSlot,
             startTime: courseData.timeSlot.split(' - ')[0] || '09:30',
             endTime: courseData.timeSlot.split(' - ')[1] || '10:30',
             startDate: courseData.date,
-            endDate: '2026-10-31',
+            endDate: courseData.endDate || allDates[allDates.length - 1] || '2026-11-16',
             roomStation: courseData.station,
             includeMinigame: courseData.mode === 'minigame',
           });
@@ -6688,10 +6698,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
           addActivityLog(
             'ASSIGN_TREATMENT_PLAN',
             'TREATMENT',
-            `ตัดคอร์ส ${courseData.mode === 'minigame' ? 'มินิเกมฝึกสมอง' : 'กายภาพปกติ'} สำหรับ ${courseData.patientName} (${courseData.patientCode}) ในวันที่ ${courseData.date}`
+            `ตัดคอร์ส ${courseData.mode === 'minigame' ? 'มินิเกมฝึกสมอง' : 'กายภาพปกติ'} จำนวน ${allDates.length} ครั้ง สำหรับ ${courseData.patientName} (${courseData.patientCode})`
           );
 
-          showToast(`✅ บันทึกและตัดคอร์สสำหรับ ${courseData.patientName} ในวันที่ ${courseData.date} สำเร็จ!`);
+          showToast(`✅ ยืนยันตัดคอร์ส ${allDates.length} ครั้ง สำหรับ ${courseData.patientName} เรียบร้อย!`);
           setIsCourseModeModalOpen(false);
         }}
       />
