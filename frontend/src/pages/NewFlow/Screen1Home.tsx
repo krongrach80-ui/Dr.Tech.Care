@@ -123,7 +123,7 @@ export const Screen1Home: React.FC<Screen1HomeProps> = ({
         id="btnHospitalPortalHome"
       >
         <Shield className="w-4 h-4 text-emerald-600" />
-        <span>ระบบบุคลากร / รพ.</span>
+        <span>🛡️ ระบบบุคลากร / รพ.</span>
       </button>
     </div>
   );

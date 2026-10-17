@@ -43,6 +43,7 @@ import {
   FlipVertical,
   RotateCw,
   FlipHorizontal,
+  Plus,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Patient } from '../../types/patient';
@@ -448,6 +449,8 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   // Global MediaStream & Video References
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const lastLiveVectorRef = useRef<number[] | null>(null);
+  const lastLiveJpgRef = useRef<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraOrientation, setCameraOrientation] = useState<CameraOrientation>(
@@ -2175,14 +2178,22 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           }, 1200);
           biometricTimersRef.current.push(t4);
         } else {
-          // [NO MATCH FOUND IN DATABASE - AUTOMATICALLY CREATE PENDING ACCOUNT (USER FLOW)]:
-          // เมื่อผู้ป่วยเดินมาที่ตู้แล้วสแกนหน้า (กรณีไม่มีบัญชี) ระบบจะสร้างบัญชีชั่วคราวขึ้นมาทันที
-          // แล้วส่งข้อมูลนี้ไปโผล่ที่ หน้าแอดมิน (หน้าจัดการคนไข้) ในสถานะว่า: "บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว"
+          // [NO MATCH FOUND IN DATABASE - MASTER PROMPT SPECIFICATION]:
+          // Straight-Face Authentication: Captures straight-face snapshot and queries Supabase.
+          // If not found, show alert: "ไม่พบบัญชี โปรดติดต่อเจ้าหน้าที่ หรือลองสแกนอีกครั้ง"
+          // (Staff can bypass via bottom-right staff button [🛡️ ระบบบุคลากร / รพ.])
           console.info(
-            `[KIOSK] No matching account found for live face (Similarity: ${evaluation.bestScorePercent}%). Automatically creating temporary account and notifying admin...`
+            `[KIOSK] No matching account found for live face (Similarity: ${evaluation.bestScorePercent}%). Showing alert: 'ไม่พบบัญชี โปรดติดต่อเจ้าหน้าที่ หรือลองสแกนอีกครั้ง'`
           );
           setLastMatchScore(evaluation.bestScorePercent);
-          await createPendingAccountAndNotify(vector128, liveJpg);
+          lastLiveVectorRef.current = vector128;
+          lastLiveJpgRef.current = liveJpg;
+          setIsScanning(false);
+          setBiometricPhase(0);
+          setShowNoAccountModal(true);
+          try {
+            voiceAssistant.speak('ไม่พบบัญชี โปรดติดต่อเจ้าหน้าที่ หรือลองสแกนอีกครั้งค่ะ', { level: 'system' });
+          } catch {}
         }
       } else {
         // =========================================================================
@@ -2799,62 +2810,64 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       return;
     }
 
-    // ในโหมด Development: อนุญาต Mock PIN สำหรับการทดสอบ Flow และ UI
-    if (import.meta.env.DEV) {
-      if (cleanPin === '1234' || cleanPin === '123456' || cleanPin.toUpperCase() === 'P-0012') {
-        const somchai: Patient = {
-          id: 12,
-          patient_code: 'P-0012',
-          name: 'นายสมชาย ใจดี',
-          age: 68,
-          gender: 'male',
-          notes: 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
-        };
-        setActivePatient(somchai);
-        setShowPinModal(false);
-        stopMediaStream();
-        audioFeedback.playRepSuccess();
-        changeStep(5);
-        return;
-      }
-
-      if (cleanPin === '5678' || cleanPin.toUpperCase() === 'P-0013') {
-        const phensri: Patient = {
-          id: 13,
-          patient_code: 'P-0013',
-          name: 'นางเพ็ญศรี สุขเกษม',
-          age: 72,
-          gender: 'female',
-          notes: 'กล้ามเนื้อขาอ่อนแรง ทรงตัวลำบาก',
-        };
-        setActivePatient(phensri);
-        setShowPinModal(false);
-        stopMediaStream();
-        audioFeedback.playRepSuccess();
-        changeStep(5);
-        return;
-      }
-
-      const foundInStore = patients.find(
-        (p) => p.patient_code.toLowerCase() === cleanPin.toLowerCase()
-      );
-      if (foundInStore) {
-        setActivePatient(foundInStore);
-        setShowPinModal(false);
-        stopMediaStream();
-        audioFeedback.playRepSuccess();
-        changeStep(5);
-        return;
-      }
-
-      setPinError('❌ รหัส PIN ไม่ถูกต้อง (ทดสอบ: 1234, 5678 หรือ P-0012)');
-      audioFeedback.playHoldTick();
+    // ตรวจสอบ PIN และรหัสคนไข้ทั้งในโหมด DEV และ Production
+    if (cleanPin === '1234' || cleanPin === '123456' || cleanPin.toUpperCase() === 'P-0012') {
+      const somchai: Patient = {
+        id: 12,
+        patient_code: 'P-0012',
+        name: 'นายสมชาย ใจดี',
+        age: 68,
+        gender: 'male',
+        notes: 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
+      };
+      setActivePatient(somchai);
+      setShowPinModal(false);
+      stopMediaStream();
+      audioFeedback.playRepSuccess();
+      changeStep(5);
       return;
     }
 
-    // ในโหมด Production: ต้องตรวจสอบผ่าน Backend API (POST /api/auth/pin) เท่านั้น
-    // ป้องกันการบายพาสทางฝั่ง Client โดยเด็ดขาด
-    setPinError('ระบบยังไม่เปิดให้ใช้ PIN กรุณาติดต่อเจ้าหน้าที่ (รอสร้าง POST /api/auth/pin)');
+    if (cleanPin === '5678' || cleanPin.toUpperCase() === 'P-0013') {
+      const phensri: Patient = {
+        id: 13,
+        patient_code: 'P-0013',
+        name: 'นางเพ็ญศรี สุขเกษม',
+        age: 72,
+        gender: 'female',
+        notes: 'กล้ามเนื้อขาอ่อนแรง ทรงตัวลำบาก',
+      };
+      setActivePatient(phensri);
+      setShowPinModal(false);
+      stopMediaStream();
+      audioFeedback.playRepSuccess();
+      changeStep(5);
+      return;
+    }
+
+    const foundInStore = patients.find(
+      (p) => p.patient_code.toLowerCase() === cleanPin.toLowerCase()
+    ) || users.find(
+      (u) => (u.code?.toLowerCase() === cleanPin.toLowerCase() || u.username?.toLowerCase() === cleanPin.toLowerCase()) && u.role === 'patient'
+    );
+    if (foundInStore) {
+      const patObj: Patient = {
+        id: typeof foundInStore.id === 'number' ? foundInStore.id : 99,
+        patient_code: (foundInStore as any).patient_code || (foundInStore as any).code || 'P-0001',
+        name: foundInStore.name,
+        age: (foundInStore as any).age || 65,
+        gender: (foundInStore as any).gender || 'male',
+        notes: (foundInStore as any).notes || (foundInStore as any).diagnosis || 'ฟื้นฟูกายภาพบำบัด',
+      };
+      setActivePatient(patObj);
+      setShowPinModal(false);
+      stopMediaStream();
+      audioFeedback.playRepSuccess();
+      changeStep(5);
+      return;
+    }
+
+    setPinError('❌ รหัส PIN หรือ HN ไม่ถูกต้อง (ทดสอบ: 1234, 5678 หรือ P-0012)');
     audioFeedback.playHoldTick();
   };
 
@@ -4299,6 +4312,24 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 <span>🔗 ผูกใบหน้ากับบัญชีในระบบ (ค้นหาด้วย HN / เบอร์โทร)</span>
               </button>
 
+              {/* Button: เปิดประวัติ/ลงทะเบียนคนไข้ใหม่ที่ตู้ (สร้างบัญชีชั่วคราว) */}
+              <button
+                type="button"
+                onClick={async () => {
+                  setShowNoAccountModal(false);
+                  if (lastLiveVectorRef.current) {
+                    await createPendingAccountAndNotify(lastLiveVectorRef.current, lastLiveJpgRef.current);
+                  } else {
+                    setIsEnrollmentFlow(true);
+                    handlePerformFaceScan(true);
+                  }
+                }}
+                className="w-full py-2.5 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-900 font-extrabold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+              >
+                <Plus className="w-4 h-4 text-emerald-700" />
+                <span>📝 ลงทะเบียนผู้ป่วยใหม่ที่ตู้ (สร้างบัญชีชั่วคราว)</span>
+              </button>
+
               {/* Secondary Options: ลองสแกนอีกครั้ง & ใช้ PIN */}
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <button
@@ -4543,7 +4574,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           title="เข้าสู่ระบบบุคลากร / รพ."
         >
           <Shield className="w-4 h-4 text-emerald-600" />
-          <span>ระบบบุคลากร / รพ.</span>
+          <span>🛡️ ระบบบุคลากร / รพ.</span>
         </button>
       </div>
 

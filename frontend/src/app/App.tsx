@@ -430,7 +430,7 @@ export const App: React.FC = () => {
             title="ระบบบุคลากรและโรงพยาบาล (ผอรพ / นักกายภาพ)"
           >
             <Shield className="w-3.5 h-3.5" />
-            <span>🏥 ระบบบุคลากร & รพ.</span>
+            <span>🛡️ ระบบบุคลากร / รพ.</span>
           </button>
         </nav>
       )}
