@@ -1,5 +1,5 @@
 export interface MiniGameSettings {
-  questionCount: 5 | 10 | 15;
+  questionCount: number; // e.g. 5, 10, 15, 20
   soundEnabled: boolean;
   inputMode: 'camera' | 'touch';
   holdDurationSec: number; // 0.6, 0.8, 1.0
@@ -21,7 +21,7 @@ export function getSavedMiniGameSettings(): MiniGameSettings {
     if (!raw) return DEFAULT_MINI_GAME_SETTINGS;
     const parsed = JSON.parse(raw);
     return {
-      questionCount: [5, 10, 15].includes(parsed.questionCount) ? parsed.questionCount : 10,
+      questionCount: typeof parsed.questionCount === 'number' && parsed.questionCount > 0 ? parsed.questionCount : 10,
       soundEnabled: typeof parsed.soundEnabled === 'boolean' ? parsed.soundEnabled : true,
       inputMode: parsed.inputMode === 'touch' ? 'touch' : 'camera',
       holdDurationSec: typeof parsed.holdDurationSec === 'number' ? parsed.holdDurationSec : 0.7,

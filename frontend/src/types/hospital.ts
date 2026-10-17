@@ -159,6 +159,7 @@ export interface TreatmentPlan {
   roomStation?: string;     // ห้อง/ตู้ฝึก เช่น 'ตู้ Kiosk 1'
   includeMinigame?: boolean; // รวมมินิเกมฝึกสมองและการตอบสนอง (Interactive Quiz) ในคอร์สประจำวัน
   include_minigame?: boolean; // snake_case compatibility alias
+  minigameQuestionCount?: number; // จำนวนคำถามมินิเกมฝึกสมอง เช่น 20 ข้อ
 }
 
 export interface ActivityLog {
