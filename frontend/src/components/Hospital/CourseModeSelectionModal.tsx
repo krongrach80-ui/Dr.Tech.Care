@@ -76,7 +76,7 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
   const [courseNotes, setCourseNotes] = useState<string>('คอร์สกายภาพบำบัดฟื้นฟูต่อเนื่อง');
 
   // Step 2 Form States
-  const [startDateStr, setStartDateStr] = useState<string>(dateStr || '2026-10-16');
+  const [startDateStr, setStartDateStr] = useState<string>(() => dateStr || '2026-10-16');
   const [targetSessionCount, setTargetSessionCount] = useState<number>(10);
   const [isCustomCount, setIsCustomCount] = useState<boolean>(false);
   const [customCountInput, setCustomCountInput] = useState<string>('10');
@@ -84,10 +84,26 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
   // Calendar View: 'month' | 'week'
   const [calendarView, setCalendarView] = useState<'month' | 'week'>('month');
 
+  // Safe date parser supporting YYYY-MM-DD, DD/MM/YYYY, etc.
+  const parseDateSafe = (val: string): { year: number; month: number; day: number } => {
+    if (!val) return { year: 2026, month: 9, day: 16 };
+    if (val.includes('/')) {
+      const parts = val.split('/').map(Number);
+      if (parts.length === 3) {
+        return { year: parts[2], month: parts[1] - 1, day: parts[0] };
+      }
+    }
+    const parts = val.split('-').map(Number);
+    if (parts.length === 3) {
+      return { year: parts[0], month: parts[1] - 1, day: parts[2] };
+    }
+    return { year: 2026, month: 9, day: 16 };
+  };
+
   // Current viewing month (e.g. October 2026)
   const [viewDate, setViewDate] = useState<Date>(() => {
-    const d = new Date(dateStr || '2026-10-16');
-    return isNaN(d.getTime()) ? new Date(2026, 9, 1) : new Date(d.getFullYear(), d.getMonth(), 1);
+    const { year, month } = parseDateSafe(dateStr || '2026-10-16');
+    return new Date(year, month, 1);
   });
 
   // Selected appointments date strings: YYYY-MM-DD
@@ -98,10 +114,8 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
     if (isOpen) {
       const initialDate = dateStr || '2026-10-16';
       setStartDateStr(initialDate);
-      const d = new Date(initialDate);
-      if (!isNaN(d.getTime())) {
-        setViewDate(new Date(d.getFullYear(), d.getMonth(), 1));
-      }
+      const { year, month } = parseDateSafe(initialDate);
+      setViewDate(new Date(year, month, 1));
       setStep(2); // Open directly on Step 2 as requested, with back button available
     }
   }, [isOpen, dateStr]);
@@ -111,11 +125,17 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
     return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   };
 
+  // Format date for display input e.g. "16/10/2026"
+  const formatDisplayDate = (isoOrSlash: string) => {
+    const { year, month, day } = parseDateSafe(isoOrSlash);
+    return `${String(day).padStart(2, '0')}/${String(month + 1).padStart(2, '0')}/${year}`;
+  };
+
   // Generate recurring appointments starting from startDateStr (Defaulting to Mon & Fri or Mon, Wed, Fri)
   const generateRecurringDates = (startDateIso: string, count: number): string[] => {
     const dates: string[] = [];
-    const [y, m, d] = startDateIso.split('-').map(Number);
-    const curr = new Date(y, m - 1, d);
+    const { year, month, day } = parseDateSafe(startDateIso);
+    const curr = new Date(year, month, day);
 
     // If start date is valid, add it as Session #1
     dates.push(formatIso(curr.getFullYear(), curr.getMonth(), curr.getDate()));
@@ -123,7 +143,9 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
     // Generate subsequent sessions on Mondays (1) and Fridays (5)
     // to strictly match the pattern in the screenshot (16 Fri, 19 Mon, 23 Fri, 26 Mon, 30 Fri, 2 Nov Mon, ...)
     let nextDate = new Date(curr);
-    while (dates.length < count) {
+    let loopGuard = 0;
+    while (dates.length < count && loopGuard < 120) {
+      loopGuard++;
       nextDate.setDate(nextDate.getDate() + 1);
       const dayOfWeek = nextDate.getDay(); // 0 = Sun, 1 = Mon, 5 = Fri
       if (dayOfWeek === 1 || dayOfWeek === 5) {
@@ -146,10 +168,10 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
 
   // Toggle date selection manually by clicking a date on the calendar
   const handleToggleDate = (dateIso: string) => {
-    const [y, m, d] = dateIso.split('-').map(Number);
-    const clickedDate = new Date(y, m - 1, d);
-    const [startY, startM, startD] = startDateStr.split('-').map(Number);
-    const startDateObj = new Date(startY, startM - 1, startD);
+    const { year, month, day } = parseDateSafe(dateIso);
+    const clickedDate = new Date(year, month, day);
+    const startParsed = parseDateSafe(startDateStr);
+    const startDateObj = new Date(startParsed.year, startParsed.month, startParsed.day);
 
     // Cannot select past days prior to course start date
     if (clickedDate < startDateObj) return;
@@ -178,11 +200,11 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
   // Format short Thai date for bottom chips, e.g. "ศ. 16 ต.ค."
   const formatChipDate = (isoStr: string) => {
     try {
-      const [y, m, d] = isoStr.split('-').map(Number);
-      const dateObj = new Date(y, m - 1, d);
+      const { year, month, day } = parseDateSafe(isoStr);
+      const dateObj = new Date(year, month, day);
       const dayName = THAI_SHORT_DAYS[dateObj.getDay()];
-      const monthName = THAI_SHORT_MONTHS[m - 1];
-      return `${dayName} ${d} ${monthName}`;
+      const monthName = THAI_SHORT_MONTHS[month];
+      return `${dayName} ${day} ${monthName}`;
     } catch {
       return isoStr;
     }
@@ -191,8 +213,8 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
   // Format full Thai date, e.g. "16/11/2569"
   const formatEndCourseDate = (isoStr: string) => {
     try {
-      const [y, m, d] = isoStr.split('-').map(Number);
-      return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y + 543}`;
+      const { year, month, day } = parseDateSafe(isoStr);
+      return `${String(day).padStart(2, '0')}/${String(month + 1).padStart(2, '0')}/${year + 543}`;
     } catch {
       return isoStr;
     }
@@ -200,23 +222,26 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
 
   const endDateStr = selectedDates.length > 0 ? selectedDates[selectedDates.length - 1] : startDateStr;
 
+  // Safe view date guarantee
+  const safeViewDate = isNaN(viewDate.getTime()) ? new Date(2026, 9, 1) : viewDate;
+
   // Count how many selected dates fall in the month after viewDate
-  const nextMonthYear = viewDate.getMonth() === 11 ? viewDate.getFullYear() + 1 : viewDate.getFullYear();
-  const nextMonthIndex = (viewDate.getMonth() + 1) % 12;
+  const nextMonthYear = safeViewDate.getMonth() === 11 ? safeViewDate.getFullYear() + 1 : safeViewDate.getFullYear();
+  const nextMonthIndex = (safeViewDate.getMonth() + 1) % 12;
   const nextMonthDatesCount = selectedDates.filter((iso) => {
-    const [y, m] = iso.split('-').map(Number);
-    return y === nextMonthYear && m - 1 === nextMonthIndex;
+    const { year, month } = parseDateSafe(iso);
+    return year === nextMonthYear && month === nextMonthIndex;
   }).length;
 
-  const currentYearBe = viewDate.getFullYear() + 543;
-  const currentMonthName = THAI_MONTH_NAMES[viewDate.getMonth()];
-  const nextMonthShortName = THAI_SHORT_MONTHS[nextMonthIndex];
+  const currentYearBe = safeViewDate.getFullYear() + 543;
+  const currentMonthName = THAI_MONTH_NAMES[safeViewDate.getMonth()] || 'ตุลาคม';
+  const nextMonthShortName = THAI_SHORT_MONTHS[nextMonthIndex] || 'พ.ย.';
 
   // Calendar matrix calculation for Month View (Monday = col 0 ... Sunday = col 6)
-  const daysInMonth = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 0).getDate();
-  const firstDayOfMonth = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1).getDay();
+  const daysInMonth = new Date(safeViewDate.getFullYear(), safeViewDate.getMonth() + 1, 0).getDate() || 31;
+  const firstDayOfMonth = new Date(safeViewDate.getFullYear(), safeViewDate.getMonth(), 1).getDay();
   // In Thai calendar: Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
-  const startColOffset = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
+  const startColOffset = isNaN(firstDayOfMonth) ? 3 : (firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1);
 
   // Handle preset clicks (5, 8, 10, 12)
   const handleSelectPreset = (count: number) => {
@@ -429,22 +454,32 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
                   <label className="block text-xs font-bold text-slate-700 mb-1.5">
                     1. วันเริ่มต้นคอร์ส
                   </label>
-                  <div className="relative">
+                  <div className="relative flex items-center">
                     <input
+                      type="text"
+                      readOnly
+                      value={formatDisplayDate(startDateStr)}
+                      onClick={() => {
+                        const inputEl = document.getElementById('course-start-date-hidden-picker') as HTMLInputElement;
+                        inputEl?.showPicker?.();
+                      }}
+                      className="w-full px-3.5 py-2.5 rounded-2xl border border-slate-200 text-xs sm:text-sm font-bold text-[#0B2B2B] bg-white focus:outline-none focus:ring-2 focus:ring-[#00C49F] shadow-2xs cursor-pointer pr-10"
+                    />
+                    <input
+                      id="course-start-date-hidden-picker"
                       type="date"
                       value={startDateStr}
                       onChange={(e) => {
                         const val = e.target.value;
                         if (val) {
                           setStartDateStr(val);
-                          const d = new Date(val);
-                          if (!isNaN(d.getTime())) {
-                            setViewDate(new Date(d.getFullYear(), d.getMonth(), 1));
-                          }
+                          const { year, month } = parseDateSafe(val);
+                          setViewDate(new Date(year, month, 1));
                         }
                       }}
-                      className="w-full px-3.5 py-2.5 rounded-2xl border border-slate-200 text-xs sm:text-sm font-bold text-[#0B2B2B] bg-white focus:outline-none focus:ring-2 focus:ring-[#00C49F] shadow-2xs"
+                      className="absolute right-3 opacity-0 w-6 h-6 cursor-pointer"
                     />
+                    <Calendar className="w-4 h-4 text-slate-400 absolute right-3.5 pointer-events-none" />
                   </div>
                 </div>
 
@@ -638,12 +673,12 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
                   </button>
                 </div>
 
-                {/* Day-of-week header columns with colored dots */}
-                <div className="grid grid-cols-7 gap-1 text-center border-b border-slate-100 pb-2">
+                {/* Day-of-week header columns with colored dots (styled as soft capsule pills matching screenshot) */}
+                <div className="grid grid-cols-7 gap-1 sm:gap-1.5 text-center pb-2">
                   {THAI_DAY_DOTS.map((d) => (
                     <div
                       key={d.name}
-                      className="flex items-center justify-center gap-1 text-xs font-extrabold text-slate-700"
+                      className="py-1 px-1 rounded-full bg-[#E0F2F1] text-[#00695C] text-xs font-black flex items-center justify-center gap-1 shadow-2xs"
                     >
                       <span
                         className="w-1.5 h-1.5 rounded-full inline-block flex-shrink-0"
@@ -656,7 +691,7 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
 
                 {/* Calendar Days Matrix */}
                 {calendarView === 'month' ? (
-                  <div className="grid grid-cols-7 gap-1.5 sm:gap-2 text-center py-1">
+                  <div className="grid grid-cols-7 gap-1.5 sm:gap-2 text-center py-1 min-h-[220px]">
                     {/* Preceding blank days */}
                     {Array.from({ length: startColOffset }).map((_, i) => (
                       <div key={`blank-${i}`} className="h-9 sm:h-10" />
@@ -665,15 +700,15 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
                     {/* Month Days (1..daysInMonth) */}
                     {Array.from({ length: daysInMonth }).map((_, i) => {
                       const dayNum = i + 1;
-                      const dayIso = formatIso(viewDate.getFullYear(), viewDate.getMonth(), dayNum);
+                      const dayIso = formatIso(safeViewDate.getFullYear(), safeViewDate.getMonth(), dayNum);
                       const isSelected = selectedDates.includes(dayIso);
                       const isStart = dayIso === startDateStr;
 
                       // Check if day is prior to startDateStr
-                      const [sY, sM, sD] = startDateStr.split('-').map(Number);
-                      const startObj = new Date(sY, sM - 1, sD);
-                      const thisDayObj = new Date(viewDate.getFullYear(), viewDate.getMonth(), dayNum);
-                      const isPrior = thisDayObj < startObj;
+                      const startObj = parseDateSafe(startDateStr);
+                      const startCompare = new Date(startObj.year, startObj.month, startObj.day);
+                      const thisDayObj = new Date(safeViewDate.getFullYear(), safeViewDate.getMonth(), dayNum);
+                      const isPrior = thisDayObj < startCompare;
 
                       return (
                         <button
@@ -702,7 +737,7 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
                     {Array.from({ length: 7 }).map((_, i) => {
                       // Show current week dates
                       const dayNum = Math.min(daysInMonth, (i + 16));
-                      const dayIso = formatIso(viewDate.getFullYear(), viewDate.getMonth(), dayNum);
+                      const dayIso = formatIso(safeViewDate.getFullYear(), safeViewDate.getMonth(), dayNum);
                       const isSelected = selectedDates.includes(dayIso);
                       return (
                         <div
