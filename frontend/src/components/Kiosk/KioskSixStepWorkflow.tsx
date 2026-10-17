@@ -1264,29 +1264,38 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   };
 
   // 3. Step 1: Automatic Face Presence (3s Hold) + Prolonged No-Face Inquiry Loop
+  // Optimized for 60 FPS buttery smoothness, 100% accurate time-synced countdown, and zero lag.
   useEffect(() => {
     if (currentStep !== 1 || !isActive || isAutoDetectionPaused) {
       setPresenceProgress(0);
       setIsPersonDetected(false);
       setFaceCountdownSeconds(3);
+      setBothHandsProgress(0);
+      setIsBothHandsDetected(false);
       return;
     }
 
     let cancelled = false;
     let rafId: number | null = null;
-    let lastTime = performance.now();
-    let faceHoldMs = 0;
-    let bothHandsHoldMs = 0;
+    let lastFrameTime = performance.now();
+    let lastDetectTime = 0;
+    let lastFaceSeenTime = 0;
+    let lastHandsSeenTime = 0;
+    let faceStartTime: number | null = null;
+    let bothHandsStartTime: number | null = null;
     let noFaceIdleMs = 0;
     let modalRightHoldMs = 0;
     let modalLeftHoldMs = 0;
     let lastAudioTickSec = -1;
+    let lastRenderedProg = -1;
+    let lastRenderedSec = -1;
+    let lastProgressUpdateMs = 0;
 
     const loop = () => {
       if (cancelled || !isActive || isAutoDetectionPaused) return;
       const now = performance.now();
-      const delta = Math.min(200, now - lastTime);
-      lastTime = now;
+      const delta = Math.min(200, now - lastFrameTime);
+      lastFrameTime = now;
 
       const video = videoRef.current;
       if (video && video.readyState >= 2 && !video.paused) {
@@ -1413,75 +1422,80 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               }
             }
           } else {
-            // หน้าแรกปกติ: ตรวจจับใบหน้าอัตโนมัติด้วย MediaPipe FaceLandmarker / Pose (ใช้เฟรมที่หมุนถูกต้อง)
-            const uprightVideo = cameraOrientationService.getUprightCanvas(video) || video;
-            const res = poseService.detectHolistic(uprightVideo, now, { enableFace: true, enableHands: true });
-            const lm = res?.poseLandmarks;
-            const faceLm = res?.faceLandmarks;
+            // หน้าแรกปกติ: ตรวจจับใบหน้าอัตโนมัติ (Throttled AI Detection เพื่อความลื่นไหลระดับ 60 FPS ป้องกัน UI กระตุก)
+            const AI_DETECT_INTERVAL_MS = 100; // ตรวจจับทุก ~100ms (10 FPS) เพียงพอต่อการตอบสนองทันใจ และไม่กิน CPU
+            if (now - lastDetectTime >= AI_DETECT_INTERVAL_MS) {
+              lastDetectTime = now;
+              const uprightVideo = cameraOrientationService.getUprightCanvas(video) || video;
+              // ปิด enableHands: false เนื่องจากตรวจท่าทางยก 2 มือด้วย PoseLandmarks ข้อศอก-ข้อมืออยู่แล้ว ประหยัดภาระ GPU/CPU มหาศาล
+              const res = poseService.detectHolistic(uprightVideo, now, { enableFace: true, enableHands: false });
+              const lm = res?.poseLandmarks;
+              const faceLm = res?.faceLandmarks;
 
-            // Gesture Control: ตรวจจับยก 2 มือขึ้น ("คุณพร้อมจะกายภาพรึยัง? ยก 2 มือขึ้นเพื่อเริ่ม")
-            let bothHandsRaised = false;
-            if (lm) {
-              const leftShoulder = lm[11];
-              const leftWrist = lm[15];
-              const rightShoulder = lm[12];
-              const rightWrist = lm[16];
+              // ตรวจจับท่าทางยก 2 มือขึ้น ("คุณพร้อมจะกายภาพรึยัง? ยก 2 มือขึ้นเพื่อเริ่ม")
+              let bothHandsRaised = false;
+              if (lm) {
+                const leftShoulder = lm[11];
+                const leftWrist = lm[15];
+                const rightShoulder = lm[12];
+                const rightWrist = lm[16];
 
-              const isRightRaised = Boolean(rightWrist && rightShoulder && rightWrist.y < (rightShoulder.y - 0.05));
-              const isLeftRaised = Boolean(leftWrist && leftShoulder && leftWrist.y < (leftShoulder.y - 0.05));
-              bothHandsRaised = isRightRaised && isLeftRaised;
-            }
-
-            if (bothHandsRaised) {
-              bothHandsHoldMs += delta;
-              setIsBothHandsDetected(true);
-              const prog = Math.min(100, Math.round((bothHandsHoldMs / 1200) * 100));
-              setBothHandsProgress(prog);
-
-              if (bothHandsHoldMs >= 1200) {
-                bothHandsHoldMs = 0;
-                setIsBothHandsDetected(false);
-                setBothHandsProgress(100);
-                audioFeedback.playRepSuccess();
-                try {
-                  voiceAssistant.speak('ตรวจพบการยกสองมือ พร้อมเข้าสู่ขั้นตอนสแกนใบหน้าค่ะ', { level: 'system' });
-                } catch {}
-                triggerSlideUp(4);
-                return;
+                const isRightRaised = Boolean(rightWrist && rightShoulder && rightWrist.y < (rightShoulder.y - 0.05));
+                const isLeftRaised = Boolean(leftWrist && leftShoulder && leftWrist.y < (leftShoulder.y - 0.05));
+                bothHandsRaised = isRightRaised && isLeftRaised;
               }
-            } else {
-              if (bothHandsHoldMs > 0) {
-                bothHandsHoldMs = Math.max(0, bothHandsHoldMs - delta * 2);
-                setBothHandsProgress(Math.round((bothHandsHoldMs / 1200) * 100));
-                if (bothHandsHoldMs === 0) setIsBothHandsDetected(false);
+              if (bothHandsRaised) {
+                lastHandsSeenTime = now;
+              }
+
+              // ตรวจจับใบหน้ามนุษย์ (ทั้งจาก FaceLandmarker และ Pose landmarks จมูก-ดวงตา)
+              const isFaceVisible = Boolean(
+                (faceLm && faceLm.length > 0) ||
+                (lm && lm[0] && (lm[0].visibility === undefined || lm[0].visibility > 0.4) &&
+                 lm[2] && (lm[2].visibility === undefined || lm[2].visibility > 0.3) &&
+                 lm[5] && (lm[5].visibility === undefined || lm[5].visibility > 0.3))
+              );
+
+              if (isFaceVisible) {
+                lastFaceSeenTime = now;
               }
             }
 
-            const isFaceVisible = Boolean(
-              (faceLm && faceLm.length > 0) ||
-              (lm && lm[0] && (lm[0].visibility === undefined || lm[0].visibility > 0.4) &&
-               lm[2] && (lm[2].visibility === undefined || lm[2].visibility > 0.3) &&
-               lm[5] && (lm[5].visibility === undefined || lm[5].visibility > 0.3))
-            );
+            // --- ส่วนแอนิเมชันนับเวลาถอยหลัง 3 วินาที (รันอย่างราบรื่นด้วย timestamp แม่นยำระดับมิลลิวินาที) ---
+            const FACE_GRACE_PERIOD_MS = 280; // ป้องกันแสงสะท้อนหรือการกระพริบตาทำให้นับเวลาหลุดกะทันหัน
+            const isFaceCurrentlyActive = lastFaceSeenTime > 0 && (now - lastFaceSeenTime <= FACE_GRACE_PERIOD_MS);
 
-            if (isFaceVisible) {
-              faceHoldMs += delta;
+            if (isFaceCurrentlyActive) {
+              if (faceStartTime === null) {
+                faceStartTime = now;
+                setIsPersonDetected(true);
+              }
+
               noFaceIdleMs = 0;
-              setIsPersonDetected(true);
+              const elapsed = Math.min(3000, now - faceStartTime);
+              const prog = Math.min(100, Math.round((elapsed / 3000) * 100));
+              const sec = Math.max(1, Math.ceil((3000 - elapsed) / 1000));
 
-              const prog = Math.min(100, Math.round((faceHoldMs / 3000) * 100));
-              const sec = Math.max(1, Math.ceil((3000 - faceHoldMs) / 1000));
-              setPresenceProgress(prog);
-              setFaceCountdownSeconds(sec);
+              // อัปเดต React state เป็นจังหวะที่เหมาะสม (~35ms) เพื่อป้องกัน React re-render ถี่เกินความจำเป็น
+              if (prog !== lastRenderedProg && (now - lastProgressUpdateMs >= 35 || prog === 100 || prog === 0)) {
+                lastRenderedProg = prog;
+                lastProgressUpdateMs = now;
+                setPresenceProgress(prog);
+              }
+              if (sec !== lastRenderedSec) {
+                lastRenderedSec = sec;
+                setFaceCountdownSeconds(sec);
+              }
 
-              if (Math.floor(faceHoldMs / 1000) > lastAudioTickSec) {
-                lastAudioTickSec = Math.floor(faceHoldMs / 1000);
+              if (Math.floor(elapsed / 1000) > lastAudioTickSec && Math.floor(elapsed / 1000) < 3) {
+                lastAudioTickSec = Math.floor(elapsed / 1000);
                 audioFeedback.playHoldTick();
               }
 
-              // ถ้าตรวจเจอใบหน้าต่อเนื่องครบ 3 วินาที (หลอดโหลดเต็ม 100%): ให้สแกนหน้าเข้าสู่ระบบทันที
-              if (faceHoldMs >= 3000) {
-                faceHoldMs = 0;
+              // ถ้าตรวจเจอใบหน้าต่อเนื่องครบ 3 วินาที (หลอดโหลด 100% ตรงเวลาเป๊ะ): เข้าสู่ระบบทันที
+              if (elapsed >= 3000) {
+                faceStartTime = null;
+                lastFaceSeenTime = 0;
                 setIsPersonDetected(false);
                 setPresenceProgress(100);
                 audioFeedback.playRepSuccess();
@@ -1493,13 +1507,16 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 return;
               }
             } else {
-              // ถ้าคนเดินออกไปก่อนครบ 3 วินาที ให้รีเซ็ตการนับใหม่
-              if (faceHoldMs > 0) {
-                faceHoldMs = 0;
+              // ถ้าเดินออกไปเกิน grace period ให้รีเซ็ตการนับถอยหลังเป็น 0 ทันที
+              if (faceStartTime !== null) {
+                faceStartTime = null;
+                lastFaceSeenTime = 0;
                 setPresenceProgress(0);
                 setIsPersonDetected(false);
                 setFaceCountdownSeconds(3);
                 lastAudioTickSec = -1;
+                lastRenderedProg = 0;
+                lastRenderedSec = 3;
               }
 
               // ตรวจสอบกรณีไม่เจอใบหน้าเป็นเวลานาน (>= 10 วินาที)
@@ -1512,6 +1529,39 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                     voiceAssistant.speak('คุณอยู่หน้าเครื่องหรือไม่คะ? ยกแขนขวาค้างไว้ 2 วินาทีเพื่อยืนยัน หรือยกแขนซ้ายเพื่อกลับหน้าแรกค่ะ', { level: 'system' });
                   } catch {}
                 }
+              }
+            }
+
+            // แอนิเมชันตรวจจับการยก 2 มือ
+            const HANDS_GRACE_PERIOD_MS = 250;
+            const isHandsCurrentlyActive = lastHandsSeenTime > 0 && (now - lastHandsSeenTime <= HANDS_GRACE_PERIOD_MS);
+            if (isHandsCurrentlyActive) {
+              if (bothHandsStartTime === null) {
+                bothHandsStartTime = now;
+                setIsBothHandsDetected(true);
+              }
+              const elapsedHands = Math.min(1200, now - bothHandsStartTime);
+              const progHands = Math.min(100, Math.round((elapsedHands / 1200) * 100));
+              setBothHandsProgress(progHands);
+
+              if (elapsedHands >= 1200) {
+                bothHandsStartTime = null;
+                lastHandsSeenTime = 0;
+                setIsBothHandsDetected(false);
+                setBothHandsProgress(100);
+                audioFeedback.playRepSuccess();
+                try {
+                  voiceAssistant.speak('ตรวจพบการยกสองมือ พร้อมเข้าสู่ขั้นตอนสแกนใบหน้าค่ะ', { level: 'system' });
+                } catch {}
+                triggerSlideUp(4);
+                return;
+              }
+            } else {
+              if (bothHandsStartTime !== null) {
+                bothHandsStartTime = null;
+                lastHandsSeenTime = 0;
+                setIsBothHandsDetected(false);
+                setBothHandsProgress(0);
               }
             }
           }
@@ -3167,9 +3217,9 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                     </button>
                   </div>
                 </div>
-                <div className="w-full h-2.5 bg-white rounded-full overflow-hidden border border-emerald-300/80 shadow-inner">
+                <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden border border-emerald-300/80 shadow-inner">
                   <div
-                    className="h-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] transition-all duration-100 rounded-full"
+                    className="h-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] rounded-full transition-[width] duration-75 ease-linear will-change-[width]"
                     style={{ width: `${presenceProgress}%` }}
                   />
                 </div>
@@ -3205,48 +3255,73 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
             {/* กรอบตรวจจับใบหน้าตรงกลาง (Face Viewfinder Frame) พร้อมวงแหวนความคืบหน้า 3 วินาที */}
             <div className="relative group cursor-pointer my-1.5 sm:my-2 flex items-center justify-center" onClick={handleStartFaceLogin}>
-              {/* เส้นไกด์กรอบเล็งใบหน้า 4 มุม (Viewfinder Corner Accents) */}
-              <div className="absolute -inset-2.5 pointer-events-none">
+              {/* เส้นไกด์กรอบเล็งใบหน้า 4 มุม (Viewfinder Corner Accents) ลอยตามโลโก้ */}
+              <div className={`absolute -inset-2.5 pointer-events-none transform transition-all duration-700 ease-out ${
+                isSlideUpAnimating || isPersonDetected ? '-translate-y-4 sm:-translate-y-6 scale-95' : 'translate-y-0 scale-100'
+              }`}>
                 <div className={`absolute top-0 left-0 w-5 h-5 border-t-2 border-l-2 rounded-tl-lg transition-colors duration-300 ${isPersonDetected ? 'border-emerald-500' : 'border-emerald-300/60'}`} />
                 <div className={`absolute top-0 right-0 w-5 h-5 border-t-2 border-r-2 rounded-tr-lg transition-colors duration-300 ${isPersonDetected ? 'border-emerald-500' : 'border-emerald-300/60'}`} />
                 <div className={`absolute bottom-0 left-0 w-5 h-5 border-b-2 border-l-2 rounded-bl-lg transition-colors duration-300 ${isPersonDetected ? 'border-emerald-500' : 'border-emerald-300/60'}`} />
                 <div className={`absolute bottom-0 right-0 w-5 h-5 border-b-2 border-r-2 rounded-br-lg transition-colors duration-300 ${isPersonDetected ? 'border-emerald-500' : 'border-emerald-300/60'}`} />
               </div>
 
-              {/* วงแหวนโลโก้และเป้าเล็งใบหน้า (Motion sensor automatically lifts logo container to reveal camera when patient sits down) */}
+              {/* วงแหวนโลโก้และวงแหวนนับถอยหลังรอบนอก (Concentric Logo & Circular Countdown Ring) */}
               <div
-                className={`w-44 h-44 sm:w-52 sm:h-52 rounded-full border-4 shadow-xl overflow-hidden flex flex-col items-center justify-center relative transform transition-all duration-700 ease-out p-2 sm:p-3 ${
+                className={`w-44 h-44 sm:w-52 sm:h-52 relative flex items-center justify-center transform transition-all duration-700 ease-out ${
                   isSlideUpAnimating || isPersonDetected
-                    ? '-translate-y-4 sm:-translate-y-6 scale-95 border-emerald-500 bg-white shadow-emerald-500/25 ring-4 ring-emerald-300/40'
-                    : 'translate-y-0 scale-100 border-emerald-300 bg-white'
+                    ? '-translate-y-4 sm:-translate-y-6 scale-95'
+                    : 'translate-y-0 scale-100'
                 }`}
               >
-                <img
-                  src={logoImg}
-                  alt="Dr. Tech Care"
-                  className="w-full h-full object-contain select-none pointer-events-none drop-shadow-xs"
-                />
-
-                <div className="absolute inset-0 rounded-full border-2 border-emerald-100/50 pointer-events-none" />
-              </div>
-
-              {/* วงแหวนนับถอยหลังรอบนอก (Circular Progress Ring 3 วินาที) */}
-              {presenceProgress > 0 && (
-                <svg className="absolute -inset-2 w-[calc(100%+16px)] h-[calc(100%+16px)] -rotate-90 pointer-events-none z-20">
-                  <circle
-                    cx="50%"
-                    cy="50%"
-                    r="47%"
-                    fill="none"
-                    stroke="#10B981"
-                    strokeWidth="6"
-                    strokeDasharray="600"
-                    strokeDashoffset={600 - (600 * presenceProgress) / 100}
-                    strokeLinecap="round"
-                    className="filter drop-shadow-[0_0_8px_rgba(16,185,129,0.8)] transition-all duration-100"
+                {/* ตัววงแหวนโลโก้ */}
+                <div
+                  className={`w-full h-full rounded-full border-4 shadow-xl overflow-hidden flex flex-col items-center justify-center relative p-2 sm:p-3 transition-colors duration-700 ${
+                    isSlideUpAnimating || isPersonDetected
+                      ? 'border-emerald-500 bg-white shadow-emerald-500/25 ring-4 ring-emerald-300/40'
+                      : 'border-emerald-300 bg-white'
+                  }`}
+                >
+                  <img
+                    src={logoImg}
+                    alt="Dr. Tech Care"
+                    className="w-full h-full object-contain select-none pointer-events-none drop-shadow-xs"
                   />
-                </svg>
-              )}
+                  <div className="absolute inset-0 rounded-full border-2 border-emerald-100/50 pointer-events-none" />
+                </div>
+
+                {/* วงแหวนนับถอยหลัง 3 วินาที (Concentric Circular Progress Ring) หมุนล้อมรอบโลโก้อย่างสมบูรณ์แบบ เริ่มที่ 12 นาฬิกา */}
+                {presenceProgress > 0 && (
+                  <svg
+                    className="absolute -inset-2.5 w-[calc(100%+20px)] h-[calc(100%+20px)] pointer-events-none z-20"
+                    viewBox="0 0 100 100"
+                  >
+                    {/* เส้นแทร็กพื้นหลังจางๆ */}
+                    <circle
+                      cx="50"
+                      cy="50"
+                      r="47"
+                      fill="none"
+                      stroke="rgba(16, 185, 129, 0.15)"
+                      strokeWidth="3.5"
+                    />
+                    {/* หลอดโหลดเส้นรอบวงตามเข็มนาฬิกา 100% ตรงกับเปอร์เซ็นต์ */}
+                    <circle
+                      cx="50"
+                      cy="50"
+                      r="47"
+                      fill="none"
+                      stroke="#10B981"
+                      strokeWidth="3.5"
+                      strokeLinecap="round"
+                      pathLength="100"
+                      strokeDasharray="100"
+                      strokeDashoffset={Math.max(0, 100 - presenceProgress)}
+                      transform="rotate(-90 50 50)"
+                      className="filter drop-shadow-[0_0_8px_rgba(16,185,129,0.85)] transition-[stroke-dashoffset] duration-75 ease-linear will-change-[stroke-dashoffset]"
+                    />
+                  </svg>
+                )}
+              </div>
             </div>
 
             {/* Gesture Control (Raise 2 Hands): "คุณพร้อมจะกายภาพรึยัง? ยก 2 มือขึ้นเพื่อเริ่ม" */}
@@ -3263,7 +3338,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               {bothHandsProgress > 0 && (
                 <div className="w-full h-2 bg-emerald-100 rounded-full overflow-hidden mt-1.5 border border-emerald-300">
                   <div
-                    className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-100"
+                    className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-[width] duration-75 ease-linear will-change-[width]"
                     style={{ width: `${bothHandsProgress}%` }}
                   />
                 </div>
