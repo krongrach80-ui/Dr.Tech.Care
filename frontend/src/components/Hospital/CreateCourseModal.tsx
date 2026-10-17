@@ -4,8 +4,6 @@ import {
   Calendar,
   Clock,
   Monitor,
-  CheckCircle2,
-  AlertCircle,
   ArrowLeft,
   ArrowRight,
   Sparkles,
@@ -154,31 +152,6 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
       endDateStr: last ? last.dateStr : startDate,
     };
   }, [startDate, selectedDays, totalSessions]);
-
-  // Check queue conflicts
-  const conflictMessage = useMemo(() => {
-    // Check if any other patient is booked at the exact same kiosk and time slot on any of the days
-    const conflictingPlan = treatmentPlans.find(
-      (p) =>
-        p.roomStation === selectedKiosk &&
-        p.timeSlot === selectedTimeSlot &&
-        p.patientId !== patient?.id &&
-        p.status === 'active' &&
-        p.scheduleDays?.some((d) => selectedDays.includes(d))
-    );
-
-    if (conflictingPlan) {
-      return {
-        isConflict: true,
-        text: `⚠️ มีคิวของ ${conflictingPlan.patientName} (${conflictingPlan.patientCode}) ใน ${selectedKiosk} เวลา ${selectedTimeSlot} (ระบบจัดคิวต่อเนื่องได้)`,
-      };
-    }
-
-    return {
-      isConflict: false,
-      text: `✓ ตรวจสอบความพร้อมแล้ว: ไม่มีคิวนัดซ้อนทับกับ ${selectedKiosk} ในช่วงเวลา ${selectedTimeSlot} น. สามารถตัดคอสได้ทันที`,
-    };
-  }, [treatmentPlans, selectedKiosk, selectedTimeSlot, patient, selectedDays]);
 
   if (!isOpen || !patient) return null;
 
@@ -524,22 +497,6 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                   <strong className="text-emerald-700">#{idx + 1}</strong> {item.formattedTh}
                 </span>
               ))}
-            </div>
-
-            {/* Conflict Verification Box */}
-            <div
-              className={`p-2.5 rounded-2xl flex items-center gap-2 text-xs font-bold ${
-                conflictMessage.isConflict
-                  ? 'bg-amber-50 text-amber-900 border border-amber-300'
-                  : 'bg-emerald-50 text-emerald-900 border border-emerald-300'
-              }`}
-            >
-              {conflictMessage.isConflict ? (
-                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-              ) : (
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              )}
-              <span>{conflictMessage.text}</span>
             </div>
           </div>
         </div>
