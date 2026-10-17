@@ -1632,7 +1632,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   }
 
   // Sidebar Menu Items based on Role
-  // Admin: 7 items | Physiotherapist: 5 items
+  // Admin: 6 items | Physiotherapist: 4 items (ลบท่าทางกายภาพออกตามคำขอ)
   const sidebarItems: { id: TabKey; label: string; icon: React.FC<{ className?: string }>; adminOnly?: boolean }[] = [
     { id: 'users', label: '1. จัดการผู้ใช้งาน', icon: Users },
     { id: 'patients', label: '2. ข้อมูลคนไข้', icon: User },
@@ -1642,9 +1642,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       label: currentRole === 'therapist' ? '4. โต๊ะทำงาน (PT Workspace)' : '4. ข้อมูลนักกายภาพ',
       icon: Stethoscope,
     },
-    { id: 'exercises', label: '5. ท่าทางกายภาพ', icon: Dumbbell },
-    { id: 'logs', label: '6. ประวัติการใช้งาน', icon: History, adminOnly: true },
-    { id: 'settings', label: '7. ตั้งค่าระบบ', icon: Sliders, adminOnly: true },
+    { id: 'logs', label: '5. ประวัติการใช้งาน', icon: History, adminOnly: true },
+    { id: 'settings', label: '6. ตั้งค่าระบบ', icon: Sliders, adminOnly: true },
   ];
 
   const visibleSidebarItems = sidebarItems.filter((item) => {
