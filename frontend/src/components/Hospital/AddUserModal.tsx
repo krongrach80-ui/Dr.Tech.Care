@@ -191,49 +191,59 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
     return `${prefix}-${Date.now().toString().slice(-4)}`;
   };
 
+  // Session initialization guard: prevents background re-renders or therapists updates from resetting wizard back to Step 1
+  const isInitializedRef = useRef<boolean>(false);
+
   // Initialize or reset when modal opens
   useEffect(() => {
-    if (isOpen) {
-      setStep(1);
-      const initialPass = generateSecureTemporaryPassword();
-      setName('');
-      setUsername('');
-      setPassword(initialPass);
-      setConfirmPassword(initialPass);
-      setShowPassword(false);
-      setShowConfirmPassword(false);
-      setPhone('');
-      setEmail('');
-      setAge(65);
-      setGender('male');
-      setChiefComplaint('');
-      setUnderlyingDiseases('-');
-      setDrugAllergies('-');
-      setInitialAssignedPatientIds([]);
-      setBio('');
-      setSpecialty('Musculoskeletal (ระบบกระดูกและกล้ามเนื้อ)');
-      setLicenseNumber(`กภ. ${Math.floor(1000 + Math.random() * 9000)}`);
-      setAdmissionDate(new Date().toISOString().split('T')[0]);
-      setErrors({});
-      setIsSubmitting(false);
-      setCapturedShots([]);
-      setProfilePhotoUrl(null);
-      setCreatedSummary(null);
-      setCameraError(null);
-
-      const targetRole: UserRole = currentRole === 'therapist' ? 'patient' : 'patient';
-      setRole(targetRole);
-      setCustomCode(generateUniqueCode(targetRole));
-
-      if (currentRole === 'therapist') {
-        setAssignedTherapistId(currentUserId);
-      } else {
-        if (therapists.length > 0) {
-          setAssignedTherapistId(therapists[0].id);
-        }
-      }
-    } else {
+    if (!isOpen) {
+      isInitializedRef.current = false;
       stopCamera();
+      return;
+    }
+
+    if (isInitializedRef.current) {
+      return;
+    }
+    isInitializedRef.current = true;
+
+    setStep(1);
+    const initialPass = generateSecureTemporaryPassword();
+    setName('');
+    setUsername('');
+    setPassword(initialPass);
+    setConfirmPassword(initialPass);
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+    setPhone('');
+    setEmail('');
+    setAge(65);
+    setGender('male');
+    setChiefComplaint('');
+    setUnderlyingDiseases('-');
+    setDrugAllergies('-');
+    setInitialAssignedPatientIds([]);
+    setBio('');
+    setSpecialty('Musculoskeletal (ระบบกระดูกและกล้ามเนื้อ)');
+    setLicenseNumber(`กภ. ${Math.floor(1000 + Math.random() * 9000)}`);
+    setAdmissionDate(new Date().toISOString().split('T')[0]);
+    setErrors({});
+    setIsSubmitting(false);
+    setCapturedShots([]);
+    setProfilePhotoUrl(null);
+    setCreatedSummary(null);
+    setCameraError(null);
+
+    const targetRole: UserRole = currentRole === 'therapist' ? 'patient' : 'patient';
+    setRole(targetRole);
+    setCustomCode(generateUniqueCode(targetRole));
+
+    if (currentRole === 'therapist') {
+      setAssignedTherapistId(currentUserId);
+    } else {
+      if (therapists.length > 0) {
+        setAssignedTherapistId(therapists[0].id);
+      }
     }
   }, [isOpen, currentRole, currentUserId, therapists]);
 

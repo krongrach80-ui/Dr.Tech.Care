@@ -74,21 +74,31 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
   const [createdPatientData, setCreatedPatientData] = useState<any>(null);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
 
+  // Session initialization guard: prevents background re-renders or users array updates from resetting wizard back to Step 1
+  const isInitializedRef = useRef<boolean>(false);
+
   // Reset form when modal opens
   useEffect(() => {
-    if (isOpen) {
-      setStep(1);
-      const nextNum = users.filter((u) => u.role === 'patient').length + 1;
-      setPatientCode(`P-${String(nextNum).padStart(4, '0')}`);
-      setFullName('');
-      setPhone('');
-      setCapturedEmbeddings({});
-      setCapturedPhoto(null);
-      setScanStage('center');
-      setFormError(null);
-    } else {
+    if (!isOpen) {
+      isInitializedRef.current = false;
       stopCamera();
+      return;
     }
+
+    if (isInitializedRef.current) {
+      return;
+    }
+    isInitializedRef.current = true;
+
+    setStep(1);
+    const nextNum = users.filter((u) => u.role === 'patient').length + 1;
+    setPatientCode(`P-${String(nextNum).padStart(4, '0')}`);
+    setFullName('');
+    setPhone('');
+    setCapturedEmbeddings({});
+    setCapturedPhoto(null);
+    setScanStage('center');
+    setFormError(null);
   }, [isOpen, users]);
 
   // Camera management

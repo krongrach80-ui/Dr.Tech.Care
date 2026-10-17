@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   X,
   Calendar,
@@ -274,107 +274,130 @@ export const EditTreatmentPlanModal: React.FC<EditTreatmentPlanModalProps> = ({
     return patientUsers.find((p) => String(p.id) === String(patientId) || p.code === patientCode);
   }, [patientUsers, patientId, patientCode]);
 
+  // Session initialization guard: prevents background re-renders or prop updates from resetting wizard back to Step 1
+  const isInitializedRef = useRef<boolean>(false);
+  const activePlanKeyRef = useRef<string | null>(null);
+
   // Initialize data on open
   useEffect(() => {
-    if (isOpen) {
-      setError(null);
-      setStep(1);
-      setPatientSearch('');
+    if (!isOpen) {
+      isInitializedRef.current = false;
+      activePlanKeyRef.current = null;
+      return;
+    }
 
-      // Check if plan has real data or is just an empty placeholder
-      const hasRealPlan = plan && plan.patientName && plan.patientName.trim().length > 0;
+    // Generate a unique session key for the plan being opened
+    const currentPlanKey = plan?.id
+      ? `id_${plan.id}`
+      : plan?.patientName
+      ? `pt_${plan.patientName}_${plan.timeSlot || ''}`
+      : 'new_plan';
 
-      if (hasRealPlan) {
-        // Editing existing plan
-        setPatientId(plan.patientId);
-        setPatientName(plan.patientName);
-        setPatientCode(plan.patientCode);
-        setTherapistId(plan.therapistId);
-        setTherapistName(plan.therapistName);
-        setDiagnosis(plan.diagnosis);
-        setTargetJoint(plan.targetJoint || 'ข้อต่อและกล้ามเนื้อทั่วไป');
-        setAssignedExercises(plan.assignedExercises || []);
-        setClinicalNotes(plan.clinicalNotes || '');
-        setStatus(plan.status || 'active');
-        setScheduleDays(plan.scheduleDays || ['จันทร์', 'พุธ', 'ศุกร์']);
-        setTimeSlot(plan.timeSlot || '09:30 - 10:30');
-        setStartTime(plan.startTime || '09:30');
-        setEndTime(plan.endTime || '10:30');
-        setStartDate(plan.startDate || '2026-10-01');
-        setEndDate(plan.endDate || '2026-10-31');
-        setRoomStation(plan.roomStation || 'ตู้ Kiosk 1');
-        setIncludeMinigame(
-          typeof plan.includeMinigame === 'boolean'
-            ? plan.includeMinigame
-            : typeof (plan as any).include_minigame === 'boolean'
-            ? (plan as any).include_minigame
-            : true
-        );
+    // If already initialized for this exact modal open session, DO NOT reset step or overwrite edits
+    if (isInitializedRef.current && activePlanKeyRef.current === currentPlanKey) {
+      return;
+    }
+
+    isInitializedRef.current = true;
+    activePlanKeyRef.current = currentPlanKey;
+
+    setError(null);
+    setStep(1);
+    setPatientSearch('');
+
+    // Check if plan has real data or is just an empty placeholder
+    const hasRealPlan = plan && plan.patientName && plan.patientName.trim().length > 0;
+
+    if (hasRealPlan) {
+      // Editing existing plan
+      setPatientId(plan.patientId);
+      setPatientName(plan.patientName);
+      setPatientCode(plan.patientCode);
+      setTherapistId(plan.therapistId);
+      setTherapistName(plan.therapistName);
+      setDiagnosis(plan.diagnosis);
+      setTargetJoint(plan.targetJoint || 'ข้อต่อและกล้ามเนื้อทั่วไป');
+      setAssignedExercises(plan.assignedExercises || []);
+      setClinicalNotes(plan.clinicalNotes || '');
+      setStatus(plan.status || 'active');
+      setScheduleDays(plan.scheduleDays || ['จันทร์', 'พุธ', 'ศุกร์']);
+      setTimeSlot(plan.timeSlot || '09:30 - 10:30');
+      setStartTime(plan.startTime || '09:30');
+      setEndTime(plan.endTime || '10:30');
+      setStartDate(plan.startDate || '2026-10-01');
+      setEndDate(plan.endDate || '2026-10-31');
+      setRoomStation(plan.roomStation || 'ตู้ Kiosk 1');
+      setIncludeMinigame(
+        typeof plan.includeMinigame === 'boolean'
+          ? plan.includeMinigame
+          : typeof (plan as any).include_minigame === 'boolean'
+          ? (plan as any).include_minigame
+          : true
+      );
+    } else {
+      // Creating new plan: pre-select first patient if available
+      const firstPt = patientUsers[0];
+      setPatientId(firstPt ? firstPt.id : '');
+      setPatientName(firstPt ? firstPt.name : '');
+      setPatientCode(firstPt ? firstPt.code : '');
+
+      // Match therapist
+      const defaultTherapist =
+        therapists.find((t) => t.id === currentUserId) ||
+        therapists[0] || { id: 1, name: currentUserName || 'กภ. ธนากร วงศ์สวัสดิ์' };
+
+      setTherapistId(defaultTherapist.id);
+      setTherapistName(defaultTherapist.name);
+      setDiagnosis(firstPt?.diagnosis || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)');
+      setTargetJoint('ข้อไหล่และกล้ามเนื้อสะบัก');
+      setAssignedExercises([
+        {
+          exerciseSlug: 'shoulder_raise',
+          exerciseName: 'กางแขนยกด้านข้าง',
+          sets: 3,
+          reps: 10,
+          holdSeconds: 3,
+          difficulty: 'beginner',
+        },
+        {
+          exerciseSlug: 'cross_body_stretch',
+          exerciseName: 'ยืดไหล่ข้ามอก',
+          sets: 3,
+          reps: 5,
+          holdSeconds: 5,
+          difficulty: 'beginner',
+        },
+      ]);
+      setClinicalNotes('ฝึกอย่างสม่ำเสมอ พักระหว่างเซ็ต 30 วินาที หากปวดเกินระดับ 3 ให้หยุดพัก');
+      setStatus('active');
+      setIncludeMinigame(true);
+
+      // Pre-fill days/times if plan had a timetable slot clicked
+      if (plan?.scheduleDays && plan.scheduleDays.length > 0) {
+        setScheduleDays(plan.scheduleDays);
       } else {
-        // Creating new plan: pre-select first patient if available
-        const firstPt = patientUsers[0];
-        setPatientId(firstPt ? firstPt.id : '');
-        setPatientName(firstPt ? firstPt.name : '');
-        setPatientCode(firstPt ? firstPt.code : '');
-
-        // Match therapist
-        const defaultTherapist =
-          therapists.find((t) => t.id === currentUserId) ||
-          therapists[0] || { id: 1, name: currentUserName || 'กภ. ธนากร วงศ์สวัสดิ์' };
-
-        setTherapistId(defaultTherapist.id);
-        setTherapistName(defaultTherapist.name);
-        setDiagnosis(firstPt?.diagnosis || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)');
-        setTargetJoint('ข้อไหล่และกล้ามเนื้อสะบัก');
-        setAssignedExercises([
-          {
-            exerciseSlug: 'shoulder_raise',
-            exerciseName: 'กางแขนยกด้านข้าง',
-            sets: 3,
-            reps: 10,
-            holdSeconds: 3,
-            difficulty: 'beginner',
-          },
-          {
-            exerciseSlug: 'cross_body_stretch',
-            exerciseName: 'ยืดไหล่ข้ามอก',
-            sets: 3,
-            reps: 5,
-            holdSeconds: 5,
-            difficulty: 'beginner',
-          },
-        ]);
-        setClinicalNotes('ฝึกอย่างสม่ำเสมอ พักระหว่างเซ็ต 30 วินาที หากปวดเกินระดับ 3 ให้หยุดพัก');
-        setStatus('active');
-        setIncludeMinigame(true);
-
-        // Pre-fill days/times if plan had a timetable slot clicked
-        if (plan?.scheduleDays && plan.scheduleDays.length > 0) {
-          setScheduleDays(plan.scheduleDays);
-        } else {
-          setScheduleDays(['จันทร์', 'พุธ', 'ศุกร์']);
-        }
-        if (plan?.timeSlot) {
-          setTimeSlot(plan.timeSlot);
-          const parts = plan.timeSlot.split(' - ');
-          if (parts[0]) setStartTime(parts[0].trim());
-          if (parts[1]) setEndTime(parts[1].trim());
-        } else {
-          setTimeSlot('09:30 - 10:30');
-          setStartTime('09:30');
-          setEndTime('10:30');
-        }
-
-        setStartDate('2026-10-01');
-        setEndDate('2026-10-31');
-        setRoomStation('ตู้ Kiosk 1');
+        setScheduleDays(['จันทร์', 'พุธ', 'ศุกร์']);
+      }
+      if (plan?.timeSlot) {
+        setTimeSlot(plan.timeSlot);
+        const parts = plan.timeSlot.split(' - ');
+        if (parts[0]) setStartTime(parts[0].trim());
+        if (parts[1]) setEndTime(parts[1].trim());
+      } else {
+        setTimeSlot('09:30 - 10:30');
+        setStartTime('09:30');
+        setEndTime('10:30');
       }
 
-      if (AVAILABLE_MINIGAMES.length > 0) {
-        setSelectedExerciseSlug(AVAILABLE_MINIGAMES[0].id);
-      } else if (exercises.length > 0) {
-        setSelectedExerciseSlug(exercises[0].svgType || exercises[0].name);
-      }
+      setStartDate('2026-10-01');
+      setEndDate('2026-10-31');
+      setRoomStation('ตู้ Kiosk 1');
+    }
+
+    if (AVAILABLE_MINIGAMES.length > 0) {
+      setSelectedExerciseSlug(AVAILABLE_MINIGAMES[0].id);
+    } else if (exercises.length > 0) {
+      setSelectedExerciseSlug(exercises[0].svgType || exercises[0].name);
     }
   }, [isOpen, plan, patientUsers, therapists, exercises, currentUserId, currentUserName]);
 
