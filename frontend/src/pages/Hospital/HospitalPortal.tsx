@@ -52,6 +52,8 @@ import {
   PackagePlus,
   Server,
   Share2,
+  Target,
+  Gamepad2,
 } from 'lucide-react';
 import { useHospitalStore } from '../../store/hospitalStore';
 import { validatePasswordStrength } from '../../services/authSecurityService';
@@ -82,9 +84,7 @@ import { SecurityControlModal } from '../../components/Hospital/SecurityControlM
 import { TemporaryCaseDelegationModal } from '../../components/Hospital/TemporaryCaseDelegationModal';
 import { EditMyProfileModal } from '../../components/Hospital/EditMyProfileModal';
 import { PatientQuickInfoModal } from '../../components/Hospital/PatientQuickInfoModal';
-import { SelectTrainingModeModal, TrainingMode } from '../../components/Hospital/SelectTrainingModeModal';
-import { CreateCourseModal } from '../../components/Hospital/CreateCourseModal';
-import { InteractivePatientCalendarView } from '../../components/Hospital/InteractivePatientCalendarView';
+import { CourseModeSelectionModal } from '../../components/Hospital/CourseModeSelectionModal';
 import { defaultDash, formatThaiDate, formatThaiDateTime } from '../../utils/dashboardUtils';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 
@@ -901,48 +901,47 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [scheduleSelectedYear, setScheduleSelectedYear] = useState<number>(2026);
   const [scheduleDayFilter, setScheduleDayFilter] = useState<string>('all');
 
-  // 4-Screen Course Schedule Workflow States
-  const [isPatientQuickInfoOpen, setIsPatientQuickInfoOpen] = useState<boolean>(false);
-  const [quickInfoPatient, setQuickInfoPatient] = useState<UserAccount | null>(null);
+  // Interactive Calendar & Quick Info Modal States (Image 1, 2, 3 UX/UI)
+  const [selectedCalendarPatient, setSelectedCalendarPatient] = useState<any>(null);
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState<number>(16);
+  const [isPatientPickerModalOpen, setIsPatientPickerModalOpen] = useState<boolean>(false);
+  const [patientPickerSearch, setPatientPickerSearch] = useState<string>('');
+  const [isQuickInfoModalOpen, setIsQuickInfoModalOpen] = useState<boolean>(false);
+  const [quickInfoPatient, setQuickInfoPatient] = useState<any>(null);
   const [quickInfoPlan, setQuickInfoPlan] = useState<TreatmentPlan | null>(null);
-
-  const [activeCalendarPatient, setActiveCalendarPatient] = useState<UserAccount | null>(null);
-
-  const [isSelectModeModalOpen, setIsSelectModeModalOpen] = useState<boolean>(false);
+  const [isCourseModeModalOpen, setIsCourseModeModalOpen] = useState<boolean>(false);
   const [selectedDateForCourse, setSelectedDateForCourse] = useState<string>('2026-10-16');
-  const [selectedDateFormattedTh, setSelectedDateFormattedTh] = useState<string>('วันศุกร์ที่ 16 ตุลาคม 2569');
 
-  const [isCreateCourseModalOpen, setIsCreateCourseModalOpen] = useState<boolean>(false);
-  const [selectedTrainingMode, setSelectedTrainingMode] = useState<TrainingMode>('minigame');
+  // Dynamic Calendar Appointments (Initial appointments matching Image 2 for October 2569)
+  const [calendarAppointments, setCalendarAppointments] = useState<Record<number, Array<{ time: string; name: string; type: 'green' | 'cyan' | 'purple' }>>>({
+    7: [
+      { time: '09:30', name: 'สมชาย', type: 'green' },
+      { time: '15:00', name: 'PJ', type: 'cyan' },
+    ],
+    14: [
+      { time: '09:30', name: 'สมชาย', type: 'green' },
+      { time: '15:00', name: 'PJ', type: 'cyan' },
+    ],
+    21: [
+      { time: '09:30', name: 'สมชาย', type: 'green' },
+      { time: '15:00', name: 'PJ', type: 'cyan' },
+    ],
+    28: [
+      { time: '09:30', name: 'สมชาย', type: 'green' },
+      { time: '15:00', name: 'PJ', type: 'cyan' },
+    ],
+  });
 
-  const handleOpenPatientQuickInfo = (patient: UserAccount, plan?: TreatmentPlan) => {
-    setQuickInfoPatient(patient);
-    setQuickInfoPlan(plan || null);
-    setIsPatientQuickInfoOpen(true);
-  };
-
-  const handleGoToCalendarFromQuickInfo = (patient: UserAccount) => {
-    setIsPatientQuickInfoOpen(false);
-    setActiveCalendarPatient(patient);
-    setScheduleViewMode('calendar');
-  };
-
-  const handleSelectDateFromCalendar = (dateStr: string, formattedTh: string) => {
-    setSelectedDateForCourse(dateStr);
-    setSelectedDateFormattedTh(formattedTh);
-    setIsSelectModeModalOpen(true);
-  };
-
-  const handleProceedToCourseConfig = (mode: TrainingMode) => {
-    setSelectedTrainingMode(mode);
-    setIsSelectModeModalOpen(false);
-    setIsCreateCourseModalOpen(true);
-  };
-
-  const handleBackToStep1 = () => {
-    setIsCreateCourseModalOpen(false);
-    setIsSelectModeModalOpen(true);
-  };
+  // Default selected calendar patient to Somchai Jaidee if available
+  useEffect(() => {
+    if (!selectedCalendarPatient && users.length > 0) {
+      const somchai = users.find((u) => u.code === 'P-0012' || u.name?.includes('สมชาย'));
+      const firstPat = somchai || users.find((u) => u.role === 'patient');
+      if (firstPat) {
+        setSelectedCalendarPatient(firstPat);
+      }
+    }
+  }, [users, selectedCalendarPatient]);
 
   // AI Clinical Approval Gate States (Human-in-the-Loop Protocol)
   interface AiRecommendationProposal {
@@ -2671,108 +2670,127 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
           {/* ================================================================== */}
           {activeTab === 'schedules' && (
             <div className="space-y-5 sm:space-y-6 animate-fadeIn">
-              {/* Header Bar */}
-              <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-                <div>
-                  <h3 className="font-black text-lg text-[#0F2F2B] flex items-center gap-2">
-                    <CalendarDays className="w-5 h-5 text-emerald-600" />
-                    <span>ตารางจัดเวลาฝึกกายภาพบำบัดคนไข้ (Rehabilitation Timetable & Schedules)</span>
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    จัดสรรเวลาฝึกเหมือนตารางเรียน กำหนดวันในสัปดาห์ เวลา คอร์สเดือน/ปี และสถานที่/ตู้ Kiosk เพื่อการฟื้นฟูอย่างมีวินัย
-                  </p>
-                </div>
+              {/* Header Bar: Dynamically adapts to Calendar Mode (Image 2) or Timetable Mode (Image 1) */}
+              {scheduleViewMode === 'calendar' ? (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fadeIn">
+                  <div>
+                    <h3 className="font-black text-xl text-[#0F2F2B]">
+                      ปฏิทินนัดหมายคนไข้ (Interactive Calendar)
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      แตะวันที่ในปฏิทินเพื่อเริ่มตัดคอร์สกายภาพให้คนไข้
+                    </p>
+                  </div>
 
-                <div className="flex items-center gap-2.5 flex-wrap">
-                  {/* View Mode Switcher: Today's Queue vs Weekly Calendar vs List vs Approvals */}
-                  <div className="flex items-center p-1 bg-white border border-emerald-200 rounded-full shadow-2xs">
+                  {/* Patient Info Card (Image 2 Top-Right) */}
+                  <div className="flex items-center gap-3 bg-white px-4 py-2.5 rounded-2xl border border-slate-200 shadow-2xs">
+                    <div className="w-10 h-10 rounded-full bg-[#0097A7] text-white flex items-center justify-center flex-shrink-0 shadow-sm">
+                      <User className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0 text-left">
+                      <div className="text-[10px] text-slate-400 font-semibold leading-tight">กำลังจัดคอร์สให้</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-sm text-slate-800 truncate">
+                          {selectedCalendarPatient?.name || 'นายสมชาย ใจดี'}
+                        </span>
+                        <span className="font-mono text-xs font-bold text-slate-400">
+                          HN: {selectedCalendarPatient?.code || selectedCalendarPatient?.patient_code || 'P-0012'}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setIsPatientPickerModalOpen(true)}
+                      className="ml-2 px-3 py-1.5 rounded-full border border-slate-200 hover:border-teal-500 text-xs font-bold text-slate-600 hover:text-teal-700 hover:bg-teal-50 transition cursor-pointer whitespace-nowrap"
+                    >
+                      เปลี่ยนคนไข้
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="font-black text-lg text-[#0F2F2B] flex items-center gap-2">
+                      <CalendarDays className="w-5 h-5 text-[#0097A7]" />
+                      <span>ตารางจัดเวลาฝึกกายภาพบำบัดคนไข้ (Rehabilitation Timetable & Schedules)</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      จัดสรรเวลาฝึกเหมือนตารางเรียน กำหนดวันในสัปดาห์ เวลา และตู้ Kiosk เพื่อการฟื้นฟูอย่างมีวินัย
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* View Switcher Bar (Matches Image 1 & 2) */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Row 1 pills */}
+                  <div className="flex items-center p-1 bg-white border border-emerald-200 rounded-full shadow-2xs flex-wrap gap-1">
                     <button
                       onClick={() => setScheduleViewMode('today')}
-                      className={`px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                         scheduleViewMode === 'today'
-                          ? 'bg-[#10B981] text-white font-extrabold shadow-xs'
+                          ? 'bg-[#0097A7] text-white font-black shadow-xs'
                           : 'text-slate-600 hover:text-emerald-800'
                       }`}
-                      title="คิวนัดหมายประจำวันนี้ (Today's Queue)"
+                      title="คิวนัดหมายประจำวันนี้"
                     >
-                      <Clock className="w-3.5 h-3.5" />
-                      <span>📌 นัดหมายวันนี้ (14 ต.ค.)</span>
+                      <span>นัดหมายวันนี้ (14 ต.ค.)</span>
                     </button>
                     <button
                       onClick={() => setScheduleViewMode('weekly')}
-                      className={`px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                         scheduleViewMode === 'weekly'
-                          ? 'bg-[#10B981] text-white font-extrabold shadow-xs'
+                          ? 'bg-[#0097A7] text-white font-black shadow-xs'
                           : 'text-slate-600 hover:text-emerald-800'
                       }`}
-                      title="มุมมองปฏิทินรายสัปดาห์ 7 วัน (Weekly Calendar)"
+                      title="มุมมองปฏิทินรายสัปดาห์ 7 วัน"
                     >
-                      <Calendar className="w-3.5 h-3.5" />
-                      <span>🗓️ มุมมองปฏิทินรายสัปดาห์</span>
+                      <span>มุมมองปฏิทินรายสัปดาห์</span>
                     </button>
                     <button
                       onClick={() => setScheduleViewMode('list')}
-                      className={`px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                         scheduleViewMode === 'list'
-                          ? 'bg-[#10B981] text-white font-extrabold shadow-xs'
+                          ? 'bg-[#0097A7] text-white font-black shadow-xs'
                           : 'text-slate-600 hover:text-emerald-800'
                       }`}
                       title="สลับเป็นมุมมองตารางรายชื่อแบบละเอียด"
                     >
-                      <List className="w-3.5 h-3.5" />
                       <span>ตารางรายชื่อ (List)</span>
                     </button>
+                  </div>
+
+                  {/* Row 2 pills */}
+                  <div className="flex items-center p-1 bg-white border border-emerald-200 rounded-full shadow-2xs flex-wrap gap-1">
                     <button
                       onClick={() => setScheduleViewMode('approvals')}
-                      className={`px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                         scheduleViewMode === 'approvals'
-                          ? 'bg-[#10B981] text-white font-extrabold shadow-xs'
+                          ? 'bg-[#0097A7] text-white font-black shadow-xs'
                           : 'text-slate-600 hover:text-emerald-800'
                       }`}
-                      title="ระบบอนุมัติคำแนะนำทางคลินิกจาก AI (Therapist Approval Gate)"
+                      title="ระบบอนุมัติคำแนะนำทางคลินิกจาก AI"
                     >
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
+                      <ShieldCheck className="w-3.5 h-3.5" />
                       <span>อนุมัติแผน AI ({aiProposals.filter((p) => p.status === 'PENDING_CLINICAL_APPROVAL').length})</span>
                     </button>
-                  </div>
-
-                  {/* Month & Year Navigator */}
-                  <div className="flex items-center gap-1.5 bg-white border border-emerald-200 px-2.5 py-1 rounded-full shadow-2xs">
                     <button
-                      onClick={() => {
-                        if (scheduleSelectedMonth === 0) {
-                          setScheduleSelectedMonth(11);
-                          setScheduleSelectedYear(scheduleSelectedYear - 1);
-                        } else {
-                          setScheduleSelectedMonth(scheduleSelectedMonth - 1);
-                        }
-                      }}
-                      className="p-1 rounded-full hover:bg-emerald-50 text-slate-600 hover:text-emerald-800 transition cursor-pointer"
-                      title="เดือนก่อนหน้า"
+                      onClick={() => setScheduleViewMode('calendar')}
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                        scheduleViewMode === 'calendar'
+                          ? 'bg-[#0097A7] text-white font-black shadow-xs'
+                          : 'text-slate-600 hover:text-teal-700'
+                      }`}
+                      title="มุมมองปฏิทินคนไข้แบบ Interactive (ตัดคอร์ส/ตั้งค่ามินิเกม)"
                     >
-                      <ChevronLeft className="w-3.5 h-3.5" />
-                    </button>
-                    <div className="font-bold text-xs text-[#0F2F2B] px-1 whitespace-nowrap flex items-center gap-1">
-                      <Calendar className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>{THAI_MONTH_NAMES[scheduleSelectedMonth]} {scheduleSelectedYear} ({scheduleSelectedYear + 543})</span>
-                    </div>
-                    <button
-                      onClick={() => {
-                        if (scheduleSelectedMonth === 11) {
-                          setScheduleSelectedMonth(0);
-                          setScheduleSelectedYear(scheduleSelectedYear + 1);
-                        } else {
-                          setScheduleSelectedMonth(scheduleSelectedMonth + 1);
-                        }
-                      }}
-                      className="p-1 rounded-full hover:bg-emerald-50 text-slate-600 hover:text-emerald-800 transition cursor-pointer"
-                      title="เดือนถัดไป"
-                    >
-                      <ChevronRight className="w-3.5 h-3.5" />
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span>ปฏิทินคนไข้ (Interactive Calendar)</span>
                     </button>
                   </div>
+                </div>
 
-                  {/* PT Filter Toggle: [My Patients], [Temporary Covered Cases], [All Patients] */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* PT Filter Toggle */}
                   {currentRole === 'therapist' && (
                     <div className="flex items-center gap-1 p-1 bg-white border border-emerald-200 rounded-full shadow-2xs">
                       <button
@@ -2796,7 +2814,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                             ? 'bg-cyan-600 text-white shadow-xs'
                             : 'text-slate-600 hover:text-cyan-800'
                         }`}
-                        title="แสดงตารางฝึกของเคสที่ได้รับมอบหมายให้ดูแลแทนชั่วคราว (ฝากเคส)"
+                        title="แสดงตารางฝึกของเคสที่ได้รับมอบหมายให้ดูแลแทนชั่วคราว"
                       >
                         <span>[เคสรับฝากชั่วคราว]</span>
                         {myCoveredPatients.length > 0 && (
@@ -2812,51 +2830,23 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                             ? 'bg-[#0F2F2B] text-emerald-300 shadow-xs'
                             : 'text-slate-600 hover:text-emerald-800'
                         }`}
-                        title="ดูตารางนัดหมายทั้งหมดในโรงพยาบาล (อ่านอย่างเดียวสำหรับเคสที่ไม่ได้ดูแล)"
+                        title="ดูตารางนัดหมายทั้งหมดในโรงพยาบาล"
                       >
                         <span>[คนไข้ทั้งหมด]</span>
                       </button>
                     </div>
                   )}
 
-                  {/* Search Input */}
-                  <div className="w-48 sm:w-56 relative">
-                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={planSearch}
-                      onChange={(e) => setPlanSearch(e.target.value)}
-                      placeholder="ค้นชื่อคนไข้, วัน, เวลา..."
-                      className="w-full pl-8 pr-3 py-1.5 rounded-full bg-white border border-emerald-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#10B981]"
-                    />
-                  </div>
-
-                  {/* Interactive Patient Calendar Trigger */}
-                  <button
-                    onClick={() => {
-                      if (!activeCalendarPatient) {
-                        const firstPat = users.find((u) => u.role === 'patient');
-                        if (firstPat) setActiveCalendarPatient(firstPat);
-                      }
-                      setScheduleViewMode('calendar');
-                    }}
-                    className="px-3.5 py-2 rounded-2xl bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-50 text-xs font-extrabold shadow-2xs transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap active:scale-95"
-                    title="เปิดปฏิทินนัดหมายคนไข้ (Interactive Calendar) หน้าจัดคอส"
-                  >
-                    <Calendar className="w-4 h-4 text-emerald-600" />
-                    <span>🗓️ ปฏิทินคนไข้ (Interactive Calendar)</span>
-                  </button>
-
-                  {/* Prominent Primary Add Plan Button */}
+                  {/* Primary Add Schedule Button (Teal style from Image 1) */}
                   <button
                     onClick={() => {
                       setSelectedPlanForEdit(null);
                       setIsTreatmentPlanModalOpen(true);
                     }}
-                    className="px-4 py-2 rounded-2xl bg-gradient-to-r from-[#10B981] to-[#059669] text-white text-xs font-extrabold shadow-md hover:shadow-lg hover:opacity-95 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap active:scale-95"
+                    className="px-4 py-2 rounded-2xl bg-gradient-to-r from-[#0097A7] to-[#00838F] text-white text-xs font-extrabold shadow-md hover:shadow-lg hover:opacity-95 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap active:scale-95"
                   >
                     <Plus className="w-4 h-4" />
-                    <span>➕ สร้างตารางฝึกใหม่ (New Schedule)</span>
+                    <span>+ สร้างตารางฝึกใหม่</span>
                   </button>
                 </div>
               </div>
@@ -3034,35 +3024,35 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                               String(u.id) === String(p.patientId) ||
                               u.code === p.patientCode ||
                               u.name === p.patientName
-                          ) || ({
-                            id: p.patientId,
-                            name: p.patientName,
-                            code: p.patientCode,
-                            role: 'patient',
-                            username: p.patientCode,
-                            status: 'active',
-                            diagnosis: p.diagnosis,
-                            chiefComplaint: p.targetJoint,
-                          } as UserAccount);
+                          );
                           const isMinigameIncluded = p.includeMinigame ?? (p as any).include_minigame ?? true;
 
                           return (
                             <div
                               key={p.id || idx}
-                              className="p-4 rounded-[26px] bg-white border border-emerald-200 hover:border-emerald-400 shadow-2xs hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-left"
+                              onClick={() => {
+                                const pat = patientUser || users.find((u) => u.code === p.patientCode || u.name === p.patientName) || {
+                                  id: p.patientId,
+                                  name: p.patientName,
+                                  code: p.patientCode,
+                                  diagnosis: p.diagnosis,
+                                  targetJoint: p.targetJoint,
+                                };
+                                setQuickInfoPatient(pat);
+                                setQuickInfoPlan(p);
+                                setIsQuickInfoModalOpen(true);
+                              }}
+                              className="p-4 rounded-2xl bg-white border border-emerald-200 hover:border-[#0097A7] shadow-2xs hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-left cursor-pointer group"
+                              title="คลิกเพื่อดูข้อมูลคนไข้ด่วน (Patient Quick Info)"
                             >
                               {/* Left: Time & Patient Info */}
                               <div className="flex items-start gap-3 min-w-0">
-                                <div
-                                  onClick={() => handleOpenPatientQuickInfo(patientUser as UserAccount, p)}
-                                  className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 font-extrabold flex items-center justify-center flex-shrink-0 text-sm cursor-pointer hover:bg-emerald-200 transition"
-                                  title="ดูข้อมูลคนไข้"
-                                >
+                                <div className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-200 text-[#0097A7] font-extrabold flex items-center justify-center flex-shrink-0 text-base shadow-2xs">
                                   {idx + 1}
                                 </div>
                                 <div className="min-w-0 space-y-1">
                                   <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="font-mono text-xs font-black text-emerald-900 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200">
+                                    <span className="font-mono text-xs font-black text-teal-900 bg-teal-50 px-2 py-0.5 rounded-lg border border-teal-200">
                                       ⏰ {p.timeSlot || '09:30 - 10:30 น.'}
                                     </span>
                                     <span className="text-[11px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-lg">
@@ -3075,24 +3065,17 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                     )}
                                   </div>
 
-                                  <div
-                                    onClick={() => handleOpenPatientQuickInfo(patientUser as UserAccount, p)}
-                                    className="flex items-center gap-2 cursor-pointer group hover:opacity-95 transition-all"
-                                    title="กดที่ชื่อคนไข้ เพื่อดูข้อมูลคนไข้และตัดคอสใหม่"
-                                  >
-                                    <h4 className="font-black text-sm text-[#0F2F2B] group-hover:text-emerald-700 underline decoration-dotted decoration-emerald-400 underline-offset-2 truncate transition">
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="font-black text-sm text-[#0F2F2B] group-hover:text-[#0097A7] transition truncate">
                                       👤 {p.patientName}
                                     </h4>
-                                    <span className="font-mono text-xs text-slate-400 font-bold group-hover:text-emerald-600 transition">
+                                    <span className="font-mono text-xs text-slate-400 font-bold">
                                       (HN: {p.patientCode})
-                                    </span>
-                                    <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 shadow-2xs group-hover:bg-emerald-100 transition">
-                                      ดูข้อมูล ℹ️
                                     </span>
                                   </div>
 
                                   <div className="text-xs text-slate-600 flex items-center gap-2 flex-wrap">
-                                    <span className="font-bold text-emerald-700">
+                                    <span className="font-bold text-teal-700">
                                       🎯 {p.diagnosis}
                                     </span>
                                     <span className="text-slate-400">•</span>
@@ -3107,34 +3090,34 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
                               {/* Right: Status Tag & Actions */}
                               <div className="flex items-center justify-end gap-2.5 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 flex-shrink-0">
-                                {/* Status Tag */}
+                                {/* Status Tag matching Image 1 */}
                                 <span
-                                  className={`px-3 py-1 rounded-full text-xs font-black whitespace-nowrap ${
+                                  className={`px-3 py-1 rounded-full text-xs font-black whitespace-nowrap flex items-center gap-1.5 ${
                                     p.status === 'completed'
                                       ? 'bg-blue-100 text-blue-800 border border-blue-200'
                                       : p.status === 'paused'
                                       ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                                      : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                                      : 'bg-emerald-50 text-emerald-800 border border-emerald-300'
                                   }`}
                                 >
-                                  {p.status === 'completed'
-                                    ? '🟢 ฝึกเสร็จแล้ว'
-                                    : p.status === 'paused'
-                                    ? '⏸️ พักการฝึก'
-                                    : '🟡 รอเข้าฝึก'}
+                                  <span className={`w-2 h-2 rounded-full ${
+                                    p.status === 'completed' ? 'bg-blue-500' : p.status === 'paused' ? 'bg-amber-500' : 'bg-emerald-500'
+                                  }`} />
+                                  <span>{p.status === 'completed' ? 'ฝึกเสร็จแล้ว' : p.status === 'paused' ? 'พักการฝึก' : 'รอเข้าฝึก'}</span>
                                 </span>
 
-                                {/* Quick Action: Start at Kiosk */}
+                                {/* Quick Action: Start at Kiosk (Image 1 teal button) */}
                                 {onLaunchKioskExercise && (
                                   <button
-                                    onClick={() => {
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       if (patientUser && onSelectPatientForKiosk)
                                         onSelectPatientForKiosk(patientUser);
                                       if (onLaunchKioskExercise) onLaunchKioskExercise();
                                       showToast(`สั่งเปิดตู้ Kiosk เริ่มฝึกตามตารางของ ${p.patientName}`);
                                       onClose();
                                     }}
-                                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm shadow-cyan-500/25 transition cursor-pointer active:scale-95"
+                                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#0097A7] to-[#00838F] hover:opacity-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm shadow-teal-500/25 transition cursor-pointer active:scale-95"
                                     title="เปิดตู้ Kiosk ให้คนไข้เข้าฝึกทันที"
                                   >
                                     <Play className="w-3.5 h-3.5 fill-white" />
@@ -3144,7 +3127,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
                                 {/* Edit Button */}
                                 <button
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setSelectedPlanForEdit(p);
                                     setIsTreatmentPlanModalOpen(true);
                                   }}
@@ -3156,7 +3140,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
                                 {/* Delete Button */}
                                 <button
-                                  onClick={() => setDeletingPlan(p)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDeletingPlan(p);
+                                  }}
                                   className="p-2 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 transition cursor-pointer"
                                   title="ลบตารางฝึกนี้"
                                 >
@@ -4027,28 +4014,215 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                 </div>
               )}
 
-              {/* VIEW 5: INTERACTIVE PATIENT CALENDAR VIEW (หน้าปฏิทินนัดหมายคนไข้ - Screen 2) */}
+              {/* ================================================================== */}
+              {/* VIEW 6: INTERACTIVE CALENDAR VIEW (Exact UI/UX from Image 2)        */}
+              {/* ================================================================== */}
               {scheduleViewMode === 'calendar' && (
-                <div className="animate-fadeIn">
-                  <InteractivePatientCalendarView
-                    currentPatient={
-                      activeCalendarPatient ||
-                      users.find((u) => u.role === 'patient') || ({
-                        id: 'P-0012',
-                        name: 'นายสมชาย ใจดี',
-                        code: 'P-0012',
-                        role: 'patient',
-                        username: 'P-0012',
-                        diagnosis: 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
-                        chiefComplaint: 'ข้อไหล่และกล้ามเนื้อสะบัก (Shoulder & Scapula)',
-                      } as UserAccount)
-                    }
-                    allPatients={users.filter((u) => u.role === 'patient')}
-                    onChangePatient={(p) => setActiveCalendarPatient(p)}
-                    onSelectDateToCreateCourse={(dateStr, formattedTh) => {
-                      handleSelectDateFromCalendar(dateStr, formattedTh);
-                    }}
-                  />
+                <div className="space-y-6 animate-fadeIn text-left">
+                  {/* Calendar Card Container matching Image 2 */}
+                  <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm p-6 sm:p-8 space-y-6">
+                    {/* Header: Month Navigator + Status Legends */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-100">
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (scheduleSelectedMonth === 0) {
+                              setScheduleSelectedMonth(11);
+                              setScheduleSelectedYear(scheduleSelectedYear - 1);
+                            } else {
+                              setScheduleSelectedMonth(scheduleSelectedMonth - 1);
+                            }
+                          }}
+                          className="w-9 h-9 rounded-full border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-600 transition cursor-pointer"
+                          title="เดือนก่อนหน้า"
+                        >
+                          <ChevronLeft className="w-5 h-5" />
+                        </button>
+
+                        <h2 className="text-xl sm:text-2xl font-black text-[#0F2F2B] tracking-tight">
+                          {THAI_MONTH_NAMES[scheduleSelectedMonth]} {scheduleSelectedYear + 543}
+                        </h2>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (scheduleSelectedMonth === 11) {
+                              setScheduleSelectedMonth(0);
+                              setScheduleSelectedYear(scheduleSelectedYear + 1);
+                            } else {
+                              setScheduleSelectedMonth(scheduleSelectedMonth + 1);
+                            }
+                          }}
+                          className="w-9 h-9 rounded-full border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-600 transition cursor-pointer"
+                          title="เดือนถัดไป"
+                        >
+                          <ChevronRight className="w-5 h-5" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setScheduleSelectedMonth(9);
+                            setScheduleSelectedYear(2026);
+                            setSelectedCalendarDay(14);
+                          }}
+                          className="px-3.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-black border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer"
+                        >
+                          วันนี้
+                        </button>
+                      </div>
+
+                      {/* Status Legends matching Image 2 */}
+                      <div className="flex items-center gap-4 flex-wrap">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#10B981]" />
+                          <span className="text-xs font-bold text-slate-600">กำลังรักษา</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B]" />
+                          <span className="text-xs font-bold text-slate-600">พักการฝึก</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#3B82F6]" />
+                          <span className="text-xs font-bold text-slate-600">สำเร็จครบโปรแกรม</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Weekday Columns Header (7 Columns) with colored dots matching Image 2 */}
+                    <div className="grid grid-cols-7 gap-2.5 sm:gap-3 text-center">
+                      <div className="flex items-center justify-center gap-1.5 text-xs font-black text-slate-700 py-1">
+                        <span className="w-2 h-2 rounded-full bg-amber-500" />
+                        <span>จ.</span>
+                      </div>
+                      <div className="flex items-center justify-center gap-1.5 text-xs font-black text-slate-700 py-1">
+                        <span className="w-2 h-2 rounded-full bg-pink-500" />
+                        <span>อ.</span>
+                      </div>
+                      <div className="flex items-center justify-center gap-1.5 text-xs font-black text-slate-700 py-1">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                        <span>พ.</span>
+                      </div>
+                      <div className="flex items-center justify-center gap-1.5 text-xs font-black text-slate-700 py-1">
+                        <span className="w-2 h-2 rounded-full bg-orange-500" />
+                        <span>พฤ.</span>
+                      </div>
+                      <div className="flex items-center justify-center gap-1.5 text-xs font-black text-slate-700 py-1">
+                        <span className="w-2 h-2 rounded-full bg-blue-500" />
+                        <span>ศ.</span>
+                      </div>
+                      <div className="flex items-center justify-center gap-1.5 text-xs font-black text-slate-700 py-1">
+                        <span className="w-2 h-2 rounded-full bg-purple-500" />
+                        <span>ส.</span>
+                      </div>
+                      <div className="flex items-center justify-center gap-1.5 text-xs font-black text-slate-700 py-1">
+                        <span className="w-2 h-2 rounded-full bg-rose-500" />
+                        <span>อา.</span>
+                      </div>
+                    </div>
+
+                    {/* 35 Calendar Cells (October 2569 / 2026) */}
+                    <div className="grid grid-cols-7 gap-2.5 sm:gap-3">
+                      {/* Leading 3 empty cells for Mon, Tue, Wed before Thu Oct 1 */}
+                      <div className="bg-slate-50/40 rounded-2xl min-h-[92px] border border-transparent" />
+                      <div className="bg-slate-50/40 rounded-2xl min-h-[92px] border border-transparent" />
+                      <div className="bg-slate-50/40 rounded-2xl min-h-[92px] border border-transparent" />
+
+                      {/* Days 1 to 31 */}
+                      {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => {
+                        const isToday = day === 14;
+                        const isSelected = day === selectedCalendarDay;
+                        const appointments = calendarAppointments[day] || [];
+
+                        return (
+                          <div
+                            key={day}
+                            onClick={() => setSelectedCalendarDay(day)}
+                            className={`rounded-2xl min-h-[92px] p-2.5 flex flex-col justify-between transition cursor-pointer select-none relative ${
+                              isSelected
+                                ? 'border-2 border-[#00A8E8] bg-white shadow-md shadow-cyan-100/80 ring-2 ring-cyan-200/50'
+                                : isToday
+                                ? 'border-2 border-emerald-500 bg-white shadow-xs'
+                                : 'bg-slate-50/60 hover:bg-slate-100/80 border border-transparent hover:border-slate-200'
+                            }`}
+                          >
+                            {/* Day Header Row */}
+                            <div className="flex items-center justify-between">
+                              <span
+                                className={`text-sm font-extrabold ${
+                                  isSelected
+                                    ? 'text-cyan-700 font-black'
+                                    : isToday
+                                    ? 'text-emerald-800 font-black'
+                                    : 'text-slate-500'
+                                }`}
+                              >
+                                {day}
+                              </span>
+
+                              {isToday && (
+                                <span className="px-2 py-0.5 rounded-full bg-[#10B981] text-white text-[10px] font-extrabold shadow-2xs">
+                                  วันนี้
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Middle: Appointment Pills or Action Button */}
+                            <div className="space-y-1 my-1">
+                              {appointments.map((apt, aIdx) => (
+                                <div
+                                  key={aIdx}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const targetPat =
+                                      users.find((u) => u.name?.includes(apt.name)) ||
+                                      selectedCalendarPatient;
+                                    if (targetPat) {
+                                      setQuickInfoPatient(targetPat);
+                                      setIsQuickInfoModalOpen(true);
+                                    }
+                                  }}
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold truncate transition cursor-pointer hover:opacity-90 ${
+                                    apt.type === 'green'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : apt.type === 'cyan'
+                                      ? 'bg-sky-100 text-sky-800'
+                                      : 'bg-purple-100 text-purple-800'
+                                  }`}
+                                  title="คลิกเพื่อดูข้อมูลคนไข้ด่วน"
+                                >
+                                  {apt.time} {apt.name}
+                                </div>
+                              ))}
+
+                              {/* Selected Day Action Button matching Image 2 (+ ตัดคอร์สที่นี่) */}
+                              {isSelected && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedDateForCourse(`2026-10-${String(day).padStart(2, '0')}`);
+                                    setIsCourseModeModalOpen(true);
+                                  }}
+                                  className="w-full mt-1 py-1.5 px-2 bg-[#009FD9] hover:bg-[#0089BD] text-white rounded-full text-[11px] font-black shadow-xs hover:shadow transition flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                                  title="คลิกเพื่อเลือกรูปแบบการฝึกและตัดคอร์ส"
+                                >
+                                  <span>+ ตัดคอร์สที่นี่</span>
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Bottom spacer */}
+                            <div className="h-0.5" />
+                          </div>
+                        );
+                      })}
+
+                      {/* Trailing 1 empty cell to complete 35 cells grid */}
+                      <div className="bg-slate-50/40 rounded-2xl min-h-[92px] border border-transparent" />
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -6443,79 +6617,183 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       />
 
       {/* ==================================================================== */}
-      {/* 28. SCREEN 1: PATIENT QUICK INFO POPUP (เมื่อกดชื่อคนไข้)            */}
+      {/* 28. PATIENT QUICK INFO MODAL (Image 1 UX/UI)                         */}
       {/* ==================================================================== */}
       <PatientQuickInfoModal
-        isOpen={isPatientQuickInfoOpen}
-        onClose={() => setIsPatientQuickInfoOpen(false)}
-        patient={quickInfoPatient}
-        plan={quickInfoPlan}
-        onGoToCalendar={handleGoToCalendarFromQuickInfo}
-      />
-
-      {/* ==================================================================== */}
-      {/* 29. SCREEN 3: SELECT TRAINING MODE POPUP (ขั้นที่ 1 จาก 2)            */}
-      {/* ==================================================================== */}
-      <SelectTrainingModeModal
-        isOpen={isSelectModeModalOpen}
-        onClose={() => setIsSelectModeModalOpen(false)}
-        patient={
-          activeCalendarPatient ||
-          quickInfoPatient ||
-          users.find((u) => u.role === 'patient') ||
-          null
-        }
-        selectedDateStr={selectedDateForCourse}
-        formattedDateTh={selectedDateFormattedTh}
-        onProceedToCourseConfig={handleProceedToCourseConfig}
-      />
-
-      {/* ==================================================================== */}
-      {/* 30. SCREEN 4: CUT COURSE / COURSE CONFIGURATION POPUP (ขั้นที่ 2 จาก 2) */}
-      {/* ==================================================================== */}
-      <CreateCourseModal
-        isOpen={isCreateCourseModalOpen}
-        onClose={() => setIsCreateCourseModalOpen(false)}
-        onBackToStep1={handleBackToStep1}
-        patient={
-          activeCalendarPatient ||
-          quickInfoPatient ||
-          users.find((u) => u.role === 'patient') ||
-          null
-        }
-        startDateStr={selectedDateForCourse}
-        trainingMode={selectedTrainingMode}
-        onSuccess={(createdPlan) => {
-          setIsCreateCourseModalOpen(false);
-          const finalPlanId = createdPlan.id || `plan_${Date.now()}`;
-          const finalPatId = createdPlan.patientId || activeCalendarPatient?.id || 'P-0012';
-          const finalPatName = createdPlan.patientName || activeCalendarPatient?.name || 'นายสมชาย ใจดี';
-          const finalPatCode = createdPlan.patientCode || activeCalendarPatient?.code || 'P-0012';
-
-          saveTreatmentPlan({
-            id: finalPlanId,
-            patientId: finalPatId,
-            patientName: finalPatName,
-            patientCode: finalPatCode,
-            therapistId: currentUserId,
-            therapistName: currentUser?.name || 'นักกายภาพบำบัด',
-            diagnosis: createdPlan.diagnosis || activeCalendarPatient?.diagnosis || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
-            targetJoint: createdPlan.targetJoint || 'ข้อไหล่และกล้ามเนื้อสะบัก (Shoulder & Scapula)',
-            assignedExercises: createdPlan.assignedExercises || [],
-            clinicalNotes: createdPlan.clinicalNotes || `ตัดคอร์สฝึกกายภาพ ${createdPlan.scheduleDays?.join(', ')} โดย ${currentUser?.name || 'Admin'}`,
-            status: 'active',
-            scheduleDays: createdPlan.scheduleDays || ['ศุกร์'],
-            timeSlot: createdPlan.timeSlot || '09:30 - 10:30',
-            startTime: createdPlan.startTime || '09:30',
-            endTime: createdPlan.endTime || '10:30',
-            startDate: createdPlan.startDate || selectedDateForCourse,
-            endDate: createdPlan.endDate || '2026-11-20',
-            roomStation: createdPlan.roomStation || 'ตู้ Kiosk 1',
-            includeMinigame: createdPlan.includeMinigame ?? (selectedTrainingMode === 'minigame'),
-          } as TreatmentPlan);
-          showToast(`✓ ยืนยันตัดคอสสำเร็จสำหรับ ${finalPatName} (${finalPatCode})`);
+        isOpen={isQuickInfoModalOpen}
+        onClose={() => setIsQuickInfoModalOpen(false)}
+        patient={quickInfoPatient || selectedCalendarPatient || users.find((u) => u.role === 'patient')}
+        treatmentPlan={quickInfoPlan}
+        onNavigateToCalendar={(pat) => {
+          setIsQuickInfoModalOpen(false);
+          setSelectedCalendarPatient(pat);
+          setScheduleViewMode('calendar');
+          setSelectedCalendarDay(16);
+          showToast(`เปิดหน้าปฏิทินเพื่อตัดคอร์สใหม่ให้ ${pat.name || 'คนไข้'}`);
         }}
       />
+
+      {/* ==================================================================== */}
+      {/* 29. COURSE MODE SELECTION MODAL (Image 3 UX/UI)                      */}
+      {/* ==================================================================== */}
+      <CourseModeSelectionModal
+        isOpen={isCourseModeModalOpen}
+        onClose={() => setIsCourseModeModalOpen(false)}
+        patient={selectedCalendarPatient || users.find((u) => u.role === 'patient')}
+        dateStr={selectedDateForCourse}
+        onSaveCourse={(courseData) => {
+          const dayNum = parseInt(courseData.date.split('-')[2], 10) || selectedCalendarDay;
+          const newApt = {
+            time: courseData.timeSlot.split(' - ')[0] || '09:30',
+            name: courseData.patientName.replace(/^(นาย|นาง|นางสาว)\s*/, '') + (courseData.mode === 'minigame' ? ' 🎮' : ''),
+            type: (courseData.mode === 'minigame' ? 'purple' : 'green') as 'purple' | 'green',
+          };
+          setCalendarAppointments((prev) => ({
+            ...prev,
+            [dayNum]: [...(prev[dayNum] || []), newApt],
+          }));
+
+          saveTreatmentPlan({
+            id: `plan_${Date.now()}`,
+            patientId: courseData.patientId,
+            patientName: courseData.patientName,
+            patientCode: courseData.patientCode,
+            therapistId: currentUserId,
+            therapistName: currentUser?.name || 'นักกายภาพบำบัด',
+            diagnosis: selectedCalendarPatient?.diagnosis || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
+            targetJoint: selectedCalendarPatient?.targetJoint || 'ข้อไหล่และกล้ามเนื้อสะบัก (Shoulder & Scapula)',
+            assignedExercises:
+              courseData.mode === 'minigame'
+                ? []
+                : exercises.slice(0, 3).map((e) => ({
+                    exerciseSlug: String(e.id),
+                    exerciseName: e.name,
+                    sets: 3,
+                    reps: 10,
+                    holdSeconds: e.holdSeconds || 15,
+                    difficulty: 'beginner' as const,
+                  })),
+            clinicalNotes: courseData.notes || `ตัดคอร์ส ${courseData.mode === 'minigame' ? 'มินิเกมฝึกสมอง' : 'กายภาพปกติ'} ประจำวันที่ ${courseData.date}`,
+            status: 'active',
+            scheduleDays: ['จันทร์', 'พุธ', 'ศุกร์'],
+            timeSlot: courseData.timeSlot,
+            startTime: courseData.timeSlot.split(' - ')[0] || '09:30',
+            endTime: courseData.timeSlot.split(' - ')[1] || '10:30',
+            startDate: courseData.date,
+            endDate: '2026-10-31',
+            roomStation: courseData.station,
+            includeMinigame: courseData.mode === 'minigame',
+          });
+
+          addActivityLog(
+            'ASSIGN_TREATMENT_PLAN',
+            'TREATMENT',
+            `ตัดคอร์ส ${courseData.mode === 'minigame' ? 'มินิเกมฝึกสมอง' : 'กายภาพปกติ'} สำหรับ ${courseData.patientName} (${courseData.patientCode}) ในวันที่ ${courseData.date}`
+          );
+
+          showToast(`✅ บันทึกและตัดคอร์สสำหรับ ${courseData.patientName} ในวันที่ ${courseData.date} สำเร็จ!`);
+          setIsCourseModeModalOpen(false);
+        }}
+      />
+
+      {/* ==================================================================== */}
+      {/* 30. PATIENT PICKER MODAL (For Calendar View Top-Right)               */}
+      {/* ==================================================================== */}
+      {isPatientPickerModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0F2F2B]/60 backdrop-blur-sm animate-fadeIn"
+          onClick={() => setIsPatientPickerModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden animate-scaleUp p-5 space-y-4 text-left"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-black text-[#0F2F2B]">เลือกคนไข้สำหรับจัดคอร์ส</h3>
+                <p className="text-xs text-slate-500">เลือกคนไข้ที่ต้องการดูหรือตัดคอร์สในปฏิทิน</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPatientPickerModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Search Input */}
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={patientPickerSearch}
+                onChange={(e) => setPatientPickerSearch(e.target.value)}
+                placeholder="ค้นหาชื่อ หรือ HN คนไข้..."
+                className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#0097A7]"
+                autoFocus
+              />
+            </div>
+
+            {/* Patient List */}
+            <div className="max-h-72 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+              {users
+                .filter((u) => u.role === 'patient')
+                .filter((u) => {
+                  if (!patientPickerSearch) return true;
+                  const term = patientPickerSearch.toLowerCase();
+                  return (
+                    u.name?.toLowerCase().includes(term) ||
+                    u.code?.toLowerCase().includes(term) ||
+                    (u as any).patient_code?.toLowerCase().includes(term)
+                  );
+                })
+                .map((pat) => (
+                  <div
+                    key={pat.id}
+                    onClick={() => {
+                      setSelectedCalendarPatient(pat);
+                      setIsPatientPickerModalOpen(false);
+                      showToast(`เลือกคนไข้: ${pat.name}`);
+                    }}
+                    className={`p-3 rounded-2xl border transition cursor-pointer flex items-center justify-between gap-3 ${
+                      selectedCalendarPatient?.id === pat.id
+                        ? 'border-[#0097A7] bg-teal-50/50 shadow-xs'
+                        : 'border-slate-200 hover:border-teal-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-9 h-9 rounded-full bg-[#0097A7] text-white flex items-center justify-center font-bold text-xs flex-shrink-0">
+                        <User className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-black text-xs text-slate-800 truncate">{pat.name}</div>
+                        <div className="text-[11px] text-slate-400 font-mono">
+                          HN: {pat.code || (pat as any).patient_code || '-'}
+                        </div>
+                        {pat.diagnosis && (
+                          <div className="text-[10px] text-teal-700 truncate mt-0.5">
+                            {pat.diagnosis}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {selectedCalendarPatient?.id === pat.id ? (
+                      <span className="px-2.5 py-0.5 rounded-full bg-[#0097A7] text-white text-[10px] font-bold">
+                        เลือกอยู่
+                      </span>
+                    ) : (
+                      <button className="px-2.5 py-1 rounded-full border border-slate-200 text-[11px] font-bold text-slate-600 hover:bg-white">
+                        เลือก
+                      </button>
+                    )}
+                  </div>
+                ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

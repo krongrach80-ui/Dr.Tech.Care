@@ -2,181 +2,171 @@ import React from 'react';
 import {
   X,
   User,
-  ArrowRight,
   Target,
+  Activity,
   Clock,
-  Sparkles,
+  ArrowRight,
 } from 'lucide-react';
-import { UserAccount, TreatmentPlan } from '../../types/hospital';
+import { TreatmentPlan, UserAccount } from '../../types/hospital';
 
 interface PatientQuickInfoModalProps {
   isOpen: boolean;
   onClose: () => void;
-  patient: UserAccount | null;
-  plan?: TreatmentPlan | null;
-  onGoToCalendar: (patient: UserAccount) => void;
+  patient: UserAccount | any | null;
+  treatmentPlan?: TreatmentPlan | null;
+  onNavigateToCalendar: (patient: UserAccount | any) => void;
 }
 
 export const PatientQuickInfoModal: React.FC<PatientQuickInfoModalProps> = ({
   isOpen,
   onClose,
   patient,
-  plan,
-  onGoToCalendar,
+  treatmentPlan,
+  onNavigateToCalendar,
 }) => {
   if (!isOpen || !patient) return null;
 
-  const patientName = patient.name || 'นายสมชาย ใจดี';
-  const patientHN = patient.code || (plan ? plan.patientCode : 'P-0012');
+  const patientName = patient.name || treatmentPlan?.patientName || 'นายสมชาย ใจดี';
+  const patientHn = patient.code || patient.patient_code || treatmentPlan?.patientCode || 'P-0012';
   const diagnosis =
+    treatmentPlan?.diagnosis ||
     patient.diagnosis ||
-    (plan ? plan.diagnosis : 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)');
-  const targetArea =
-    (plan ? plan.targetJoint : null) ||
     patient.chiefComplaint ||
+    'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)';
+  const targetJoint =
+    treatmentPlan?.targetJoint ||
+    patient.targetJoint ||
     'ข้อไหล่และกล้ามเนื้อสะบัก (Shoulder & Scapula)';
-  const timeSlot = plan?.timeSlot || '09:30 - 10:30';
-  const roomStation = plan?.roomStation || 'ตู้ Kiosk 1';
-  const exerciseCount = plan?.assignedExercises?.length || 3;
+  const timeSlot = treatmentPlan?.timeSlot || '09:30 - 10:30';
+  const station = treatmentPlan?.roomStation || 'ตู้ Kiosk 1';
+  const exerciseCount = treatmentPlan?.assignedExercises?.length || 3;
 
-  // Course progress calculation
-  const completedSessions = 4;
+  const currentSession = 4;
   const totalSessions = 10;
-  const progressPercent = Math.round((completedSessions / totalSessions) * 100);
+  const progressPercent = Math.min(100, Math.round((currentSession / totalSessions) * 100));
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[#0B2522]/65 backdrop-blur-xs animate-fadeIn font-sans"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0F2F2B]/60 backdrop-blur-sm animate-fadeIn"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-[500px] bg-white rounded-[30px] shadow-2xl overflow-hidden border border-emerald-100 flex flex-col animate-scaleUp"
+        className="w-full max-w-[460px] bg-white rounded-[32px] shadow-2xl border border-emerald-100 overflow-hidden animate-scaleUp text-center"
         onClick={(e) => e.stopPropagation()}
-        style={{ borderRadius: '28px' }}
       >
-        {/* Header: Teal-Emerald-Sky Gradient (Matching Image 1) */}
-        <div className="bg-gradient-to-r from-[#0d9488] via-[#059669] to-[#0284c7] px-6 py-5 text-white relative">
+        {/* Header: Teal Container matching Image 1 */}
+        <div className="bg-gradient-to-b from-[#0097A7] via-[#00897B] to-[#00838F] text-white pt-6 pb-5 px-6 relative flex flex-col items-center">
           {/* Close button X */}
           <button
+            type="button"
             onClick={onClose}
-            className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition active:scale-95 cursor-pointer"
+            className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition cursor-pointer"
             title="ปิดหน้าต่าง"
           >
             <X className="w-4 h-4" />
           </button>
 
-          <div className="flex items-center gap-3.5 pr-8">
-            {/* Avatar Circle */}
-            <div className="w-14 h-14 rounded-full border-2 border-white/60 bg-white/10 flex items-center justify-center flex-shrink-0 text-white shadow-inner">
-              <User className="w-7 h-7 stroke-[2]" />
-            </div>
+          {/* User Avatar Circle */}
+          <div className="w-16 h-16 rounded-full border-2 border-white/90 bg-white/10 flex items-center justify-center mb-2 shadow-inner text-white">
+            <User className="w-8 h-8 text-white stroke-[2.2]" />
+          </div>
 
-            {/* Title & Badges */}
-            <div className="min-w-0">
-              <div className="text-[11px] font-semibold text-emerald-100/90 leading-tight">
-                ข้อมูลคนไข้
-              </div>
-              <h3 className="text-xl sm:text-2xl font-black text-white truncate tracking-tight mt-0.5">
-                {patientName}
-              </h3>
-              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                <span className="font-mono text-xs font-bold text-white bg-white/20 px-2.5 py-0.5 rounded-full backdrop-blur-xs border border-white/30">
-                  HN: {patientHN}
-                </span>
-                <span className="inline-flex items-center gap-1 bg-white text-emerald-900 font-extrabold text-[11px] px-3 py-0.5 rounded-full shadow-2xs">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>กำลังรักษา (Active)</span>
-                </span>
-              </div>
-            </div>
+          <span className="text-white/85 text-xs font-semibold">ข้อมูลคนไข้</span>
+          <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight mt-0.5">
+            {patientName}
+          </h3>
+
+          {/* Badges: HN & Active status */}
+          <div className="flex items-center gap-2 mt-2">
+            <span className="px-3 py-0.5 rounded-full bg-white/20 border border-white/30 font-mono text-xs font-extrabold text-white">
+              HN: {patientHn}
+            </span>
+            <span className="px-3 py-0.5 rounded-full bg-white text-[#00838F] text-xs font-extrabold shadow-2xs flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>กำลังรักษา (Active)</span>
+            </span>
           </div>
         </div>
 
-        {/* Modal Body: Information Cards */}
-        <div className="p-5 sm:p-6 space-y-3.5 bg-white">
-          {/* Row 1: อาการ / โรค */}
-          <div className="flex items-start gap-3.5 p-3 rounded-2xl bg-slate-50/70 border border-slate-100 hover:border-emerald-200 transition">
-            <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200/80 text-emerald-700 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <Target className="w-5 h-5" />
+        {/* Body Cards matching Image 1 */}
+        <div className="p-6 space-y-3.5 text-left">
+          {/* Card 1: อาการ / โรค */}
+          <div className="p-3.5 rounded-2xl bg-slate-50/80 border border-slate-100 flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-full bg-emerald-100/80 text-emerald-700 flex items-center justify-center flex-shrink-0">
+              <Target className="w-5 h-5 text-emerald-600" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-[11px] font-bold text-slate-400">
-                อาการ / โรค
-              </div>
-              <div className="text-sm sm:text-base font-black text-[#0B2B2B] mt-0.5 leading-snug">
+              <div className="text-[11px] font-bold text-slate-400">อาการ / โรค</div>
+              <div className="text-xs sm:text-sm font-black text-[#0F2F2B] leading-snug truncate">
                 {diagnosis}
               </div>
             </div>
           </div>
 
-          {/* Row 2: บริเวณที่รักษา */}
-          <div className="flex items-start gap-3.5 p-3 rounded-2xl bg-slate-50/70 border border-slate-100 hover:border-emerald-200 transition">
-            <div className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-200/80 text-teal-700 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <Sparkles className="w-5 h-5" />
+          {/* Card 2: บริเวณที่รักษา */}
+          <div className="p-3.5 rounded-2xl bg-slate-50/80 border border-slate-100 flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-full bg-emerald-100/80 text-emerald-700 flex items-center justify-center flex-shrink-0">
+              <Activity className="w-5 h-5 text-emerald-600" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-[11px] font-bold text-slate-400">
-                บริเวณที่รักษา
-              </div>
-              <div className="text-sm sm:text-base font-black text-[#0B2B2B] mt-0.5 leading-snug">
-                {targetArea}
+              <div className="text-[11px] font-bold text-slate-400">บริเวณที่รักษา</div>
+              <div className="text-xs sm:text-sm font-black text-[#0F2F2B] leading-snug truncate">
+                {targetJoint}
               </div>
             </div>
           </div>
 
-          {/* Row 3: นัดหมายวันนี้ */}
-          <div className="flex items-start gap-3.5 p-3 rounded-2xl bg-slate-50/70 border border-slate-100 hover:border-sky-200 transition">
-            <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-200/80 text-sky-700 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <Clock className="w-5 h-5" />
+          {/* Card 3: นัดหมายวันนี้ */}
+          <div className="p-3.5 rounded-2xl bg-slate-50/80 border border-slate-100 flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-full bg-sky-100/80 text-sky-700 flex items-center justify-center flex-shrink-0">
+              <Clock className="w-5 h-5 text-sky-600" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-[11px] font-bold text-slate-400">
-                นัดหมายวันนี้
-              </div>
-              <div className="text-sm sm:text-base font-black text-[#0B2B2B] mt-0.5 leading-snug">
-                {timeSlot} • {roomStation} • {exerciseCount} ท่าฝึก
+              <div className="text-[11px] font-bold text-slate-400">นัดหมายวันนี้</div>
+              <div className="text-xs sm:text-sm font-black text-[#0F2F2B] leading-snug truncate">
+                {timeSlot} • {station} • {exerciseCount} ท่าฝึก
               </div>
             </div>
           </div>
 
-          {/* Progress Bar: คอร์สกายภาพปัจจุบัน ครั้งที่ 4 จาก 10 */}
-          <div className="pt-2">
-            <div className="flex items-center justify-between text-xs font-bold mb-1.5">
-              <span className="text-slate-500">คอร์สกายภาพปัจจุบัน</span>
-              <span className="text-slate-800 font-extrabold text-sm">
-                ครั้งที่ {completedSessions} จาก {totalSessions}
+          {/* Progress Section: คอร์สกายภาพปัจจุบัน */}
+          <div className="pt-2 space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-slate-500">คอร์สกายภาพปัจจุบัน</span>
+              <span className="font-black text-[#0F2F2B]">
+                ครั้งที่ {currentSession} จาก {totalSessions}
               </span>
             </div>
-            <div className="w-full h-3 rounded-full bg-slate-100 overflow-hidden p-0.5 border border-slate-200/60">
+            <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-[#10b981] via-[#06b6d4] to-[#0ea5e9] transition-all duration-500"
+                className="h-full bg-gradient-to-r from-emerald-400 to-cyan-500 rounded-full transition-all duration-500"
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
           </div>
+        </div>
 
-          {/* Bottom Action Buttons (Matching Image 1) */}
-          <div className="pt-3 flex items-center justify-end gap-2.5">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-6 py-2.5 rounded-full border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs sm:text-sm transition cursor-pointer active:scale-95"
-            >
-              ปิด
-            </button>
+        {/* Footer Actions matching Image 1 */}
+        <div className="px-6 pb-6 pt-1 flex items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-6 py-2.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-xs transition cursor-pointer active:scale-95"
+          >
+            ปิด
+          </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                onGoToCalendar(patient);
-              }}
-              className="px-6 py-2.5 rounded-full bg-gradient-to-r from-[#10b981] to-[#0ea5e9] hover:opacity-95 text-white font-extrabold text-xs sm:text-sm shadow-md shadow-cyan-500/25 transition flex items-center gap-2 cursor-pointer active:scale-95"
-            >
-              <span>ไปหน้าปฏิทิน เพื่อตัดคอสใหม่</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onNavigateToCalendar(patient);
+            }}
+            className="px-6 py-2.5 rounded-full bg-gradient-to-r from-[#00B4D8] to-[#0096C7] hover:opacity-95 text-white font-black text-xs shadow-md shadow-cyan-500/25 flex items-center gap-2 transition cursor-pointer active:scale-95"
+          >
+            <span>ไปหน้าปฏิทิน เพื่อตัดคอร์สใหม่</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
         </div>
       </div>
     </div>
