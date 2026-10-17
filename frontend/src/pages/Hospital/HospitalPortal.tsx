@@ -2910,8 +2910,6 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   {[
                     { id: 'all', label: 'ทั้งหมด' },
                     { id: 'active', label: '🟢 กำลังรักษา (Active)' },
-                    { id: 'paused', label: '🟡 พักการฝึก (Paused)' },
-                    { id: 'completed', label: '🔵 สำเร็จครบโปรแกรม (Completed)' },
                   ].map((tab) => (
                     <button
                       key={tab.id}
