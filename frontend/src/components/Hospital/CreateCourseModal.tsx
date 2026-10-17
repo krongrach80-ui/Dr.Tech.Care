@@ -7,8 +7,6 @@ import {
   ArrowLeft,
   ArrowRight,
   Sparkles,
-  Gamepad2,
-  Activity,
   Layers,
   Check,
 } from 'lucide-react';
@@ -379,11 +377,11 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
               </div>
             </div>
 
-            {/* COLUMN 2: เวลาฝึก, ตู้ Kiosk, รายการท่าฝึก/มินิเกม */}
+            {/* COLUMN 2: เวลาฝึก, ตู้ Kiosk */}
             <div className="space-y-4 p-4 rounded-3xl bg-slate-50/70 border border-slate-200/80">
               <div className="font-black text-xs text-sky-900 uppercase tracking-wider flex items-center gap-1.5">
                 <Clock className="w-4 h-4 text-sky-600" />
-                <span>เวลาและตู้ Kiosk (Station & Exercises)</span>
+                <span>เวลาและตู้ Kiosk</span>
               </div>
 
               {/* 1. เวลาฝึก (4 ช่วงเวลา) */}
@@ -441,34 +439,6 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                     );
                   })}
                 </div>
-              </div>
-
-              {/* 3. รายการท่าฝึกในคอส / มินิเกม */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  3. โปรแกรมในคอส:
-                </label>
-                {trainingMode === 'minigame' ? (
-                  <div className="p-3 rounded-2xl bg-purple-50/70 border border-purple-200 space-y-1.5">
-                    <div className="flex items-center gap-2 text-xs font-black text-purple-900">
-                      <Gamepad2 className="w-4 h-4 text-purple-700" />
-                      <span>มินิเกมฝึกสมองและการเคลื่อนไหว (Interactive Quiz)</span>
-                    </div>
-                    <p className="text-[11px] text-purple-700/90 font-medium">
-                      ✓ รวมคำถามฝึกความจำ, การตัดสินใจ และเกมจับคู่ตอบสนองไวพร้อมเซ็นเซอร์กล้อง
-                    </p>
-                  </div>
-                ) : (
-                  <div className="p-3 rounded-2xl bg-emerald-50/70 border border-emerald-200 space-y-1.5">
-                    <div className="flex items-center gap-2 text-xs font-black text-emerald-900">
-                      <Activity className="w-4 h-4 text-emerald-700" />
-                      <span>ท่าทางกายภาพบำบัดมาตรฐาน (3 ท่า)</span>
-                    </div>
-                    <p className="text-[11px] text-emerald-700/90 font-medium">
-                      ✓ กางแขนยกไหล่ขนาน (10 ครั้ง) • ยืดข้อไหล่ข้ามลำตัว (5 ครั้ง) • งอข้อศอก (12 ครั้ง)
-                    </p>
-                  </div>
-                )}
               </div>
             </div>
           </div>
