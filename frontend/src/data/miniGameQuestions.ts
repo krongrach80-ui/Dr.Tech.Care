@@ -1063,11 +1063,66 @@ export const MINI_GAME_QUESTIONS: MiniGameQuestion[] = [
   },
 ];
 
+const STORAGE_KEY = 'drtechcare_custom_minigame_questions';
+
+/**
+ * ดึงคำถามทั้งหมด (รวมคำถามดั้งเดิม และคำถามที่เพิ่ม/แก้ไขจากหลังบ้าน)
+ */
+export function getAllMiniGameQuestions(): MiniGameQuestion[] {
+  if (typeof window === 'undefined') return MINI_GAME_QUESTIONS;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return MINI_GAME_QUESTIONS;
+    const custom: MiniGameQuestion[] = JSON.parse(raw);
+    if (Array.isArray(custom)) {
+      const customIds = new Set(custom.map((q) => q.id));
+      const filteredDefaults = MINI_GAME_QUESTIONS.filter((q) => !customIds.has(q.id));
+      return [...custom, ...filteredDefaults];
+    }
+  } catch {}
+  return MINI_GAME_QUESTIONS;
+}
+
+/**
+ * บันทึกหรืออัปเดตคำถามมินิเกม
+ */
+export function saveMiniGameQuestion(q: MiniGameQuestion): MiniGameQuestion[] {
+  const current = getAllMiniGameQuestions();
+  const index = current.findIndex((item) => item.id === q.id);
+  let updated: MiniGameQuestion[];
+  if (index >= 0) {
+    updated = [...current];
+    updated[index] = q;
+  } else {
+    updated = [q, ...current];
+  }
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    }
+  } catch {}
+  return updated;
+}
+
+/**
+ * ลบคำถามมินิเกม
+ */
+export function deleteMiniGameQuestion(id: number): MiniGameQuestion[] {
+  const current = getAllMiniGameQuestions();
+  const updated = current.filter((item) => item.id !== id);
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    }
+  } catch {}
+  return updated;
+}
+
 /**
  * สุ่มคำถาม N ข้อ โดยไม่ซ้ำกันในรอบเดียวกัน
  */
 export function getRandomMiniGameQuestions(count: number = 10): MiniGameQuestion[] {
-  const pool = [...MINI_GAME_QUESTIONS];
+  const pool = [...getAllMiniGameQuestions()];
   // Fisher-Yates shuffle
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -1075,3 +1130,4 @@ export function getRandomMiniGameQuestions(count: number = 10): MiniGameQuestion
   }
   return pool.slice(0, Math.min(count, pool.length));
 }
+

@@ -85,6 +85,7 @@ import { TemporaryCaseDelegationModal } from '../../components/Hospital/Temporar
 import { EditMyProfileModal } from '../../components/Hospital/EditMyProfileModal';
 import { PatientQuickInfoModal } from '../../components/Hospital/PatientQuickInfoModal';
 import { CourseModeSelectionModal } from '../../components/Hospital/CourseModeSelectionModal';
+import { MiniGameQuestionsManager } from '../../components/Hospital/MiniGameQuestionsManager';
 import { defaultDash, formatThaiDate, formatThaiDateTime } from '../../utils/dashboardUtils';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 
@@ -1203,7 +1204,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   // =========================================================================
   // 4. STATE FOR EXERCISE LIBRARY (Tab 4: exercises)
   // =========================================================================
-  const [exerciseSubTab, setExerciseSubTab] = useState<'exercises' | 'modpacks'>('exercises');
+  const [exerciseSubTab, setExerciseSubTab] = useState<'exercises' | 'modpacks' | 'minigame_questions'>('exercises');
   const [exerciseSearch, setExerciseSearch] = useState<string>('');
   const [exerciseCategoryFilter, setExerciseCategoryFilter] = useState<string>('all');
   const [isAddExerciseOpen, setIsAddExerciseOpen] = useState<boolean>(false);
@@ -1632,7 +1633,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   }
 
   // Sidebar Menu Items based on Role
-  // Admin: 6 items | Physiotherapist: 4 items (ลบท่าทางกายภาพออกตามคำขอ)
+  // Admin: 7 items | Physiotherapist: 5 items
   const sidebarItems: { id: TabKey; label: string; icon: React.FC<{ className?: string }>; adminOnly?: boolean }[] = [
     { id: 'users', label: '1. จัดการผู้ใช้งาน', icon: Users },
     { id: 'patients', label: '2. ข้อมูลคนไข้', icon: User },
@@ -1642,8 +1643,9 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       label: currentRole === 'therapist' ? '4. โต๊ะทำงาน (PT Workspace)' : '4. ข้อมูลนักกายภาพ',
       icon: Stethoscope,
     },
-    { id: 'logs', label: '5. ประวัติการใช้งาน', icon: History, adminOnly: true },
-    { id: 'settings', label: '6. ตั้งค่าระบบ', icon: Sliders, adminOnly: true },
+    { id: 'exercises', label: '5. ท่าทางและโจทย์มินิเกม', icon: Gamepad2 },
+    { id: 'logs', label: '6. ประวัติการใช้งาน', icon: History, adminOnly: true },
+    { id: 'settings', label: '7. ตั้งค่าระบบ', icon: Sliders, adminOnly: true },
   ];
 
   const visibleSidebarItems = sidebarItems.filter((item) => {
@@ -1779,7 +1781,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   {activeTab === 'patients' && 'ข้อมูลคนไข้'}
                   {activeTab === 'schedules' && 'ตารางฝึกกายภาพ'}
                   {activeTab === 'therapists' && 'ข้อมูลนักกายภาพ'}
-                  {activeTab === 'exercises' && 'ท่าทางกายภาพ'}
+                  {activeTab === 'exercises' && 'ท่าทางและโจทย์มินิเกม'}
                   {activeTab === 'logs' && 'ประวัติการใช้งาน'}
                   {activeTab === 'settings' && 'ตั้งค่าระบบ'}
                 </span>
@@ -1788,7 +1790,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   {activeTab === 'patients' && '(Patient Data)'}
                   {activeTab === 'schedules' && '(Therapy Schedules)'}
                   {activeTab === 'therapists' && '(Physiotherapist Data)'}
-                  {activeTab === 'exercises' && '(Exercise Library)'}
+                  {activeTab === 'exercises' && '(Exercise & MiniGame Library)'}
                   {activeTab === 'logs' && '(Audit Log)'}
                   {activeTab === 'settings' && '(Settings)'}
                 </span>
@@ -4913,10 +4915,21 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     <PackagePlus className="w-3.5 h-3.5" />
                     <span>ชุดท่าฝึกสำเร็จรูป (Modpacks) ({modpacks.length})</span>
                   </button>
+                  <button
+                    onClick={() => setExerciseSubTab('minigame_questions')}
+                    className={`px-4 py-2 rounded-full text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                      exerciseSubTab === 'minigame_questions'
+                        ? 'bg-[#10B981] text-white font-extrabold shadow-xs'
+                        : 'text-slate-600 hover:text-emerald-800'
+                    }`}
+                  >
+                    <Gamepad2 className="w-3.5 h-3.5" />
+                    <span>โจทย์ในมินิเกม</span>
+                  </button>
                 </div>
 
                 <div className="flex items-center gap-3">
-                  {exerciseSubTab === 'exercises' ? (
+                  {exerciseSubTab === 'exercises' && (
                     <>
                       <div className="w-52 relative">
                         <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -4936,7 +4949,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         <span>+ เพิ่มท่าทางใหม่</span>
                       </button>
                     </>
-                  ) : (
+                  )}
+                  {exerciseSubTab === 'modpacks' && (
                     <button
                       onClick={() => setIsCreateModpackOpen(true)}
                       className="px-4 py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white text-xs font-bold shadow-md shadow-cyan-500/25 transition flex items-center gap-2 cursor-pointer whitespace-nowrap active:scale-95"
@@ -5320,6 +5334,13 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* VIEW 3: MINIGAME QUESTIONS (คลังโจทย์คำถามมินิเกมฝึกสมอง) */}
+              {exerciseSubTab === 'minigame_questions' && (
+                <div className="space-y-6">
+                  <MiniGameQuestionsManager onShowToast={showToast} />
                 </div>
               )}
             </div>
