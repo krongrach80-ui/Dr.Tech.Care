@@ -152,13 +152,17 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
     stopCamera,
   } = useCamera();
 
-  // Automatically start camera on mount for elderly kiosk users
+  // Automatically start camera on mount ONLY if developer preview is explicitly active
   useEffect(() => {
+    if (!showDevPosePreview) {
+      stopCamera();
+      return;
+    }
     startCamera();
-  }, [startCamera]);
+  }, [startCamera, stopCamera, showDevPosePreview]);
 
-  // Pose Detection Hook
-  const { landmarks, worldLandmarks, fps, modelError, isMockMode } = usePose(videoRef, isCameraReady, currentExerciseConfig?.targetPose || 'shoulder_raise');
+  // Pose Detection Hook (only activated when developer preview is active)
+  const { landmarks, worldLandmarks, fps, modelError, isMockMode } = usePose(videoRef, isCameraReady && showDevPosePreview, currentExerciseConfig?.targetPose || 'shoulder_raise');
 
   const videoDimensions = useMemo(() => {
     const video = videoRef.current;
@@ -183,6 +187,10 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
   // State Machine Flow: PREPARING -> COUNTDOWN_3 -> COUNTDOWN_2 -> COUNTDOWN_1 -> READY -> ACTIVE
   const startExercisePreparation = useCallback((targetEx: ExerciseConfig) => {
     clearCountdownTimers();
+    if (!showDevPosePreview) {
+      voiceAssistant.stop();
+      return;
+    }
     setIsSafetyHalted(false);
     setExercisePhase('PREPARING');
     setCountdownNumber(3);
@@ -223,27 +231,37 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
     }, 4800);
 
     countdownTimersRef.current = [t1, t2, t3, t4, t5];
-  }, [clearCountdownTimers]);
+  }, [clearCountdownTimers, showDevPosePreview]);
 
-  // Clean up countdown on unmount
+  // Clean up countdown and stop speech on unmount or when preview is off
   useEffect(() => {
+    if (!showDevPosePreview) {
+      clearCountdownTimers();
+      voiceAssistant.stop();
+    }
     return () => {
       clearCountdownTimers();
+      voiceAssistant.stop();
     };
-  }, [clearCountdownTimers]);
+  }, [clearCountdownTimers, showDevPosePreview]);
 
-  // Reset timer & start countdown ONLY on exercise index / side change
+  // Reset timer & start countdown ONLY on exercise index / side change (and only when preview is enabled)
   useEffect(() => {
+    if (!showDevPosePreview) {
+      clearCountdownTimers();
+      voiceAssistant.stop();
+      return;
+    }
     if (currentExerciseConfig) {
       setTimeLeft(currentStretch ? getPoseHoldSeconds(currentStretch) : 20);
       setIsPaused(false);
       startExercisePreparation(currentExerciseConfig);
     }
-  }, [currentIndex, currentSide]); // Strictly gated: NOT per-frame!
+  }, [currentIndex, currentSide, showDevPosePreview, currentExerciseConfig, currentStretch, getPoseHoldSeconds, startExercisePreparation, clearCountdownTimers]);
 
   // Continuous Clinical Safety Watchdog
   useEffect(() => {
-    if (!landmarks || landmarks.length === 0 || !biomechanics || exercisePhase === 'IDLE') return;
+    if (!showDevPosePreview || !landmarks || landmarks.length === 0 || !biomechanics || exercisePhase === 'IDLE') return;
 
     const effectiveEx: ExerciseDefinition = selectedExercise || {
       id: 1,
@@ -519,12 +537,12 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
 
   // Total elapsed workout timer
   useEffect(() => {
-    if (isCompletedAll || isPaused || isSafetyHalted) return;
+    if (!showDevPosePreview || isCompletedAll || isPaused || isSafetyHalted) return;
     const interval = setInterval(() => {
       setTotalElapsedTimeSec((prev) => prev + 1);
     }, 1000);
     return () => clearInterval(interval);
-  }, [isCompletedAll, isPaused, isSafetyHalted]);
+  }, [showDevPosePreview, isCompletedAll, isPaused, isSafetyHalted]);
 
   // Auto-save summary to backend (IndexedDB first, then server sync)
   const handleAutoSaveSummary = useCallback(
@@ -1003,7 +1021,10 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
             {onNavigateToMinigame && (
               <button
                 type="button"
-                onClick={onNavigateToMinigame}
+                onClick={() => {
+                  voiceAssistant.stop();
+                  onNavigateToMinigame();
+                }}
                 className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-black text-sm shadow-lg shadow-cyan-500/25 active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer"
               >
                 <span>🎮 เปิดเล่นมินิเกมกายภาพทันที</span>
@@ -1012,7 +1033,10 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
 
             <button
               type="button"
-              onClick={onBack}
+              onClick={() => {
+                voiceAssistant.stop();
+                onBack();
+              }}
               className="w-full py-3 px-4 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2"
             >
               <ArrowLeft className="w-4 h-4" />

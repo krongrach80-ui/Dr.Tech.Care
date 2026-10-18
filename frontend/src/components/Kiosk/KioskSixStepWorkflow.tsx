@@ -1661,7 +1661,11 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     mode: 'physio' | 'minigame' = selectedTherapyType,
     customQueue?: StretchExerciseItem[]
   ) => {
-    audioFeedback.playRepSuccess();
+    if (mode === 'physio') {
+      voiceAssistant.stop();
+    } else {
+      audioFeedback.playRepSuccess();
+    }
     selectPatient(activePatient);
     onStartExerciseDirectly(activePatient, activePlan || undefined, mode, customQueue, customHoldTimes);
   };
