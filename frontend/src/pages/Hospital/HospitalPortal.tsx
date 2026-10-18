@@ -897,7 +897,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [planCareFilter, setPlanCareFilter] = useState<'my_patients' | 'covered_cases' | 'all'>('my_patients');
 
   // Timetable scheduling states (ตารางเรียนกายภาพ) & Approval Gate (P2-10)
-  const [scheduleViewMode, setScheduleViewMode] = useState<'list' | 'approvals' | 'calendar'>('list');
+  const [scheduleViewMode, setScheduleViewMode] = useState<'calendar' | 'approvals'>('calendar');
   const [scheduleSelectedMonth, setScheduleSelectedMonth] = useState<number>(9); // 0-indexed, 9 = ตุลาคม (October)
   const [scheduleSelectedYear, setScheduleSelectedYear] = useState<number>(2026);
   const [scheduleDayFilter, setScheduleDayFilter] = useState<string>('all');
@@ -2727,15 +2727,16 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   {/* Schedule View Pills */}
                   <div className="flex items-center p-1 bg-white border border-emerald-200 rounded-full shadow-2xs flex-wrap gap-1">
                     <button
-                      onClick={() => setScheduleViewMode('list')}
+                      onClick={() => setScheduleViewMode('calendar')}
                       className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                        scheduleViewMode === 'list'
+                        scheduleViewMode === 'calendar'
                           ? 'bg-[#0097A7] text-white font-black shadow-xs'
-                          : 'text-slate-600 hover:text-emerald-800'
+                          : 'text-slate-600 hover:text-teal-700'
                       }`}
-                      title="สลับเป็นมุมมองตารางรายชื่อแบบละเอียด"
+                      title="มุมมองปฏิทินคนไข้แบบ Interactive (ตัดคอร์ส/ตั้งค่ามินิเกม)"
                     >
-                      <span>ตารางรายชื่อ (List)</span>
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span>ปฏิทินคนไข้ (Interactive Calendar)</span>
                     </button>
                     <button
                       onClick={() => setScheduleViewMode('approvals')}
@@ -2749,69 +2750,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       <ShieldCheck className="w-3.5 h-3.5" />
                       <span>อนุมัติแผน AI ({aiProposals.filter((p) => p.status === 'PENDING_CLINICAL_APPROVAL').length})</span>
                     </button>
-                    <button
-                      onClick={() => setScheduleViewMode('calendar')}
-                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                        scheduleViewMode === 'calendar'
-                          ? 'bg-[#0097A7] text-white font-black shadow-xs'
-                          : 'text-slate-600 hover:text-teal-700'
-                      }`}
-                      title="มุมมองปฏิทินคนไข้แบบ Interactive (ตัดคอร์ส/ตั้งค่ามินิเกม)"
-                    >
-                      <Calendar className="w-3.5 h-3.5" />
-                      <span>ปฏิทินคนไข้ (Interactive Calendar)</span>
-                    </button>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
-                  {/* PT Filter Toggle */}
-                  {currentRole === 'therapist' && (
-                    <div className="flex items-center gap-1 p-1 bg-white border border-emerald-200 rounded-full shadow-2xs">
-                      <button
-                        onClick={() => setPlanCareFilter('my_patients')}
-                        className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                          planCareFilter === 'my_patients'
-                            ? 'bg-[#10B981] text-white shadow-xs'
-                            : 'text-slate-600 hover:text-emerald-800'
-                        }`}
-                        title="แสดงเฉพาะตารางฝึกของคนไข้ภายใต้การดูแลหลักของฉัน"
-                      >
-                        <span>[คนไข้ของฉัน]</span>
-                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${planCareFilter === 'my_patients' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'}`}>
-                          {myAssignedPatients.length}
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => setPlanCareFilter('covered_cases')}
-                        className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                          planCareFilter === 'covered_cases'
-                            ? 'bg-cyan-600 text-white shadow-xs'
-                            : 'text-slate-600 hover:text-cyan-800'
-                        }`}
-                        title="แสดงตารางฝึกของเคสที่ได้รับมอบหมายให้ดูแลแทนชั่วคราว"
-                      >
-                        <span>[เคสรับฝากชั่วคราว]</span>
-                        {myCoveredPatients.length > 0 && (
-                          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${planCareFilter === 'covered_cases' ? 'bg-white/20 text-white' : 'bg-cyan-100 text-cyan-800'}`}>
-                            {myCoveredPatients.length}
-                          </span>
-                        )}
-                      </button>
-                      <button
-                        onClick={() => setPlanCareFilter('all')}
-                        className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
-                          planCareFilter === 'all'
-                            ? 'bg-[#0F2F2B] text-emerald-300 shadow-xs'
-                            : 'text-slate-600 hover:text-emerald-800'
-                        }`}
-                        title="ดูตารางนัดหมายทั้งหมดในโรงพยาบาล"
-                      >
-                        <span>[คนไข้ทั้งหมด]</span>
-                      </button>
-                    </div>
-                  )}
-
                   {/* Primary Add Schedule Button (Teal style from Image 1) */}
                   <button
                     onClick={() => {
@@ -2877,341 +2819,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                 </div>
               </div>
 
-              {/* Status & Day Quick Filters */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                {/* Status Filter Pills */}
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-                  {[
-                    { id: 'all', label: 'ทั้งหมด' },
-                    { id: 'active', label: '🟢 กำลังรักษา (Active)' },
-                  ].map((tab) => (
-                    <button
-                      key={tab.id}
-                      onClick={() => setPlanStatusFilter(tab.id as any)}
-                      className={`px-3 py-1 rounded-full font-bold transition whitespace-nowrap cursor-pointer ${
-                        planStatusFilter === tab.id
-                          ? 'bg-[#10B981] text-white shadow-xs'
-                          : 'bg-white border border-emerald-200 text-slate-600 hover:text-emerald-800'
-                      }`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Day Quick Filter */}
-                <div className="flex items-center gap-1 overflow-x-auto pb-1">
-                  <span className="text-[11px] font-bold text-slate-400 whitespace-nowrap mr-1">กรองวัน:</span>
-                  <button
-                    onClick={() => setScheduleDayFilter('all')}
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition cursor-pointer ${
-                      scheduleDayFilter === 'all'
-                        ? 'bg-[#0F2F2B] text-emerald-300'
-                        : 'bg-white border border-emerald-200 text-slate-600 hover:text-emerald-800'
-                    }`}
-                  >
-                    ทุกวัน
-                  </button>
-                  {TIMETABLE_DAYS_CONFIG.map((d) => (
-                    <button
-                      key={d.key}
-                      onClick={() => setScheduleDayFilter(d.key)}
-                      className={`px-2 py-1 rounded-full text-[11px] font-bold transition cursor-pointer flex items-center gap-1 ${
-                        scheduleDayFilter === d.key
-                          ? 'bg-[#10B981] text-[#0F2F2B] shadow-xs'
-                          : 'bg-white border border-emerald-200 text-slate-600 hover:text-emerald-800'
-                      }`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${d.dot}`} />
-                      <span>{d.short}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
 
 
 
 
-              {/* VIEW 2: LIST VIEW (ตารางรายการแบบละเอียด) */}
-              {scheduleViewMode === 'list' && (
-                <div className="bg-white rounded-2xl border border-emerald-100 shadow-xs overflow-hidden animate-fadeIn">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs sm:text-sm border-collapse">
-                      <thead>
-                        <tr className="border-b border-emerald-100 text-slate-600 text-[11px] font-bold uppercase tracking-wider bg-emerald-50/70">
-                          <th className="py-2.5 px-3 sm:px-4 sticky left-0 bg-emerald-50 z-20 shadow-xs border-r border-emerald-100/70 min-w-[160px] sm:min-w-[190px]">
-                            คนไข้ (Patient)
-                          </th>
-                          <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap min-w-[130px]">นักกายภาพผู้ดูแล</th>
-                          <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap min-w-[150px]">การวินิจฉัย & ข้อต่อ</th>
-                          <th className="py-2.5 px-3 sm:px-4 min-w-[200px]">วัน-เวลาที่ลงฝึก (Schedule)</th>
-                          <th className="py-2.5 px-3 sm:px-4 min-w-[220px]">รายการท่ากายภาพ</th>
-                          <th className="py-2.5 px-3 sm:px-4 min-w-[150px]">คำแนะนำคลินิก</th>
-                          <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap min-w-[100px]">สถานะ</th>
-                          <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap min-w-[100px]">วันที่บันทึก</th>
-                          <th className="py-2.5 px-3 sm:px-4 text-right whitespace-nowrap min-w-[110px]">การจัดการ</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-emerald-50">
-                        {filteredTreatmentPlans.length === 0 ? (
-                          <tr>
-                            <td colSpan={9} className="py-12 text-center">
-                              <div className="flex flex-col items-center justify-center space-y-2.5">
-                                <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                                  <CalendarDays className="w-6 h-6" />
-                                </div>
-                                <div className="font-bold text-sm text-[#0F2F2B]">
-                                  ไม่พบตารางฝึกกายภาพที่ตรงตามเงื่อนไข
-                                </div>
-                                <p className="text-xs text-slate-400 max-w-sm">
-                                  สามารถกดปุ่มมอบหมายตารางใหม่ หรือปรับตัวกรองเพื่อดูตารางฝึกทั้งหมด
-                                </p>
-                                <button
-                                  onClick={() => {
-                                    setSelectedPlanForEdit(null);
-                                    setIsTreatmentPlanModalOpen(true);
-                                  }}
-                                  className="px-4 py-2 rounded-full bg-[#10B981] text-white text-xs font-bold hover:bg-emerald-600 transition flex items-center gap-1.5 cursor-pointer shadow-xs mt-1"
-                                >
-                                  <Plus className="w-3.5 h-3.5" />
-                                  <span>+ มอบหมายตารางกายภาพใหม่</span>
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ) : (
-                          filteredTreatmentPlans.map((plan) => {
-                            const patientUser = users.find(
-                              (u) =>
-                                String(u.id) === String(plan.patientId) ||
-                                u.code === plan.patientCode ||
-                                u.name === plan.patientName
-                            );
-                            const canManage =
-                              currentRole === 'admin' ||
-                              plan.therapistId === currentUserId ||
-                              (currentUser?.name &&
-                                plan.therapistName.includes(
-                                  currentUser.name.replace(/^(กภ\.|นาย|นางสาว|ดร\.)\s*/, '')
-                                ));
-
-                            return (
-                              <tr key={plan.id} className="hover:bg-emerald-50/40 transition group">
-                                {/* 1. Patient info (STICKY FIRST COLUMN) */}
-                                <td className="py-2.5 px-3 sm:px-4 sticky left-0 bg-white group-hover:bg-emerald-50/60 z-10 shadow-xs border-r border-emerald-100/60 min-w-[160px] sm:min-w-[190px]">
-                                  <div className="flex items-center gap-2.5">
-                                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#10B981] to-[#059669] text-white font-bold flex items-center justify-center text-xs shadow-2xs flex-shrink-0">
-                                      {plan.patientName.charAt(
-                                        plan.patientName.startsWith('นาย') || plan.patientName.startsWith('นาง')
-                                          ? 3
-                                          : 0
-                                      ) || 'ค'}
-                                    </div>
-                                    <div className="min-w-0">
-                                      <div className="font-bold text-[#0F2F2B] leading-tight text-xs sm:text-sm truncate max-w-[130px] sm:max-w-[170px]">
-                                        {plan.patientName}
-                                      </div>
-                                      <div className="text-[10px] text-slate-500 font-mono truncate mt-0.5">
-                                        <strong className="text-emerald-800">{plan.patientCode}</strong>
-                                        {patientUser?.age && <span> • {patientUser.age} ปี</span>}
-                                      </div>
-                                    </div>
-                                  </div>
-                                </td>
-
-                                {/* 2. Responsible Therapist */}
-                                <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
-                                  <div className="flex items-center gap-1.5">
-                                    <Stethoscope className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
-                                    <span className="font-semibold text-slate-800 truncate max-w-[140px]">
-                                      {plan.therapistName}
-                                    </span>
-                                  </div>
-                                </td>
-
-                                {/* 3. Diagnosis & Joint */}
-                                <td className="py-2.5 px-3 sm:px-4">
-                                  <div className="font-bold text-[#0F2F2B] leading-tight text-xs">
-                                    {plan.diagnosis}
-                                  </div>
-                                  <div className="text-[10px] text-slate-500 mt-0.5 font-medium">
-                                    {plan.targetJoint}
-                                  </div>
-                                </td>
-
-                                {/* 4. Scheduled Day, Time, Month, Year & Station */}
-                                <td className="py-2.5 px-3 sm:px-4">
-                                  <div className="space-y-1">
-                                    <div className="flex flex-wrap gap-1">
-                                      {(plan.scheduleDays || ['จันทร์', 'พุธ', 'ศุกร์']).map((d, i) => (
-                                        <span
-                                          key={i}
-                                          className="px-1.5 py-0.2 rounded-md bg-emerald-100 text-emerald-900 font-extrabold text-[10px] border border-emerald-300"
-                                        >
-                                          {d}
-                                        </span>
-                                      ))}
-                                    </div>
-                                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
-                                      <Clock className="w-3 h-3 text-emerald-600" />
-                                      <span>{plan.timeSlot || '09:30 - 10:30 น.'}</span>
-                                      <span className="text-[10px] font-semibold text-slate-400">
-                                        ({plan.roomStation || 'ตู้ Kiosk 1'})
-                                      </span>
-                                    </div>
-                                    <div className="text-[10px] text-slate-400 font-mono">
-                                      📅 {plan.startDate || '2026-10-01'} ถึง {plan.endDate || '2026-10-31'}
-                                    </div>
-                                  </div>
-                                </td>
-
-                                {/* 5. Assigned Exercises */}
-                                <td className="py-2.5 px-3 sm:px-4">
-                                  <div className="flex flex-wrap gap-1.5 max-w-sm">
-                                    {plan.assignedExercises.map((ex, i) => (
-                                      <span
-                                        key={i}
-                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 border border-emerald-200/80 text-[11px] text-emerald-950 font-semibold shadow-2xs"
-                                      >
-                                        <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
-                                        <span>{ex.exerciseName}</span>
-                                        <span className="text-slate-400 font-normal">
-                                          ({ex.sets}x{ex.reps} {ex.holdSeconds}s)
-                                        </span>
-                                      </span>
-                                    ))}
-                                  </div>
-                                </td>
-
-                                {/* 6. Clinical Notes */}
-                                <td className="py-2.5 px-3 sm:px-4 text-slate-600 text-xs leading-relaxed max-w-[160px]">
-                                  <span className="line-clamp-2" title={plan.clinicalNotes}>
-                                    {plan.clinicalNotes || '—'}
-                                  </span>
-                                </td>
-
-                                {/* 7. Status */}
-                                <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap">
-                                  {plan.status === 'active' && (
-                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[11px] border border-emerald-300">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                      <span>กำลังรักษา</span>
-                                    </span>
-                                  )}
-                                  {plan.status === 'paused' && (
-                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold text-[11px] border border-amber-300">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                                      <span>พักชั่วคราว</span>
-                                    </span>
-                                  )}
-                                  {plan.status === 'completed' && (
-                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold text-[11px] border border-blue-300">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                                      <span>ครบโปรแกรม</span>
-                                    </span>
-                                  )}
-                                </td>
-
-                                {/* 8. Date */}
-                                <td className="py-2.5 px-3 sm:px-4 whitespace-nowrap text-slate-500 font-mono text-[11px]">
-                                  {plan.createdAt || '2026-10-01'}
-                                </td>
-
-                                {/* 9. Actions */}
-                                <td className="py-2.5 px-3 sm:px-4 text-right whitespace-nowrap">
-                                  <div className="inline-flex items-center gap-1 justify-end">
-                                    {/* Launch Kiosk */}
-                                    {onLaunchKioskExercise && (
-                                      <button
-                                        onClick={() => {
-                                          if (patientUser && onSelectPatientForKiosk) {
-                                            onSelectPatientForKiosk(patientUser);
-                                          }
-                                          if (onLaunchKioskExercise) {
-                                            onLaunchKioskExercise();
-                                          }
-                                          showToast(`เปิดตู้ Kiosk เริ่มฝึกตามตารางของ ${plan.patientName}`);
-                                          onClose();
-                                        }}
-                                        className="p-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white transition cursor-pointer shadow-2xs"
-                                        title="เริ่มฝึกตามตารางที่ตู้ Kiosk ทันที"
-                                      >
-                                        <Play className="w-3.5 h-3.5 fill-white" />
-                                      </button>
-                                    )}
-
-                                    {/* Interactive Patient Calendar */}
-                                    <button
-                                      onClick={() => {
-                                        if (patientUser) {
-                                          setCalendarPatientModal(patientUser);
-                                        } else {
-                                          setCalendarPatientModal({
-                                            id: plan.patientId,
-                                            name: plan.patientName,
-                                            code: plan.patientCode,
-                                            role: 'patient',
-                                            username: plan.patientCode,
-                                          } as UserAccount);
-                                        }
-                                      }}
-                                      className="p-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition cursor-pointer"
-                                      title="เปิดปฏิทินนัดหมายคนไข้ (Interactive Patient Calendar)"
-                                    >
-                                      <Calendar className="w-3.5 h-3.5 text-emerald-600" />
-                                    </button>
-
-                                    {/* Edit */}
-                                    <button
-                                      onClick={() => {
-                                        if (canManage) {
-                                          setSelectedPlanForEdit(plan);
-                                          setIsTreatmentPlanModalOpen(true);
-                                        } else {
-                                          showToast('สิทธิ์ไม่เพียงพอ: สามารถแก้ไขได้เฉพาะตารางของคนไข้ที่ตนเองดูแลเท่านั้น');
-                                        }
-                                      }}
-                                      disabled={!canManage}
-                                      className={`p-1.5 rounded-lg border transition ${
-                                        canManage
-                                          ? 'border-slate-200 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 cursor-pointer'
-                                          : 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50'
-                                      }`}
-                                      title={canManage ? 'แก้ไขตารางฝึก' : 'แก้ไขได้เฉพาะคนไข้ที่ตนเองดูแล'}
-                                    >
-                                      <Pencil className="w-3.5 h-3.5" />
-                                    </button>
-
-                                    {/* Delete */}
-                                    <button
-                                      onClick={() => {
-                                        if (canManage) {
-                                          setDeletingPlan(plan);
-                                        } else {
-                                          showToast('สิทธิ์ไม่เพียงพอ: สามารถลบได้เฉพาะตารางของคนไข้ที่ตนเองดูแลเท่านั้น');
-                                        }
-                                      }}
-                                      disabled={!canManage}
-                                      className={`p-1.5 rounded-lg border transition ${
-                                        canManage
-                                          ? 'border-slate-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300 cursor-pointer'
-                                          : 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50'
-                                      }`}
-                                      title={canManage ? 'ลบตารางฝึกกายภาพ' : 'ลบได้เฉพาะคนไข้ที่ตนเองดูแล'}
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
 
               {/* C. มุมมองระบบกลั่นกรองคำแนะนำทางคลินิก (Therapist Approval Gate P2-10) */}
               {scheduleViewMode === 'approvals' && (
