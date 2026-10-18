@@ -924,7 +924,16 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [scheduleDayFilter, setScheduleDayFilter] = useState<string>('all');
 
   // Interactive Calendar & Quick Info Modal States (Image 1, 2, 3 UX/UI)
-  const [selectedCalendarPatient, setSelectedCalendarPatient] = useState<any>(null);
+  const [selectedCalendarPatient, setSelectedCalendarPatient] = useState<any>(() => {
+    try {
+      const raw = localStorage.getItem('strongcare_selected_calendar_patient');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch {}
+    return null;
+  });
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<number>(16);
   const [isPatientPickerModalOpen, setIsPatientPickerModalOpen] = useState<boolean>(false);
   const [patientPickerSearch, setPatientPickerSearch] = useState<string>('');
@@ -934,6 +943,32 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [quickInfoSelectedDay, setQuickInfoSelectedDay] = useState<number | null>(null);
   const [isCourseModeModalOpen, setIsCourseModeModalOpen] = useState<boolean>(false);
   const [selectedDateForCourse, setSelectedDateForCourse] = useState<string>('2026-10-16');
+
+  // Cancelled appointment keys (persist cancellations without wiping recurring plans)
+  const [cancelledAppointmentKeys, setCancelledAppointmentKeys] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('strongcare_cancelled_appointments');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('strongcare_cancelled_appointments', JSON.stringify(cancelledAppointmentKeys));
+    } catch {}
+  }, [cancelledAppointmentKeys]);
+
+  useEffect(() => {
+    if (selectedCalendarPatient) {
+      try {
+        localStorage.setItem('strongcare_selected_calendar_patient', JSON.stringify(selectedCalendarPatient));
+      } catch {}
+    }
+  }, [selectedCalendarPatient]);
 
   // Dynamic Calendar Appointments (strictly for real active patients in the system)
   const [calendarAppointments, setCalendarAppointments] = useState<Record<number, Array<{ time: string; name: string; type: 'green' | 'cyan' | 'purple' | 'dual' }>>>(() => {
@@ -949,47 +984,6 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     return {};
   });
 
-  // Automatically prune calendar appointments for deleted or non-existent patients
-  useEffect(() => {
-    const validPatientNames = new Set(
-      users
-        .filter((u) => u.role === 'patient')
-        .flatMap((u) => [
-          (u.name || '').toLowerCase().replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').trim(),
-          (u.username || '').toLowerCase(),
-          (u.code || '').toLowerCase(),
-        ])
-        .filter(Boolean)
-    );
-
-    setCalendarAppointments((prev) => {
-      let changed = false;
-      const updated: Record<number, any[]> = {};
-      Object.keys(prev).forEach((k) => {
-        const num = Number(k);
-        const validApts = (prev[num] || []).filter((apt: any) => {
-          const aptName = (apt.name || '').toLowerCase().replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').trim();
-          return Array.from(validPatientNames).some(
-            (pName) => pName === aptName || pName.includes(aptName) || aptName.includes(pName)
-          );
-        });
-        if (validApts.length !== (prev[num] || []).length) {
-          changed = true;
-        }
-        if (validApts.length > 0) {
-          updated[num] = validApts;
-        }
-      });
-      if (changed) {
-        try {
-          localStorage.setItem('strongcare_calendar_appointments', JSON.stringify(updated));
-        } catch {}
-        return updated;
-      }
-      return prev;
-    });
-  }, [users]);
-
   // Sync calendar appointments to localStorage whenever they change
   useEffect(() => {
     try {
@@ -997,15 +991,167 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     } catch {}
   }, [calendarAppointments]);
 
+  // Thai weekday map for appointment synthesis
+  const THAI_DAY_MAP = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+
+  // Synthesize and derive all calendar appointments for the current month
+  // from BOTH treatmentPlans (authoritative source) and calendarAppointments (manual/overrides)
+  const effectiveAppointments = useMemo(() => {
+    const result: Record<number, Array<{ time: string; name: string; type: 'green' | 'cyan' | 'purple' | 'dual'; planId?: string | number }>> = {};
+    const cancelledSet = new Set(cancelledAppointmentKeys);
+
+    const currentMonthNum = scheduleSelectedMonth + 1; // 1-12
+    const monthStr = String(currentMonthNum).padStart(2, '0');
+    const yearMonthPrefix = `${scheduleSelectedYear}-${monthStr}`;
+    const daysInCurrentMonth = new Date(scheduleSelectedYear, currentMonthNum, 0).getDate() || 31;
+
+    // 1. Derive from active treatmentPlans
+    (treatmentPlans || []).forEach((plan) => {
+      if (plan.status !== 'active') return;
+      const cleanPatName = (plan.patientName || '').replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').trim();
+      if (!cleanPatName) return;
+
+      const timeOnly = plan.startTime || plan.timeSlot?.split(' - ')[0]?.trim() || '09:30';
+      const hasPhysio = (plan.assignedExercises && plan.assignedExercises.length > 0) || plan.trainingModes?.rom?.enabled !== false;
+      const hasMinigame = !!(plan.includeMinigame || plan.include_minigame || plan.trainingModes?.minigame?.enabled);
+
+      let chipType: 'green' | 'purple' | 'dual' = 'green';
+      let chipName = cleanPatName;
+      if (hasPhysio && hasMinigame) {
+        chipType = 'dual';
+        chipName = `${cleanPatName} 🎮`;
+      } else if (hasMinigame) {
+        chipType = 'purple';
+        chipName = `${cleanPatName} 🎮`;
+      } else {
+        chipType = 'green';
+        chipName = cleanPatName;
+      }
+
+      // Check dates
+      const planDates: string[] = [];
+      if (Array.isArray(plan.selectedDates) && plan.selectedDates.length > 0) {
+        plan.selectedDates.forEach((d) => {
+          if (typeof d === 'string') planDates.push(d);
+        });
+      } else if (Array.isArray(plan.scheduledDates) && plan.scheduledDates.length > 0) {
+        plan.scheduledDates.forEach((d) => {
+          if (typeof d === 'string') planDates.push(d);
+          else if (d && typeof d === 'object' && d.date && d.status !== 'missed_rescheduled') planDates.push(d.date);
+        });
+      }
+
+      if (planDates.length > 0) {
+        planDates.forEach((dStr) => {
+          if (dStr.startsWith(yearMonthPrefix)) {
+            const dayNum = parseInt(dStr.split('-')[2], 10);
+            if (dayNum >= 1 && dayNum <= daysInCurrentMonth) {
+              const cancelKeyApt = `${dStr}-${cleanPatName.toLowerCase()}-${timeOnly}`;
+              const cancelKeyDay = `${dStr}-all`;
+              if (!cancelledSet.has(cancelKeyApt) && !cancelledSet.has(cancelKeyDay)) {
+                if (!result[dayNum]) result[dayNum] = [];
+                const already = result[dayNum].some(
+                  (a) => a.time === timeOnly && a.name.toLowerCase().replace(/🎮/g, '').trim() === cleanPatName.toLowerCase()
+                );
+                if (!already) {
+                  result[dayNum].push({
+                    time: timeOnly,
+                    name: chipName,
+                    type: chipType,
+                    planId: plan.id,
+                  });
+                }
+              }
+            }
+          }
+        });
+      } else {
+        const startDate = plan.startDate || `${scheduleSelectedYear}-01-01`;
+        const endDate = plan.endDate || `${scheduleSelectedYear}-12-31`;
+        const scheduleDays = plan.scheduleDays || [];
+
+        for (let day = 1; day <= daysInCurrentMonth; day++) {
+          const dayStr = String(day).padStart(2, '0');
+          const fullDateStr = `${yearMonthPrefix}-${dayStr}`;
+
+          if (fullDateStr >= startDate && fullDateStr <= endDate) {
+            const dateObj = new Date(scheduleSelectedYear, scheduleSelectedMonth, day);
+            const weekdayName = THAI_DAY_MAP[dateObj.getDay()];
+
+            const isMatch = scheduleDays.some(
+              (sd) => sd.includes(weekdayName) || weekdayName.includes(sd)
+            );
+
+            if (isMatch) {
+              const cancelKeyApt = `${fullDateStr}-${cleanPatName.toLowerCase()}-${timeOnly}`;
+              const cancelKeyDay = `${fullDateStr}-all`;
+              if (!cancelledSet.has(cancelKeyApt) && !cancelledSet.has(cancelKeyDay)) {
+                if (!result[day]) result[day] = [];
+                const already = result[day].some(
+                  (a) => a.time === timeOnly && a.name.toLowerCase().replace(/🎮/g, '').trim() === cleanPatName.toLowerCase()
+                );
+                if (!already) {
+                  result[day].push({
+                    time: timeOnly,
+                    name: chipName,
+                    type: chipType,
+                    planId: plan.id,
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // 2. Merge manual appointments from calendarAppointments state
+    Object.keys(calendarAppointments).forEach((k) => {
+      const dayNum = Number(k);
+      if (dayNum >= 1 && dayNum <= daysInCurrentMonth) {
+        const dayStr = String(dayNum).padStart(2, '0');
+        const fullDateStr = `${yearMonthPrefix}-${dayStr}`;
+        const cancelKeyDay = `${fullDateStr}-all`;
+
+        if (!cancelledSet.has(cancelKeyDay)) {
+          (calendarAppointments[dayNum] || []).forEach((apt) => {
+            const cleanAptName = (apt.name || '').replace(/🎮/g, '').trim().toLowerCase();
+            const cancelKeyApt = `${fullDateStr}-${cleanAptName}-${apt.time}`;
+            if (!cancelledSet.has(cancelKeyApt)) {
+              if (!result[dayNum]) result[dayNum] = [];
+              const already = result[dayNum].some(
+                (a) => a.time === apt.time && a.name.toLowerCase().replace(/🎮/g, '').trim() === cleanAptName
+              );
+              if (!already) {
+                result[dayNum].push(apt);
+              }
+            }
+          });
+        }
+      }
+    });
+
+    return result;
+  }, [treatmentPlans, calendarAppointments, cancelledAppointmentKeys, scheduleSelectedMonth, scheduleSelectedYear]);
+
   // Handler: Delete single appointment on a specific date
   const handleDeleteAppointment = (day: number, aptIndex: number, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    const targetApt = calendarAppointments[day]?.[aptIndex];
+    const targetApt = (effectiveAppointments[day] || [])[aptIndex] || calendarAppointments[day]?.[aptIndex];
     if (!targetApt) return;
 
     if (!window.confirm(`ยืนยันการลบนัดหมาย "${targetApt.time} ${targetApt.name}" ในวันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]} ใช่หรือไม่?`)) {
       return;
     }
+
+    const currentMonthNum = scheduleSelectedMonth + 1;
+    const monthStr = String(currentMonthNum).padStart(2, '0');
+    const dayStr = String(day).padStart(2, '0');
+    const fullDateStr = `${scheduleSelectedYear}-${monthStr}-${dayStr}`;
+    const cleanAptName = (targetApt.name || '').replace(/🎮/g, '').trim().toLowerCase();
+    const cancelKeyApt = `${fullDateStr}-${cleanAptName}-${targetApt.time}`;
+
+    setCancelledAppointmentKeys((prev) => Array.from(new Set([...prev, cancelKeyApt])));
 
     setCalendarAppointments((prev) => {
       const next = { ...prev };
@@ -1034,7 +1180,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   // Handler: Delete all appointments on a specific day (ลบวันนัด)
   const handleDeleteDayAppointments = (day: number, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    const dayApts = calendarAppointments[day] || [];
+    const dayApts = effectiveAppointments[day] || calendarAppointments[day] || [];
     if (dayApts.length === 0) {
       showToast(`วันที่ ${day} ยังไม่มีรายการนัดหมาย`);
       return;
@@ -1044,6 +1190,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     if (!window.confirm(`ยืนยันการลบวันนัดหมายในวันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]} (${names}) ใช่หรือไม่?`)) {
       return;
     }
+
+    const currentMonthNum = scheduleSelectedMonth + 1;
+    const monthStr = String(currentMonthNum).padStart(2, '0');
+    const dayStr = String(day).padStart(2, '0');
+    const fullDateStr = `${scheduleSelectedYear}-${monthStr}-${dayStr}`;
+    const cancelKeyDay = `${fullDateStr}-all`;
+
+    setCancelledAppointmentKeys((prev) => Array.from(new Set([...prev, cancelKeyDay])));
 
     setCalendarAppointments((prev) => {
       const next = { ...prev };
@@ -1062,7 +1216,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     showToast(`🗑️ ลบวันนัดหมายวันที่ ${day} เรียบร้อยแล้ว`);
   };
 
-  // Default selected calendar patient to first available real patient
+  // Default selected calendar patient to first available real patient if none selected
   useEffect(() => {
     if (!selectedCalendarPatient && users.length > 0) {
       const firstPat = users.find((u) => u.role === 'patient');
@@ -1071,6 +1225,22 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       }
     }
   }, [users, selectedCalendarPatient]);
+
+  // Keep selectedCalendarPatient in sync with freshest patient object from users
+  useEffect(() => {
+    if (selectedCalendarPatient && users.length > 0) {
+      const matched = users.find(
+        (u) =>
+          u.role === 'patient' &&
+          (u.id === selectedCalendarPatient.id ||
+            u.code === selectedCalendarPatient.code ||
+            (u.name && selectedCalendarPatient.name && u.name.trim().toLowerCase() === selectedCalendarPatient.name.trim().toLowerCase()))
+      );
+      if (matched && (matched.name !== selectedCalendarPatient.name || matched.id !== selectedCalendarPatient.id)) {
+        setSelectedCalendarPatient(matched);
+      }
+    }
+  }, [users]);
 
   // AI Clinical Approval Gate States (Human-in-the-Loop Protocol)
   interface AiRecommendationProposal {
@@ -3138,7 +3308,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         </div>
 
                         {/* Selected Day Quick Action: Delete Date button */}
-                        {calendarAppointments[selectedCalendarDay]?.length > 0 && (
+                        {((effectiveAppointments[selectedCalendarDay]?.length || 0) > 0 || (calendarAppointments[selectedCalendarDay]?.length || 0) > 0) && (
                           <button
                             type="button"
                             onClick={(e) => handleDeleteDayAppointments(selectedCalendarDay, e)}
@@ -3212,11 +3382,12 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         const isToday = day === 14;
                         const isSelected = day === selectedCalendarDay;
                         // Strictly filter out non-patients and only show real patients currently in users
-                        const rawApts = calendarAppointments[day] || [];
+                        const rawApts = effectiveAppointments[day] || calendarAppointments[day] || [];
                         const dayAppointments = rawApts.filter((apt) => {
                           const n = (apt.name || '').toLowerCase().trim();
                           if (!n) return false;
-                          const cleanName = n.replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').trim().toLowerCase();
+                          const cleanName = n.replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').replace(/🎮/g, '').trim().toLowerCase();
+                          if (users.length <= 4) return true;
                           return users.some(
                             (u) =>
                               u.role === 'patient' &&
@@ -3236,10 +3407,13 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                           .toLowerCase();
                         const displayedAppointments = scheduleViewMode === 'individual'
                           ? dayAppointments.filter(
-                              (apt) =>
-                                cleanSelectedPatientName &&
-                                ((apt.name || '').toLowerCase().includes(cleanSelectedPatientName) ||
-                                  cleanSelectedPatientName.includes((apt.name || '').toLowerCase()))
+                              (apt) => {
+                                const aptClean = (apt.name || '').toLowerCase().replace(/🎮/g, '').trim();
+                                return (
+                                  cleanSelectedPatientName &&
+                                  (aptClean.includes(cleanSelectedPatientName) || cleanSelectedPatientName.includes(aptClean))
+                                );
+                              }
                             )
                           : dayAppointments;
 
@@ -3284,7 +3458,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setQuickInfoSelectedDay(day);
-                                    const cleanApt = apt.name.replace(/^(นาย|นาง|นางสาว)\s*/, '').trim().toLowerCase();
+                                    const cleanApt = apt.name.replace(/^(นาย|นาง|นางสาว)\s*/, '').replace(/🎮/g, '').trim().toLowerCase();
                                     const targetPat =
                                       users.find(
                                         (u) =>
@@ -3330,7 +3504,9 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      setSelectedDateForCourse(`2026-10-${String(day).padStart(2, '0')}`);
+                                      const mStr = String(scheduleSelectedMonth + 1).padStart(2, '0');
+                                      const dStr = String(day).padStart(2, '0');
+                                      setSelectedDateForCourse(`${scheduleSelectedYear}-${mStr}-${dStr}`);
                                       setIsCourseModeModalOpen(true);
                                     }}
                                     className="w-full py-1.5 px-2 bg-[#009FD9] hover:bg-[#0089BD] text-white rounded-full text-[11px] font-black shadow-xs hover:shadow transition flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
@@ -3338,7 +3514,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                   >
                                     <span>+ ตัดคอร์สที่นี่</span>
                                   </button>
-                                  {dayAppointments.length > 0 && (
+                                  {(dayAppointments.length > 0 || (effectiveAppointments[day]?.length || 0) > 0) && (
                                     <button
                                       type="button"
                                       onClick={(e) => handleDeleteDayAppointments(day, e)}
@@ -5436,6 +5612,11 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               ? courseData.selectedDates
               : [courseData.date];
 
+            // Clear any prior cancellation records matching these newly scheduled dates
+            setCancelledAppointmentKeys((prev) =>
+              prev.filter((k) => !allDates.some((d) => k.startsWith(d)))
+            );
+
             setCalendarAppointments((prev) => {
               const next = { ...prev };
               allDates.forEach((dStr) => {
@@ -5454,6 +5635,16 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                 ? `มินิเกมฝึกสมอง (${courseData.minigameQuestionCount} ข้อ)`
                 : `กายภาพปกติ (ROM Exercise)`;
 
+            const calculatedDays = Array.from(
+              new Set(
+                allDates.map((dStr) => {
+                  const parts = dStr.split('-').map(Number);
+                  const d = new Date(parts[0], parts[1] - 1, parts[2]);
+                  return THAI_DAY_MAP[d.getDay()] || 'จันทร์';
+                })
+              )
+            );
+
             saveTreatmentPlan({
               id: `plan_${Date.now()}`,
               patientId: courseData.patientId,
@@ -5466,7 +5657,9 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               assignedExercises: courseData.includePhysio ? courseData.assignedExercises : [],
               clinicalNotes: courseData.notes || `ตัดคอร์ส ${modeLabel} จำนวน ${allDates.length} ครั้ง (เริ่ม ${courseData.date})`,
               status: 'active',
-              scheduleDays: ['จันทร์', 'ศุกร์'],
+              scheduleDays: calculatedDays.length > 0 ? calculatedDays : ['จันทร์', 'ศุกร์'],
+              selectedDates: allDates,
+              scheduledDates: allDates,
               timeSlot: courseData.timeSlot,
               startTime: timeOnly,
               endTime: courseData.timeSlot.split(' - ')[1] || '10:30',

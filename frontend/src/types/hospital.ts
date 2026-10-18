@@ -166,6 +166,7 @@ export interface TreatmentPlan {
   // Timetable Scheduling (ตารางจัดเวลาเหมือนตารางเรียน)
   scheduleDays?: string[];  // วันที่ลงฝึก เช่น ['จันทร์', 'พุธ', 'ศุกร์']
   scheduledDates?: (string | { date: string; status: 'scheduled' | 'completed' | 'missed_rescheduled' })[];
+  selectedDates?: string[]; // วันที่ระบุเฉพาะเจาะจง เช่น ['2026-10-16', '2026-10-19', '2026-10-21']
   timeSlot?: string;        // ช่วงเวลา เช่น '09:30 - 10:30'
   startTime?: string;       // เวลาเริ่มต้น เช่น '09:30'
   endTime?: string;         // เวลาสิ้นสุด เช่น '10:30'

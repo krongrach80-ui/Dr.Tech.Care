@@ -620,18 +620,21 @@ const getStoredTreatmentPlans = (): TreatmentPlan[] => {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
         const cleaned = parsed.filter(
-          (p: TreatmentPlan) => p.patientName?.toUpperCase() !== 'PJ' && p.patientCode !== 'P-3059'
+          (p: TreatmentPlan) => p.patientCode !== 'P-3059'
         );
-        // Clean localStorage if it contained fake PJ plan
+        // Clean localStorage if it contained obsolete mock P-3059
         if (cleaned.length !== parsed.length) {
           localStorage.setItem('strongcare_hospital_treatment_plans', JSON.stringify(cleaned));
         }
+        if (cleaned.length === 0) return INITIAL_TREATMENT_PLANS;
         return cleaned.map((p: TreatmentPlan, idx: number) => {
           const fallback = INITIAL_TREATMENT_PLANS[idx % INITIAL_TREATMENT_PLANS.length];
           return {
             ...fallback,
             ...p,
             scheduleDays: p.scheduleDays && p.scheduleDays.length > 0 ? p.scheduleDays : fallback.scheduleDays,
+            selectedDates: p.selectedDates || (Array.isArray(p.scheduledDates) ? p.scheduledDates.map((d: any) => typeof d === 'string' ? d : d.date) : undefined),
+            scheduledDates: p.scheduledDates || p.selectedDates,
             timeSlot: p.timeSlot || fallback.timeSlot,
             startTime: p.startTime || fallback.startTime,
             endTime: p.endTime || fallback.endTime,
