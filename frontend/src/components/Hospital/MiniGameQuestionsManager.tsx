@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Gamepad2,
   Plus,
@@ -297,19 +298,19 @@ export const MiniGameQuestionsManager: React.FC<MiniGameQuestionsManagerProps> =
       {/* =================================================================== */}
       {/* MODAL: ADD / EDIT QUESTION                                          */}
       {/* =================================================================== */}
-      {isModalOpen && (
+      {isModalOpen && typeof document !== 'undefined' && createPortal(
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[#0F2F2B]/60 backdrop-blur-sm animate-fadeIn"
+          className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-[#0F2F2B]/75 backdrop-blur-sm animate-fadeIn"
           onClick={() => setIsModalOpen(false)}
         >
           <div
-            className="w-full max-w-lg bg-white rounded-[32px] shadow-2xl border border-emerald-100 overflow-hidden animate-scaleUp text-left"
+            className="w-full max-w-lg bg-white rounded-[32px] shadow-2xl border border-emerald-100 overflow-hidden animate-scaleIn text-left my-auto max-h-[92vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="p-5 sm:p-6 border-b border-slate-100 flex items-center justify-between">
+            <div className="p-5 sm:p-6 border-b border-slate-100 flex items-center justify-between flex-shrink-0 bg-gradient-to-r from-emerald-50/60 via-white to-teal-50/40">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-purple-100 text-purple-700 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-500 to-indigo-600 text-white flex items-center justify-center shadow-md shadow-purple-500/20">
                   <Gamepad2 className="w-5 h-5 stroke-[2.2]" />
                 </div>
                 <div>
@@ -324,14 +325,14 @@ export const MiniGameQuestionsManager: React.FC<MiniGameQuestionsManagerProps> =
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+                className="w-8 h-8 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 flex items-center justify-center transition cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Form Body */}
-            <form onSubmit={handleSave} className="p-5 sm:p-6 space-y-4">
+            <form onSubmit={handleSave} className="p-5 sm:p-6 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
               <div className="grid grid-cols-3 gap-3">
                 {/* Emoji */}
                 <div className="col-span-1">
@@ -448,7 +449,7 @@ export const MiniGameQuestionsManager: React.FC<MiniGameQuestionsManagerProps> =
               </div>
 
               {/* Actions */}
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2.5">
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2.5 flex-shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
@@ -466,7 +467,8 @@ export const MiniGameQuestionsManager: React.FC<MiniGameQuestionsManagerProps> =
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

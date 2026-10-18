@@ -4321,7 +4321,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
       {/* 6.1 TEMPORARY PASSWORD DISPLAY MODAL (Shows once upon reset) */}
       {resetResult && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fadeIn">
           <div className="bg-white rounded-3xl border-2 border-emerald-400 p-6 sm:p-8 max-w-md w-full shadow-2xl text-center space-y-5">
             <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto border border-emerald-300 shadow-sm">
               <KeyRound className="w-7 h-7 text-emerald-700" />
@@ -4600,7 +4600,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       {/* ==================================================================== */}
       {isAddTherapistOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0F2F2B]/60 backdrop-blur-sm animate-fadeIn"
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-[#0F2F2B]/60 backdrop-blur-sm animate-fadeIn"
           onClick={() => setIsAddTherapistOpen(false)}
         >
           <div
@@ -5190,7 +5190,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       {/* ==================================================================== */}
       {isPatientPickerModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0F2F2B]/60 backdrop-blur-sm animate-fadeIn"
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-[#0F2F2B]/60 backdrop-blur-sm animate-fadeIn"
           onClick={() => setIsPatientPickerModalOpen(false)}
         >
           <div
