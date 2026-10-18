@@ -1,12 +1,13 @@
 -- ============================================================================
 -- DR.TECH.CARE: Phase 1 - Migration 3: Storage Buckets & Policies
--- Buckets: avatars (public), biometric-data (PRIVATE), exercise-media (public)
+-- Buckets: avatars (PRIVATE - signed URLs), biometric-data (PRIVATE), exercise-media (public)
 -- ============================================================================
 
 -- 1. Create Buckets
+-- avatars is made PRIVATE to protect patient photo privacy per Item 2.
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES 
-  ('avatars', 'avatars', true, 5242880, ARRAY['image/jpeg', 'image/png', 'image/webp']),
+  ('avatars', 'avatars', false, 5242880, ARRAY['image/jpeg', 'image/png', 'image/webp']),
   ('biometric-data', 'biometric-data', false, 10485760, ARRAY['image/jpeg', 'image/png']),
   ('exercise-media', 'exercise-media', true, 52428800, ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'video/mp4', 'video/webm'])
 ON CONFLICT (id) DO UPDATE SET
@@ -16,21 +17,39 @@ ON CONFLICT (id) DO UPDATE SET
 
 -- 2. Storage Policies on storage.objects
 
--- AVATARS (Public Read, Authenticated Write)
+-- AVATARS (Private Bucket: Authenticated Staff Read via Signed URLs / Staff Session, Staff Write)
 DROP POLICY IF EXISTS "avatars_public_select" ON storage.objects;
-CREATE POLICY "avatars_public_select" ON storage.objects
-FOR SELECT TO public
-USING (bucket_id = 'avatars');
+DROP POLICY IF EXISTS "avatars_staff_select" ON storage.objects;
+CREATE POLICY "avatars_staff_select" ON storage.objects
+FOR SELECT TO authenticated
+USING (
+  bucket_id = 'avatars'
+  AND public.current_app_role() IN ('admin', 'therapist')
+);
 
 DROP POLICY IF EXISTS "avatars_staff_insert" ON storage.objects;
 CREATE POLICY "avatars_staff_insert" ON storage.objects
 FOR INSERT TO authenticated
-WITH CHECK (bucket_id = 'avatars');
+WITH CHECK (
+  bucket_id = 'avatars'
+  AND public.current_app_role() IN ('admin', 'therapist')
+);
 
 DROP POLICY IF EXISTS "avatars_staff_update" ON storage.objects;
 CREATE POLICY "avatars_staff_update" ON storage.objects
 FOR UPDATE TO authenticated
-USING (bucket_id = 'avatars');
+USING (
+  bucket_id = 'avatars'
+  AND public.current_app_role() IN ('admin', 'therapist')
+);
+
+DROP POLICY IF EXISTS "avatars_admin_delete" ON storage.objects;
+CREATE POLICY "avatars_admin_delete" ON storage.objects
+FOR DELETE TO authenticated
+USING (
+  bucket_id = 'avatars'
+  AND public.is_admin()
+);
 
 -- BIOMETRIC DATA (Strictly Private - NO Public URL)
 -- Only authenticated staff can read/write; anon has zero access.

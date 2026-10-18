@@ -9,7 +9,7 @@ CREATE OR REPLACE FUNCTION public.auto_reschedule_missed_appointments()
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_today date;
@@ -97,6 +97,9 @@ BEGIN
   );
 END;
 $$;
+
+REVOKE EXECUTE ON FUNCTION public.auto_reschedule_missed_appointments() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.auto_reschedule_missed_appointments() TO service_role;
 
 -- 2. Schedule pg_cron Job (if pg_cron extension is available on Supabase)
 DO $$
