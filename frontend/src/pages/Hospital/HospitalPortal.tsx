@@ -738,9 +738,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   ) => {
     updateUser(userId, updatedData);
     if (therapistExtra) {
-      const existingTherapist = therapists.find((t) => t.id === userId);
+      const existingTherapist = therapists.find(
+        (t) =>
+          t.id === userId ||
+          (t.code && updatedData.code && t.code.trim().toUpperCase() === updatedData.code.trim().toUpperCase()) ||
+          (t.name && updatedData.name && t.name.trim().toLowerCase() === updatedData.name.trim().toLowerCase())
+      );
       if (existingTherapist) {
-        updateTherapist(userId, therapistExtra);
+        updateTherapist(existingTherapist.id, therapistExtra);
       } else {
         addTherapist({
           code: updatedData.code || `T-${Math.floor(100 + Math.random() * 900)}`,

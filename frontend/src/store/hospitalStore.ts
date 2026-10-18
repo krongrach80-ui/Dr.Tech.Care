@@ -193,6 +193,20 @@ const INITIAL_USERS: UserAccount[] = [
     last_active: 'พร้อมให้บริการ',
   },
   {
+    id: 5,
+    username: 'pt_waranyoo',
+    name: 'กภ. วรัญญู รัตนเวช',
+    role: 'therapist',
+    status: 'active',
+    code: 'T-012',
+    password: DEFAULT_PASSWORD_HASH,
+    must_change_password: false,
+    phone: '086-112-3344',
+    email: 'waranyoo.r@strongcare.hospital',
+    created_at: '2026-02-01',
+    last_active: 'พร้อมให้บริการ',
+  },
+  {
     id: 12,
     username: 'somchai',
     name: 'นายสมชาย ใจดี',
@@ -1061,7 +1075,21 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
             })
           : get().users.filter((u) => u.role !== 'patient');
 
-        // Synchronize any therapist in therapists list that is missing from staffUsers (e.g. 'pj')
+        // Always ensure all core staff from INITIAL_USERS (admin, thanakorn, pimchanok, pjj, pt_waranyoo) are present
+        for (const initU of INITIAL_USERS) {
+          if (initU.role !== 'patient') {
+            const exists = staffUsers.some(
+              (u) =>
+                (u.code && initU.code && u.code.trim().toUpperCase() === initU.code.trim().toUpperCase()) ||
+                u.username.toLowerCase() === initU.username.toLowerCase()
+            );
+            if (!exists) {
+              staffUsers.push(initU);
+            }
+          }
+        }
+
+        // Synchronize any therapist in therapists list that is missing from staffUsers (e.g. 'pj', 'waranyoo')
         const existingStaffCodes = new Set(staffUsers.map((u) => String(u.code || '').trim().toUpperCase()));
         const existingStaffUsernames = new Set(staffUsers.map((u) => String(u.username || '').trim().toLowerCase()));
         const existingStaffNames = new Set(staffUsers.map((u) => String(u.name || '').trim().toLowerCase()));
@@ -1071,9 +1099,12 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
             const tNameClean = (t.name || '').trim().toLowerCase();
             const tCodeUpper = String(t.code || '').trim().toUpperCase();
             const isPj = tNameClean === 'pjj' || tNameClean === 'pj' || tCodeUpper === 'T-6512' || (t.email && t.email.toLowerCase().includes('pjj'));
+            const isWaranyoo = tCodeUpper === 'T-012' || tNameClean.includes('วรัญญู');
 
             const suggestedUsername = isPj
               ? 'pjj'
+              : isWaranyoo
+              ? 'pt_waranyoo'
               : (t.email && !t.email.includes('drtechcare.com') && !t.email.includes('example.com')
                   ? t.email.split('@')[0].toLowerCase()
                   : (t.name.toLowerCase().replace(/^(กภ\.|นาย|นางสาว|ดร\.)\s*/, '').trim().replace(/\s+/g, '_') || t.code.toLowerCase().replace(/[^a-z0-9]/g, '')));
@@ -1251,21 +1282,17 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
           }
         }
 
-        if (therapists && therapists.length > 0) {
-          // Deduplicate therapists by code and clean name
-          const seenTherapistKeys = new Set<string>();
-          const dedupedTherapists: PhysicalTherapist[] = [];
-          for (const t of therapists) {
-            const key = `${String(t.code || '').trim().toUpperCase()}_${(t.name || '').trim().toLowerCase()}`;
-            if (!seenTherapistKeys.has(key)) {
-              seenTherapistKeys.add(key);
-              dedupedTherapists.push(t);
-            }
-          }
-          if (get().therapists.length !== dedupedTherapists.length) {
-            set({ therapists: dedupedTherapists });
+        const combinedTherapists = [...(therapists || []), ...INITIAL_THERAPISTS];
+        const seenTherapistCodes = new Set<string>();
+        const dedupedTherapists: PhysicalTherapist[] = [];
+        for (const t of combinedTherapists) {
+          const codeUpper = String(t.code || '').trim().toUpperCase();
+          if (codeUpper && !seenTherapistCodes.has(codeUpper)) {
+            seenTherapistCodes.add(codeUpper);
+            dedupedTherapists.push(t);
           }
         }
+        set({ therapists: dedupedTherapists });
         if (exercises && exercises.length > 0 && get().exercises.length !== exercises.length) {
           set({ exercises });
         }
@@ -2046,9 +2073,34 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   },
 
   updateTherapist: (id, data) => {
-    set((state) => ({
-      therapists: state.therapists.map((t) => (t.id === id ? { ...t, ...data } : t)),
-    }));
+    set((state) => {
+      const updatedTherapists = state.therapists.map((t) => (t.id === id ? { ...t, ...data } : t));
+      const target = updatedTherapists.find((t) => t.id === id);
+      let updatedUsers = state.users;
+      if (target) {
+        updatedUsers = state.users.map((u) => {
+          const match =
+            String(u.id) === String(id) ||
+            (u.code && target.code && u.code.trim().toUpperCase() === target.code.trim().toUpperCase()) ||
+            u.name.trim().toLowerCase() === (target.name || '').trim().toLowerCase();
+          if (match) {
+            return {
+              ...u,
+              name: data.name ?? u.name,
+              phone: data.phone ?? u.phone,
+              email: data.email ?? u.email,
+              status: data.status === 'suspended' ? 'suspended' : 'active',
+            };
+          }
+          return u;
+        });
+        persistUsers(updatedUsers);
+      }
+      return {
+        therapists: updatedTherapists,
+        users: updatedUsers,
+      };
+    });
     get().addActivityLog('แก้ไขข้อมูลนักกายภาพบำบัด', 'THERAPIST', `อัปเดตข้อมูลนักกายภาพ ID: ${id}`);
 
     if (supabaseService.isConfigured()) {
@@ -2057,9 +2109,24 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   },
 
   deleteTherapist: (id) => {
-    set((state) => ({
-      therapists: state.therapists.filter((t) => t.id !== id),
-    }));
+    set((state) => {
+      const target = state.therapists.find((t) => t.id === id);
+      const filteredTherapists = state.therapists.filter((t) => t.id !== id);
+      let filteredUsers = state.users;
+      if (target) {
+        filteredUsers = state.users.filter((u) => {
+          const match =
+            String(u.id) === String(id) ||
+            (u.code && target.code && u.code.trim().toUpperCase() === target.code.trim().toUpperCase());
+          return !match;
+        });
+        persistUsers(filteredUsers);
+      }
+      return {
+        therapists: filteredTherapists,
+        users: filteredUsers,
+      };
+    });
     get().addActivityLog('ลบข้อมูลนักกายภาพบำบัด', 'THERAPIST', `ลบนักกายภาพ ID: ${id}`);
   },
 
