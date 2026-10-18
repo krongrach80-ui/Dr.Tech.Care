@@ -25,6 +25,21 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_url text;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 
+-- Ensure username conforms to [a-z0-9._-]{3,32}
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'profiles_username_format_check'
+  ) THEN
+    ALTER TABLE public.profiles 
+      ADD CONSTRAINT profiles_username_format_check 
+      CHECK (username ~ '^[a-z0-9._-]{3,32}$');
+  END IF;
+END $$;
+
+-- Sequence for server-side HN generation (P-####)
+CREATE SEQUENCE IF NOT EXISTS public.patient_hn_seq START WITH 1001;
+
 -- 3. Enhance Patients Table (profile_id is nullable; patients do not have auth accounts)
 CREATE TABLE IF NOT EXISTS public.patients (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -373,3 +388,56 @@ CREATE INDEX IF NOT EXISTS idx_temp_coverage_active ON public.temporary_coverage
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON public.audit_logs(actor_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON public.audit_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_kiosk_tokens_hash ON public.kiosk_tokens(token_hash);
+
+-- ============================================================================
+-- 20. PRODUCTION REFERENCE DATA (Settings Defaults & Core Clinical Mini-Games)
+-- Uses ON CONFLICT DO NOTHING so re-running never resets tuned values.
+-- ============================================================================
+
+-- Core System Settings Defaults
+INSERT INTO public.system_settings (key, value)
+VALUES 
+  ('FEATURE_PT_POSE_EXERCISES', 'false'::jsonb),
+  ('FACE_THRESHOLD', '0.5'::jsonb),
+  ('FACE_MARGIN', '0.1'::jsonb),
+  ('PLACEHOLDER_SECONDS', '4'::jsonb),
+  ('KIOSK_SESSION_TIMEOUT_SECONDS', '90'::jsonb)
+ON CONFLICT (key) DO NOTHING;
+
+-- Clinical Mini-Games (MG-01 & MG-02)
+INSERT INTO public.exercises (code, slug, name_th, name_en, category, kind, is_minigame, difficulty, default_reps, default_sets, rest_seconds, instructions, benefits, is_active)
+VALUES 
+  (
+    'MG-01',
+    'mg-balloon-pop',
+    'Balloon Pop (เกมเป่าลูกโป่ง)',
+    'Balloon Pop Minigame',
+    'มินิเกมฝึกประสานสายตาและมือ',
+    'single',
+    true,
+    'easy',
+    10,
+    3,
+    30,
+    'ยกแขนแตะลูกโป่งที่ลอยขึ้นมาให้แตกตามสีที่กำหนด',
+    'ฝึกการตอบสนองของระบบประสาทสั่งการและการเคลื่อนไหวข้อไหล่',
+    true
+  ),
+  (
+    'MG-02',
+    'mg-reach-and-catch',
+    'Reach & Catch (เกมเอื้อมจับดาว)',
+    'Reach & Catch Minigame',
+    'มินิเกมฝึกการทรงตัวและการเอื้อม',
+    'single',
+    true,
+    'medium',
+    10,
+    3,
+    30,
+    'เอื้อมมือซ้าย-ขวาตามดาวที่ปรากฏบนหน้าจอเพื่อทำคะแนน',
+    'เพิ่มช่วงการเคลื่อนไหวของข้อต่อและกล้ามเนื้อแกนกลางลำตัว',
+    true
+  )
+ON CONFLICT (code) DO NOTHING;
+

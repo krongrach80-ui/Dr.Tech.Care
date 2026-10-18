@@ -1,6 +1,9 @@
 -- ========================================================
--- DR.TECH.CARE COMBINED STAGING MIGRATION BUNDLE
--- Generated: 2026-10-18T23:08:14.521Z
+-- DR.TECH.CARE: ALL PRODUCTION & STAGING MIGRATIONS
+-- Includes: Core Schema, Extensions, Helpers, Strict RLS,
+--           Triggers, Storage Buckets, Autoreschedule Cron,
+--           and Reference Data (Settings & Clinical Mini-Games).
+-- Generated: 2026-10-18T23:34:15.703Z
 -- ========================================================
 
 
@@ -31,6 +34,21 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_url text;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+
+-- Ensure username conforms to [a-z0-9._-]{3,32}
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'profiles_username_format_check'
+  ) THEN
+    ALTER TABLE public.profiles 
+      ADD CONSTRAINT profiles_username_format_check 
+      CHECK (username ~ '^[a-z0-9._-]{3,32}$');
+  END IF;
+END $$;
+
+-- Sequence for server-side HN generation (P-####)
+CREATE SEQUENCE IF NOT EXISTS public.patient_hn_seq START WITH 1001;
 
 -- 3. Enhance Patients Table (profile_id is nullable; patients do not have auth accounts)
 CREATE TABLE IF NOT EXISTS public.patients (
@@ -381,6 +399,59 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON public.audit_logs(actor_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON public.audit_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_kiosk_tokens_hash ON public.kiosk_tokens(token_hash);
 
+-- ============================================================================
+-- 20. PRODUCTION REFERENCE DATA (Settings Defaults & Core Clinical Mini-Games)
+-- Uses ON CONFLICT DO NOTHING so re-running never resets tuned values.
+-- ============================================================================
+
+-- Core System Settings Defaults
+INSERT INTO public.system_settings (key, value)
+VALUES 
+  ('FEATURE_PT_POSE_EXERCISES', 'false'::jsonb),
+  ('FACE_THRESHOLD', '0.5'::jsonb),
+  ('FACE_MARGIN', '0.1'::jsonb),
+  ('PLACEHOLDER_SECONDS', '4'::jsonb),
+  ('KIOSK_SESSION_TIMEOUT_SECONDS', '90'::jsonb)
+ON CONFLICT (key) DO NOTHING;
+
+-- Clinical Mini-Games (MG-01 & MG-02)
+INSERT INTO public.exercises (code, slug, name_th, name_en, category, kind, is_minigame, difficulty, default_reps, default_sets, rest_seconds, instructions, benefits, is_active)
+VALUES 
+  (
+    'MG-01',
+    'mg-balloon-pop',
+    'Balloon Pop (เกมเป่าลูกโป่ง)',
+    'Balloon Pop Minigame',
+    'มินิเกมฝึกประสานสายตาและมือ',
+    'single',
+    true,
+    'easy',
+    10,
+    3,
+    30,
+    'ยกแขนแตะลูกโป่งที่ลอยขึ้นมาให้แตกตามสีที่กำหนด',
+    'ฝึกการตอบสนองของระบบประสาทสั่งการและการเคลื่อนไหวข้อไหล่',
+    true
+  ),
+  (
+    'MG-02',
+    'mg-reach-and-catch',
+    'Reach & Catch (เกมเอื้อมจับดาว)',
+    'Reach & Catch Minigame',
+    'มินิเกมฝึกการทรงตัวและการเอื้อม',
+    'single',
+    true,
+    'medium',
+    10,
+    3,
+    30,
+    'เอื้อมมือซ้าย-ขวาตามดาวที่ปรากฏบนหน้าจอเพื่อทำคะแนน',
+    'เพิ่มช่วงการเคลื่อนไหวของข้อต่อและกล้ามเนื้อแกนกลางลำตัว',
+    true
+  )
+ON CONFLICT (code) DO NOTHING;
+
+
 
 -- >>> FILE: 20261019000002_security_helpers_and_rls.sql <<<
 -- ============================================================================
@@ -446,17 +517,21 @@ BEGIN
     RETURN true;
   END IF;
 
-  -- Therapist can only edit patient profiles
+  -- Therapist can only edit patients (never admin or fellow therapists)
   IF v_actor_role = 'therapist' THEN
+    -- Check if target is a staff profile (admin or therapist)
     SELECT role INTO v_target_role 
     FROM public.profiles 
-    WHERE id = target_user_id;
+    WHERE id = target_user_id 
+      AND deleted_at IS NULL;
 
-    -- If target is in patients table or has role 'patient', therapist can edit
-    IF v_target_role = 'patient' THEN
-      RETURN true;
+    -- If target is an admin or fellow therapist, therapist is strictly forbidden
+    IF v_target_role IN ('admin', 'therapist') THEN
+      RETURN false;
     END IF;
 
+    -- Patients have NO auth user or profiles row.
+    -- Resolves target_user_id directly from public.patients (id = target_user_id):
     IF EXISTS (SELECT 1 FROM public.patients WHERE id = target_user_id OR profile_id = target_user_id) THEN
       RETURN true;
     END IF;
@@ -614,7 +689,7 @@ CREATE TRIGGER trg_immutable_audit_logs
 BEFORE UPDATE OR DELETE ON public.audit_logs
 FOR EACH ROW EXECUTE FUNCTION public.trg_block_audit_logs_mutation();
 
--- Guard: Reject Pose Exercises in Routine Items when FEATURE_PT_POSE_EXERCISES = false
+-- Guard: When FEATURE_PT_POSE_EXERCISES is false, routine_items may ONLY reference exercises with is_minigame = true
 CREATE OR REPLACE FUNCTION public.trg_check_pose_exercise_guard()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -622,25 +697,25 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_feature_flag text;
-  v_is_pose boolean;
+  v_pose_flag text;
+  v_is_minigame boolean;
 BEGIN
-  -- Read feature flag from system_settings
-  SELECT COALESCE(value->>'FEATURE_PT_POSE_EXERCISES', value->>'pt_pose_exercises', 'false')
-  INTO v_feature_flag
+  -- Single source of truth: Read FEATURE_PT_POSE_EXERCISES from system_settings
+  SELECT trim(both '"' from value::text)
+  INTO v_pose_flag
   FROM public.system_settings
-  WHERE key IN ('FEATURE_PT_POSE_EXERCISES', 'features')
-  LIMIT 1;
+  WHERE key = 'FEATURE_PT_POSE_EXERCISES';
 
-  -- If feature is not explicitly enabled ('true'), verify exercise category
-  IF COALESCE(v_feature_flag, 'false') != 'true' THEN
-    SELECT (category ILIKE '%pose%' OR instructions ILIKE '%pose%' OR name_th ILIKE '%pose%')
-    INTO v_is_pose
+  -- If pose exercises are not enabled ('true'), routine_items may ONLY reference exercises with is_minigame = true
+  IF COALESCE(v_pose_flag, 'false') != 'true' THEN
+    SELECT COALESCE(is_minigame, false)
+    INTO v_is_minigame
     FROM public.exercises
     WHERE id = NEW.exercise_id;
 
-    IF v_is_pose = true THEN
-      RAISE EXCEPTION 'Pose exercises are currently locked (FEATURE_PT_POSE_EXERCISES = false). Cannot assign pose exercise.';
+    IF v_is_minigame != true THEN
+      RAISE EXCEPTION 'Pose exercises are currently locked (FEATURE_PT_POSE_EXERCISES = false). Routine items may only reference mini-games (is_minigame = true).'
+        USING ERRCODE = 'P0001';
     END IF;
   END IF;
 
@@ -657,105 +732,21 @@ BEFORE INSERT OR UPDATE ON public.routine_items
 FOR EACH ROW EXECUTE FUNCTION public.trg_check_pose_exercise_guard();
 
 -- ============================================================================
--- 3. PERMANENTLY DROP ALL OLD OPEN POLICIES BY NAME
--- Eliminates every legacy policy that used USING (true) or WITH CHECK (true).
+-- 3. DYNAMICALLY DROP ALL EXISTING POLICIES IN SCHEMA PUBLIC
+-- Automatically eliminates every legacy policy before recreating strict ones.
 -- ============================================================================
 
--- profiles legacy policies
-DROP POLICY IF EXISTS "profiles_select" ON public.profiles;
-DROP POLICY IF EXISTS "profiles_write" ON public.profiles;
-DROP POLICY IF EXISTS "profiles_update_self" ON public.profiles;
-DROP POLICY IF EXISTS "profiles_admin_all" ON public.profiles;
-DROP POLICY IF EXISTS "profiles_read_auth" ON public.profiles;
-DROP POLICY IF EXISTS "profiles_self_update" ON public.profiles;
-
--- patients legacy policies
-DROP POLICY IF EXISTS "patients_select" ON public.patients;
-DROP POLICY IF EXISTS "patients_write" ON public.patients;
-DROP POLICY IF EXISTS "patients_admin_all" ON public.patients;
-DROP POLICY IF EXISTS "patients_therapist_select" ON public.patients;
-DROP POLICY IF EXISTS "patients_therapist_write" ON public.patients;
-DROP POLICY IF EXISTS "patients_self_select" ON public.patients;
-DROP POLICY IF EXISTS "patients_read_staff" ON public.patients;
-DROP POLICY IF EXISTS "patients_pt_insert" ON public.patients;
-DROP POLICY IF EXISTS "patients_pt_update" ON public.patients;
-
--- therapists legacy policies
-DROP POLICY IF EXISTS "therapists_select" ON public.therapists;
-DROP POLICY IF EXISTS "therapists_write" ON public.therapists;
-DROP POLICY IF EXISTS "therapists_read" ON public.therapists;
-DROP POLICY IF EXISTS "therapists_admin" ON public.therapists;
-DROP POLICY IF EXISTS "therapists_self_update" ON public.therapists;
-DROP POLICY IF EXISTS "therapists_read_staff" ON public.therapists;
-DROP POLICY IF EXISTS "therapists_admin_all" ON public.therapists;
-
--- exercises legacy policies
-DROP POLICY IF EXISTS "exercises_select" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_write" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_read" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_staff_write" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_read_staff" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_admin_all" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_pt_insert" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_pt_update" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_pt_delete" ON public.exercises;
-
--- treatment_sessions / session_logs legacy policies
-DROP POLICY IF EXISTS "sessions_all" ON public.treatment_sessions;
-DROP POLICY IF EXISTS "sessions_admin" ON public.treatment_sessions;
-DROP POLICY IF EXISTS "sessions_therapist" ON public.treatment_sessions;
-DROP POLICY IF EXISTS "sessions_patient_insert" ON public.treatment_sessions;
-DROP POLICY IF EXISTS "sessions_patient_select" ON public.treatment_sessions;
-
 DO $$
+DECLARE
+  pol RECORD;
 BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'session_logs') THEN
-    DROP POLICY IF EXISTS "session_logs_read" ON public.session_logs;
-    DROP POLICY IF EXISTS "session_logs_insert" ON public.session_logs;
-  END IF;
-END $$;
-
--- minigame_results legacy policies
-DROP POLICY IF EXISTS "minigame_all" ON public.minigame_results;
-DROP POLICY IF EXISTS "minigame_admin" ON public.minigame_results;
-DROP POLICY IF EXISTS "minigame_therapist" ON public.minigame_results;
-DROP POLICY IF EXISTS "minigame_patient" ON public.minigame_results;
-
--- activity_logs / audit_logs legacy policies
-DROP POLICY IF EXISTS "logs_select" ON public.activity_logs;
-DROP POLICY IF EXISTS "logs_insert" ON public.activity_logs;
-DROP POLICY IF EXISTS "logs_admin" ON public.activity_logs;
-DROP POLICY IF EXISTS "logs_insert_auth" ON public.activity_logs;
-
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'audit_logs') THEN
-    DROP POLICY IF EXISTS "audit_logs_read" ON public.audit_logs;
-    DROP POLICY IF EXISTS "audit_logs_insert" ON public.audit_logs;
-  END IF;
-END $$;
-
--- system_settings legacy policies
-DROP POLICY IF EXISTS "settings_select" ON public.system_settings;
-DROP POLICY IF EXISTS "settings_write" ON public.system_settings;
-DROP POLICY IF EXISTS "settings_admin" ON public.system_settings;
-DROP POLICY IF EXISTS "settings_read_staff" ON public.system_settings;
-DROP POLICY IF EXISTS "system_settings_read" ON public.system_settings;
-DROP POLICY IF EXISTS "system_settings_admin" ON public.system_settings;
-
--- banned devices & ips legacy policies
-DROP POLICY IF EXISTS "banned_devices_admin" ON public.banned_devices;
-DROP POLICY IF EXISTS "banned_ips_admin" ON public.banned_ips;
-
--- temporary_coverages legacy policies
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'temporary_coverages') THEN
-    DROP POLICY IF EXISTS "temp_cov_read" ON public.temporary_coverages;
-    DROP POLICY IF EXISTS "temp_cov_admin" ON public.temporary_coverages;
-    DROP POLICY IF EXISTS "temp_cov_owner_insert" ON public.temporary_coverages;
-    DROP POLICY IF EXISTS "temp_cov_owner_revoke" ON public.temporary_coverages;
-  END IF;
+  FOR pol IN (
+    SELECT schemaname, tablename, policyname 
+    FROM pg_policies 
+    WHERE schemaname = 'public'
+  ) LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', pol.policyname, pol.schemaname, pol.tablename);
+  END LOOP;
 END $$;
 
 -- ============================================================================
@@ -1005,15 +996,48 @@ FOR ALL TO authenticated
 USING (public.is_admin())
 WITH CHECK (public.is_admin());
 
+-- ============================================================================
+-- 5. AUDIT ASSERTION: ZERO OPEN POLICIES (qual/with_check = 'true')
+-- Raises an exception immediately if any policy has qual or with_check = 'true'.
+-- ============================================================================
+
+DO $$
+DECLARE
+  bad_pol RECORD;
+BEGIN
+  SELECT schemaname, tablename, policyname, qual, with_check
+  INTO bad_pol
+  FROM pg_policies
+  WHERE schemaname = 'public'
+    AND (
+      trim(qual) = 'true' 
+      OR trim(with_check) = 'true'
+      OR qual = '(true)'
+      OR with_check = '(true)'
+    )
+  LIMIT 1;
+
+  IF FOUND THEN
+    RAISE EXCEPTION 'SECURITY AUDIT FAILED: Open policy found in schema public: % on %.% (qual: %, with_check: %)',
+      bad_pol.policyname, bad_pol.schemaname, bad_pol.tablename, bad_pol.qual, bad_pol.with_check;
+  END IF;
+
+  RAISE NOTICE 'SECURITY AUDIT PASSED: Zero open policies (qual/with_check = true) in schema public.';
+END $$;
+
+
 
 -- >>> FILE: 20261019000003_storage_buckets.sql <<<
 -- ============================================================================
 -- DR.TECH.CARE: Phase 1 - Migration 3: Storage Buckets & Policies
--- Buckets: avatars (PRIVATE - signed URLs), biometric-data (PRIVATE), exercise-media (public)
+-- Buckets: avatars (PRIVATE), biometric-data (PRIVATE), exercise-media (public)
+-- CRITICAL SECURITY RULE: biometric-data has ZERO client-facing storage policies.
+-- Only Edge Functions (service role) read or write biometric-data.
 -- ============================================================================
 
 -- 1. Create Buckets
--- avatars is made PRIVATE to protect patient photo privacy per Item 2.
+-- avatars is made PRIVATE to protect patient photo privacy.
+-- biometric-data is strictly PRIVATE with NO client-facing policies.
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES 
   ('avatars', 'avatars', false, 5242880, ARRAY['image/jpeg', 'image/png', 'image/webp']),
@@ -1024,11 +1048,34 @@ ON CONFLICT (id) DO UPDATE SET
   file_size_limit = EXCLUDED.file_size_limit,
   allowed_mime_types = EXCLUDED.allowed_mime_types;
 
--- 2. Storage Policies on storage.objects
+-- 2. Dynamically Drop Legacy Policies on storage.objects for our Buckets
+DO $$
+DECLARE
+  pol RECORD;
+BEGIN
+  FOR pol IN (
+    SELECT schemaname, tablename, policyname 
+    FROM pg_policies 
+    WHERE schemaname = 'storage' AND tablename = 'objects'
+      AND (
+        policyname ILIKE '%avatar%' 
+        OR policyname ILIKE '%biometric%' 
+        OR policyname ILIKE '%exercise%'
+        OR qual ILIKE '%avatars%'
+        OR qual ILIKE '%biometric-data%'
+        OR qual ILIKE '%exercise-media%'
+        OR with_check ILIKE '%avatars%'
+        OR with_check ILIKE '%biometric-data%'
+        OR with_check ILIKE '%exercise-media%'
+      )
+  ) LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', pol.policyname, pol.schemaname, pol.tablename);
+  END LOOP;
+END $$;
+
+-- 3. Storage Policies on storage.objects
 
 -- AVATARS (Private Bucket: Authenticated Staff Read via Signed URLs / Staff Session, Staff Write)
-DROP POLICY IF EXISTS "avatars_public_select" ON storage.objects;
-DROP POLICY IF EXISTS "avatars_staff_select" ON storage.objects;
 CREATE POLICY "avatars_staff_select" ON storage.objects
 FOR SELECT TO authenticated
 USING (
@@ -1036,7 +1083,6 @@ USING (
   AND public.current_app_role() IN ('admin', 'therapist')
 );
 
-DROP POLICY IF EXISTS "avatars_staff_insert" ON storage.objects;
 CREATE POLICY "avatars_staff_insert" ON storage.objects
 FOR INSERT TO authenticated
 WITH CHECK (
@@ -1044,7 +1090,6 @@ WITH CHECK (
   AND public.current_app_role() IN ('admin', 'therapist')
 );
 
-DROP POLICY IF EXISTS "avatars_staff_update" ON storage.objects;
 CREATE POLICY "avatars_staff_update" ON storage.objects
 FOR UPDATE TO authenticated
 USING (
@@ -1052,7 +1097,6 @@ USING (
   AND public.current_app_role() IN ('admin', 'therapist')
 );
 
-DROP POLICY IF EXISTS "avatars_admin_delete" ON storage.objects;
 CREATE POLICY "avatars_admin_delete" ON storage.objects
 FOR DELETE TO authenticated
 USING (
@@ -1060,40 +1104,16 @@ USING (
   AND public.is_admin()
 );
 
--- BIOMETRIC DATA (Strictly Private - NO Public URL)
--- Only authenticated staff can read/write; anon has zero access.
-DROP POLICY IF EXISTS "biometric_data_deny_anon" ON storage.objects;
-DROP POLICY IF EXISTS "biometric_data_staff_select" ON storage.objects;
-CREATE POLICY "biometric_data_staff_select" ON storage.objects
-FOR SELECT TO authenticated
-USING (
-  bucket_id = 'biometric-data' 
-  AND public.current_app_role() IN ('admin', 'therapist')
-);
-
-DROP POLICY IF EXISTS "biometric_data_staff_insert" ON storage.objects;
-CREATE POLICY "biometric_data_staff_insert" ON storage.objects
-FOR INSERT TO authenticated
-WITH CHECK (
-  bucket_id = 'biometric-data' 
-  AND public.current_app_role() IN ('admin', 'therapist')
-);
-
-DROP POLICY IF EXISTS "biometric_data_admin_delete" ON storage.objects;
-CREATE POLICY "biometric_data_admin_delete" ON storage.objects
-FOR DELETE TO authenticated
-USING (
-  bucket_id = 'biometric-data' 
-  AND public.is_admin()
-);
+-- BIOMETRIC DATA (Strictly Private - ZERO Client-Facing Policies)
+-- NOTE: Absolutely NO storage policies are created for 'biometric-data'.
+-- Direct client access (anon and authenticated) is default-denied by RLS.
+-- Only Edge Functions using Supabase service_role key read/write this bucket.
 
 -- EXERCISE MEDIA (Public Read, Staff Write)
-DROP POLICY IF EXISTS "exercise_media_public_select" ON storage.objects;
 CREATE POLICY "exercise_media_public_select" ON storage.objects
 FOR SELECT TO public
 USING (bucket_id = 'exercise-media');
 
-DROP POLICY IF EXISTS "exercise_media_staff_insert" ON storage.objects;
 CREATE POLICY "exercise_media_staff_insert" ON storage.objects
 FOR INSERT TO authenticated
 WITH CHECK (
@@ -1101,13 +1121,48 @@ WITH CHECK (
   AND public.current_app_role() IN ('admin', 'therapist')
 );
 
-DROP POLICY IF EXISTS "exercise_media_staff_update" ON storage.objects;
 CREATE POLICY "exercise_media_staff_update" ON storage.objects
 FOR UPDATE TO authenticated
 USING (
   bucket_id = 'exercise-media' 
   AND public.current_app_role() IN ('admin', 'therapist')
 );
+
+CREATE POLICY "exercise_media_admin_delete" ON storage.objects
+FOR DELETE TO authenticated
+USING (
+  bucket_id = 'exercise-media' 
+  AND public.is_admin()
+);
+
+-- ============================================================================
+-- 4. AUDIT ASSERTION: ZERO OPEN POLICIES ON storage.objects
+-- Raises an exception if any policy on storage.objects has qual or with_check = 'true'.
+-- ============================================================================
+
+DO $$
+DECLARE
+  bad_pol RECORD;
+BEGIN
+  SELECT schemaname, tablename, policyname, qual, with_check
+  INTO bad_pol
+  FROM pg_policies
+  WHERE schemaname = 'storage' AND tablename = 'objects'
+    AND (
+      trim(qual) = 'true' 
+      OR trim(with_check) = 'true'
+      OR qual = '(true)'
+      OR with_check = '(true)'
+    )
+  LIMIT 1;
+
+  IF FOUND THEN
+    RAISE EXCEPTION 'SECURITY AUDIT FAILED: Open storage policy found: % on storage.objects (qual: %, with_check: %)',
+      bad_pol.policyname, bad_pol.qual, bad_pol.with_check;
+  END IF;
+
+  RAISE NOTICE 'SECURITY AUDIT PASSED: Zero open policies on storage.objects.';
+END $$;
 
 
 -- >>> FILE: 20261019000004_autoreschedule_cron.sql <<<
@@ -1233,416 +1288,5 @@ EXCEPTION
   WHEN OTHERS THEN
     -- If pg_cron permissions are restricted in staging tier, allow graceful bypass
     RAISE NOTICE 'pg_cron job registration skipped: %', SQLERRM;
-END $$;
-
-
--- >>> FILE: seed.dev.sql <<<
--- ============================================================================
--- DR.TECH.CARE: Isolated Development & Staging Seed Data
--- Loaded ONLY in dev/staging. Never in production.
--- ============================================================================
-
--- 1. System Settings & Feature Flags
-INSERT INTO public.system_settings (key, value)
-VALUES
-  ('FEATURE_PT_POSE_EXERCISES', 'false'::jsonb),
-  ('FACE_THRESHOLD', '0.5'::jsonb),
-  ('FACE_MARGIN', '0.1'::jsonb),
-  ('PLACEHOLDER_SECONDS', '4'::jsonb),
-  ('KIOSK_SESSION_TIMEOUT_SECONDS', '90'::jsonb),
-  ('features', '{"pt_pose_exercises": false, "voice_guidance": true, "realtime_pose": false}'::jsonb)
-ON CONFLICT (key) DO UPDATE SET
-  value = EXCLUDED.value,
-  updated_at = now();
-
--- 2. Core Mini-Games (MG-01 "Balloon Pop", MG-02 "Reach & Catch")
-INSERT INTO public.exercises (code, slug, name_th, name_en, category, kind, is_minigame, difficulty, default_reps, default_sets, rest_seconds, instructions, benefits, is_active)
-VALUES
-  (
-    'MG-01',
-    'mg-balloon-pop',
-    'Balloon Pop (เกมเป่าลูกโป่ง)',
-    'Balloon Pop Minigame',
-    'มินิเกมฝึกประสานสายตาและมือ',
-    'single',
-    true,
-    'easy',
-    10,
-    3,
-    30,
-    'ยกแขนแตะลูกโป่งที่ลอยขึ้นมาให้แตกตามสีที่กำหนด',
-    'ฝึกการตอบสนองของระบบประสาทสั่งการและการเคลื่อนไหวข้อไหล่',
-    true
-  ),
-  (
-    'MG-02',
-    'mg-reach-and-catch',
-    'Reach & Catch (เกมเอื้อมจับดาว)',
-    'Reach & Catch Minigame',
-    'มินิเกมฝึกการทรงตัวและการเอื้อม',
-    'single',
-    true,
-    'medium',
-    10,
-    3,
-    30,
-    'เอื้อมมือซ้าย-ขวาตามดาวที่ปรากฏบนหน้าจอเพื่อทำคะแนน',
-    'เพิ่มช่วงการเคลื่อนไหวของข้อต่อและกล้ามเนื้อแกนกลางลำตัว',
-    true
-  ),
-  (
-    'EX-01',
-    'ex-shoulder-abduction',
-    'กางแขนยกด้านข้าง',
-    'Shoulder Abduction / Raise',
-    'ฟื้นฟูข้อไหล่และแขน',
-    'single',
-    false,
-    'medium',
-    10,
-    3,
-    30,
-    'ยืนหรือนั่งหลังตรง ยกแขนทั้งสองข้างกางออกด้านข้างลำตัวจนถึงระดับระนาบหัวไหล่',
-    'เสริมสร้างกล้ามเนื้อ Deltoid และเพิ่มองศาการกางหัวไหล่',
-    true
-  ),
-  (
-    'EX-02',
-    'ex-neck-lateral-stretch',
-    'ยืดคอด้านข้าง',
-    'Neck Lateral Stretch',
-    'ฟื้นฟูกล้ามเนื้อคอบ่า',
-    'single',
-    false,
-    'easy',
-    5,
-    3,
-    20,
-    'นั่งหลังตรง เอียงศีรษะไปด้านข้างช้าๆ ค้างไว้ 15-20 วินาทีสลับซ้าย-ขวา',
-    'ลดอาการเกร็งตึงของกล้ามเนื้อ Trapezius และบรรเทาอาการปวดต้นคอ',
-    true
-  )
-ON CONFLICT (code) DO UPDATE SET
-  name_th = EXCLUDED.name_th,
-  name_en = EXCLUDED.name_en,
-  category = EXCLUDED.category,
-  kind = EXCLUDED.kind,
-  is_minigame = EXCLUDED.is_minigame,
-  instructions = EXCLUDED.instructions,
-  benefits = EXCLUDED.benefits;
-
--- 3. Staging Kiosk Device (for local / kiosk terminal testing)
-INSERT INTO public.kiosk_devices (id, name, key_hash, is_active, settings)
-VALUES
-  (
-    '11111111-1111-1111-1111-111111111111',
-    'Kiosk Terminal Floor 1 (Rehab Center)',
-    -- sha256 of 'kiosk_staging_device_key_2026'
-    encode(digest('kiosk_staging_device_key_2026', 'sha256'), 'hex'),
-    true,
-    '{"rotation": 0, "mirror": true}'::jsonb
-  )
-ON CONFLICT (key_hash) DO NOTHING;
-
-
--- >>> FILE: rls_negative_test.sql <<<
--- ============================================================================
--- DR.TECH.CARE: Phase 1 - Comprehensive Role-Matrix & Security Test Suite
--- Simulates: anon, admin, therapist (own patient), unrelated therapist, covered therapist
--- Verifies: Zero anon access, schedule ownership, coverage expiry, exercise CRUD,
---           audit log isolation, profile tampering prevention, and immutability.
--- ============================================================================
-
-DO $$
-DECLARE
-  -- Predefined Test Actors
-  v_admin_id       uuid := 'a0000000-0000-0000-0000-000000000001';
-  v_pt1_owner_id   uuid := 'b0000000-0000-0000-0000-000000000002';
-  v_pt2_cover_id   uuid := 'b0000000-0000-0000-0000-000000000003';
-  v_pt3_stranger_id uuid := 'b0000000-0000-0000-0000-000000000004';
-  
-  -- Test Entities
-  v_patient1_id    uuid := 'c0000000-0000-0000-0000-000000000001';
-  v_patient2_id    uuid := 'c0000000-0000-0000-0000-000000000002';
-  v_admin_ex_id    uuid := 'd0000000-0000-0000-0000-000000000001';
-  v_pt1_ex_id      uuid := 'd0000000-0000-0000-0000-000000000002';
-  v_pose_ex_id     uuid := 'd0000000-0000-0000-0000-000000000003';
-  v_cov_active_id  uuid := 'e0000000-0000-0000-0000-000000000001';
-  v_cov_expired_id uuid := 'e0000000-0000-0000-0000-000000000002';
-  
-  v_note_id        uuid;
-  v_log_id         uuid;
-  v_appt_id        uuid;
-  v_count          int;
-  v_error_caught   boolean;
-  v_bangkok_today  date := (timezone('Asia/Bangkok', now()))::date;
-BEGIN
-  RAISE NOTICE '====================================================================';
-  RAISE NOTICE '>>> STARTING DR.TECH.CARE PHASE 1 ROLE-MATRIX TEST SUITE <<<';
-  RAISE NOTICE '====================================================================';
-
-  -- --------------------------------------------------------------------------
-  -- STEP 0: FIXTURE SETUP (Run as Superuser / Migrator)
-  -- --------------------------------------------------------------------------
-  -- Setup Profiles
-  INSERT INTO public.profiles (id, username, full_name, role, email, is_active)
-  VALUES 
-    (v_admin_id, 'test_admin', 'Admin Superuser', 'admin', 'admin@strongcare.hospital', true),
-    (v_pt1_owner_id, 'test_pt1', 'PT 1 Owner', 'therapist', 'pt1@strongcare.hospital', true),
-    (v_pt2_cover_id, 'test_pt2', 'PT 2 Cover', 'therapist', 'pt2@strongcare.hospital', true),
-    (v_pt3_stranger_id, 'test_pt3', 'PT 3 Stranger', 'therapist', 'pt3@strongcare.hospital', true)
-  ON CONFLICT (id) DO UPDATE SET 
-    role = EXCLUDED.role, is_active = true, deleted_at = NULL;
-
-  -- Setup Patients (Patient 1 owned by PT 1; Patient 2 owned by PT 2)
-  INSERT INTO public.patients (id, hn, full_name, assigned_therapist_id, treatment_status)
-  VALUES 
-    (v_patient1_id, 'HN-TEST-001', 'Test Patient 1 (PT1 Caseload)', v_pt1_owner_id, 'active'),
-    (v_patient2_id, 'HN-TEST-002', 'Test Patient 2 (PT2 Caseload)', v_pt2_cover_id, 'active')
-  ON CONFLICT (id) DO UPDATE SET 
-    assigned_therapist_id = EXCLUDED.assigned_therapist_id;
-
-  -- Setup Exercises
-  INSERT INTO public.exercises (id, code, name_th, category, kind, is_minigame, created_by)
-  VALUES 
-    (v_admin_ex_id, 'EX-ADM-01', 'Admin Core Exercise', 'Core', 'single', false, v_admin_id),
-    (v_pt1_ex_id, 'EX-PT1-01', 'PT1 Custom Exercise', 'Custom', 'single', false, v_pt1_owner_id),
-    (v_pose_ex_id, 'EX-POSE-01', 'Pose Detection Exercise', 'Pose Detection', 'single', false, v_admin_id)
-  ON CONFLICT (id) DO UPDATE SET 
-    created_by = EXCLUDED.created_by, category = EXCLUDED.category;
-
-  -- Setup Temporary Coverage for Patient 1:
-  -- PT 2 is covering Patient 1 ACTIVE today: [v_bangkok_today - 1, v_bangkok_today + 5]
-  INSERT INTO public.temporary_coverages (id, patient_id, owner_therapist_id, cover_therapist_id, start_date, end_date, status)
-  VALUES 
-    (v_cov_active_id, v_patient1_id, v_pt1_owner_id, v_pt2_cover_id, v_bangkok_today - 1, v_bangkok_today + 5, 'active')
-  ON CONFLICT (id) DO UPDATE SET 
-    start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date, status = 'active', revoked_at = NULL;
-
-  -- Ensure FEATURE_PT_POSE_EXERCISES is false
-  INSERT INTO public.system_settings (key, value)
-  VALUES ('FEATURE_PT_POSE_EXERCISES', 'false'::jsonb)
-  ON CONFLICT (key) DO UPDATE SET value = 'false'::jsonb;
-
-  -- --------------------------------------------------------------------------
-  -- TEST CASE 1: ANON ROLE READS NOTHING
-  -- Verify anon gets 0 rows from profiles, patients, medical_notes, audit_logs, face_templates, biometric-data
-  -- --------------------------------------------------------------------------
-  RAISE NOTICE '--- TEST 1: ANON ROLE ISOLATION ---';
-  
-  -- Verify current_app_role() returns 'anon' when no auth.uid()
-  ASSERT public.current_app_role() = 'anon', '[FAIL] current_app_role() should return anon for unauthenticated session';
-  
-  -- Verify anon cannot pass is_admin()
-  ASSERT public.is_admin() = false, '[FAIL] anon must never be admin';
-  
-  -- Verify anon cannot edit any user
-  ASSERT public.can_edit_user(v_patient1_id) = false, '[FAIL] anon cannot edit user';
-  
-  -- Verify anon cannot write schedule
-  ASSERT public.can_write_schedule(v_patient1_id) = false, '[FAIL] anon cannot write schedule';
-  
-  -- Verify anon cannot view audit
-  ASSERT public.can_view_audit() = false, '[FAIL] anon cannot view audit logs';
-
-  RAISE NOTICE '[PASS] Case 1: Anon role has zero authorization and fails all security checks.';
-
-  -- --------------------------------------------------------------------------
-  -- TEST CASE 2: THERAPIST SCHEDULE WRITE (OWN PATIENT vs UNRELATED PATIENT)
-  -- --------------------------------------------------------------------------
-  RAISE NOTICE '--- TEST 2: THERAPIST SCHEDULE WRITE PERMISSIONS ---';
-
-  -- Simulate PT 1 (Owner of Patient 1)
-  -- can_write_schedule(Patient 1) must be TRUE
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-  ASSERT public.can_write_schedule(v_patient1_id) = true, 
-    '[FAIL] PT 1 should be authorized to write schedule for their assigned patient 1';
-  RAISE NOTICE '[PASS] Case 2A: PT 1 authorized to write schedule for own patient 1.';
-
-  -- PT 1 writing schedule for Patient 2 (Unrelated patient owned by PT 2) -> must be FALSE
-  ASSERT public.can_write_schedule(v_patient2_id) = false, 
-    '[FAIL] PT 1 must NOT be authorized to write schedule for unrelated patient 2';
-  RAISE NOTICE '[PASS] Case 2B: PT 1 denied schedule write on unrelated patient 2.';
-
-  -- Simulate PT 3 (Stranger - not owner, not covering)
-  PERFORM set_config('request.jwt.claim.sub', v_pt3_stranger_id::text, true);
-  ASSERT public.can_write_schedule(v_patient1_id) = false, 
-    '[FAIL] PT 3 Stranger must NOT be authorized to write schedule for patient 1';
-  ASSERT public.can_write_schedule(v_patient2_id) = false, 
-    '[FAIL] PT 3 Stranger must NOT be authorized to write schedule for patient 2';
-  RAISE NOTICE '[PASS] Case 2C: Stranger PT 3 denied schedule write on all non-caseload patients.';
-
-  -- --------------------------------------------------------------------------
-  -- TEST CASE 3: COVERED THERAPIST (ACTIVE vs EXPIRED COVERAGE)
-  -- --------------------------------------------------------------------------
-  RAISE NOTICE '--- TEST 3: TEMPORARY COVERAGE WINDOW ENFORCEMENT ---';
-
-  -- Simulate PT 2 (Active Covering Therapist for Patient 1)
-  PERFORM set_config('request.jwt.claim.sub', v_pt2_cover_id::text, true);
-  ASSERT public.can_write_schedule(v_patient1_id) = true, 
-    '[FAIL] PT 2 should be authorized to write schedule for patient 1 during active coverage';
-  RAISE NOTICE '[PASS] Case 3A: Active covered therapist (PT 2) authorized to write schedule for patient 1.';
-
-  -- Now test expired coverage: update coverage end_date to yesterday
-  UPDATE public.temporary_coverages
-  SET end_date = v_bangkok_today - 1
-  WHERE id = v_cov_active_id;
-
-  ASSERT public.can_write_schedule(v_patient1_id) = false, 
-    '[FAIL] PT 2 must be DENIED schedule write once temporary coverage is expired (end_date in past)';
-  RAISE NOTICE '[PASS] Case 3B: Expired coverage strictly revokes schedule write rights after end_date.';
-
-  -- Restore active coverage for subsequent tests
-  UPDATE public.temporary_coverages
-  SET end_date = v_bangkok_today + 5
-  WHERE id = v_cov_active_id;
-
-  -- --------------------------------------------------------------------------
-  -- TEST CASE 4: EXERCISE LIBRARY CRUD OWNERSHIP
-  -- Admin created = read-only for PT; PT self-created = editable by PT
-  -- --------------------------------------------------------------------------
-  RAISE NOTICE '--- TEST 4: EXERCISE OWNERSHIP & EDIT RULES ---';
-
-  -- Simulate PT 1
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-
-  -- PT 1 editing Admin-created exercise -> must be FALSE
-  ASSERT public.can_edit_exercise(v_admin_ex_id) = false, 
-    '[FAIL] PT 1 must NOT be allowed to edit Admin-created exercise';
-  RAISE NOTICE '[PASS] Case 4A: PT 1 denied editing admin-created exercise.';
-
-  -- PT 1 editing own exercise -> must be TRUE
-  ASSERT public.can_edit_exercise(v_pt1_ex_id) = true, 
-    '[FAIL] PT 1 must be allowed to edit own-created exercise';
-  RAISE NOTICE '[PASS] Case 4B: PT 1 authorized to edit self-created exercise.';
-
-  -- Simulate Admin -> full CRUD on all exercises
-  PERFORM set_config('request.jwt.claim.sub', v_admin_id::text, true);
-  ASSERT public.can_edit_exercise(v_admin_ex_id) = true, '[FAIL] Admin should edit admin exercise';
-  ASSERT public.can_edit_exercise(v_pt1_ex_id) = true, '[FAIL] Admin should edit any exercise';
-  RAISE NOTICE '[PASS] Case 4C: Admin authorized to edit all exercises.';
-
-  -- --------------------------------------------------------------------------
-  -- TEST CASE 5: AUDIT LOGS ACCESS ISOLATION (ADMIN ONLY)
-  -- --------------------------------------------------------------------------
-  RAISE NOTICE '--- TEST 5: AUDIT LOG ACCESS ISOLATION ---';
-
-  -- Simulate PT 1
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-  ASSERT public.can_view_audit() = false, 
-    '[FAIL] Therapist must be DENIED access to audit logs (can_view_audit must be false)';
-  RAISE NOTICE '[PASS] Case 5A: Therapist strictly denied access to audit logs.';
-
-  -- Simulate Admin
-  PERFORM set_config('request.jwt.claim.sub', v_admin_id::text, true);
-  ASSERT public.can_view_audit() = true, 
-    '[FAIL] Admin must be granted access to audit logs';
-  RAISE NOTICE '[PASS] Case 5B: Admin authorized to view audit logs.';
-
-  -- --------------------------------------------------------------------------
-  -- TEST CASE 6: PROFILE TAMPERING PREVENTION
-  -- Therapist can only edit patients; cannot update Admin or other PT profiles
-  -- --------------------------------------------------------------------------
-  RAISE NOTICE '--- TEST 6: USER MANAGEMENT & PROFILE PERMISSIONS ---';
-
-  -- Simulate PT 1
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-
-  -- PT 1 attempting to edit Admin profile -> must be FALSE
-  ASSERT public.can_edit_user(v_admin_id) = false, 
-    '[FAIL] Therapist must NOT be allowed to edit Admin profile';
-  RAISE NOTICE '[PASS] Case 6A: Therapist denied editing Admin profile.';
-
-  -- PT 1 attempting to edit PT 2 profile -> must be FALSE
-  ASSERT public.can_edit_user(v_pt2_cover_id) = false, 
-    '[FAIL] Therapist must NOT be allowed to edit fellow Therapist profile';
-  RAISE NOTICE '[PASS] Case 6B: Therapist denied editing fellow Therapist profile.';
-
-  -- PT 1 attempting to edit Patient profile -> must be TRUE
-  ASSERT public.can_edit_user(v_patient1_id) = true, 
-    '[FAIL] Therapist should be allowed to manage patient profiles';
-  RAISE NOTICE '[PASS] Case 6C: Therapist authorized to manage patient profiles.';
-
-  -- --------------------------------------------------------------------------
-  -- TEST CASE 7: IMMUTABILITY OF MEDICAL NOTES (UPDATE / DELETE REJECTED)
-  -- --------------------------------------------------------------------------
-  RAISE NOTICE '--- TEST 7: IMMUTABILITY OF CLINICAL RECORDS ---';
-
-  INSERT INTO public.medical_notes (patient_id, note_type, body, author_name)
-  VALUES (v_patient1_id, 'progress', 'Initial immutable clinical note', 'System Test')
-  RETURNING id INTO v_note_id;
-
-  v_error_caught := false;
-  BEGIN
-    UPDATE public.medical_notes SET body = 'Tampered clinical note' WHERE id = v_note_id;
-  EXCEPTION WHEN OTHERS THEN
-    v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] UPDATE on medical_notes was NOT blocked!';
-  RAISE NOTICE '[PASS] Case 7A: UPDATE on medical_notes rejected by trigger.';
-
-  v_error_caught := false;
-  BEGIN
-    DELETE FROM public.medical_notes WHERE id = v_note_id;
-  EXCEPTION WHEN OTHERS THEN
-    v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] DELETE on medical_notes was NOT blocked!';
-  RAISE NOTICE '[PASS] Case 7B: DELETE on medical_notes rejected by trigger.';
-
-  -- --------------------------------------------------------------------------
-  -- TEST CASE 8: IMMUTABILITY OF AUDIT LOGS (UPDATE / DELETE REJECTED)
-  -- --------------------------------------------------------------------------
-  INSERT INTO public.audit_logs (actor_name, role, category, action, detail, status)
-  VALUES ('Auditor', 'admin', 'SECURITY', 'IMMUTABILITY_CHECK', 'Security log verify', 'success')
-  RETURNING id INTO v_log_id;
-
-  v_error_caught := false;
-  BEGIN
-    UPDATE public.audit_logs SET detail = 'Tampered audit record' WHERE id = v_log_id;
-  EXCEPTION WHEN OTHERS THEN
-    v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] UPDATE on audit_logs was NOT blocked!';
-  RAISE NOTICE '[PASS] Case 8A: UPDATE on audit_logs rejected by trigger.';
-
-  v_error_caught := false;
-  BEGIN
-    DELETE FROM public.audit_logs WHERE id = v_log_id;
-  EXCEPTION WHEN OTHERS THEN
-    v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] DELETE on audit_logs was NOT blocked!';
-  RAISE NOTICE '[PASS] Case 8B: DELETE on audit_logs rejected by trigger.';
-
-  -- --------------------------------------------------------------------------
-  -- TEST CASE 9: POSE EXERCISE GATING IN ROUTINE (FEATURE_PT_POSE_EXERCISES = false)
-  -- --------------------------------------------------------------------------
-  RAISE NOTICE '--- TEST 9: POSE EXERCISE FEATURE GATING ---';
-
-  INSERT INTO public.appointments (patient_id, date, status)
-  VALUES (v_patient1_id, v_bangkok_today, 'scheduled')
-  RETURNING id INTO v_appt_id;
-
-  v_error_caught := false;
-  BEGIN
-    INSERT INTO public.routine_items (appointment_id, exercise_id, reps, sets)
-    VALUES (v_appt_id, v_pose_ex_id, 10, 3);
-  EXCEPTION WHEN OTHERS THEN
-    v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, 
-    '[FAIL] Pose exercise was accepted into routine while FEATURE_PT_POSE_EXERCISES is false!';
-  RAISE NOTICE '[PASS] Case 9: Pose exercise in routine successfully rejected by trigger.';
-
-  -- Clean up test appointment
-  DELETE FROM public.appointments WHERE id = v_appt_id;
-
-  -- Reset config
-  PERFORM set_config('request.jwt.claim.sub', '', true);
-
-  RAISE NOTICE '====================================================================';
-  RAISE NOTICE '>>> ALL 9 ROLE-MATRIX & SECURITY TEST SUITES PASSED (100%%) <<<';
-  RAISE NOTICE '====================================================================';
 END $$;
 

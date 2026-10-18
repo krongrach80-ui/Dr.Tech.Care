@@ -61,17 +61,21 @@ BEGIN
     RETURN true;
   END IF;
 
-  -- Therapist can only edit patient profiles
+  -- Therapist can only edit patients (never admin or fellow therapists)
   IF v_actor_role = 'therapist' THEN
+    -- Check if target is a staff profile (admin or therapist)
     SELECT role INTO v_target_role 
     FROM public.profiles 
-    WHERE id = target_user_id;
+    WHERE id = target_user_id 
+      AND deleted_at IS NULL;
 
-    -- If target is in patients table or has role 'patient', therapist can edit
-    IF v_target_role = 'patient' THEN
-      RETURN true;
+    -- If target is an admin or fellow therapist, therapist is strictly forbidden
+    IF v_target_role IN ('admin', 'therapist') THEN
+      RETURN false;
     END IF;
 
+    -- Patients have NO auth user or profiles row.
+    -- Resolves target_user_id directly from public.patients (id = target_user_id):
     IF EXISTS (SELECT 1 FROM public.patients WHERE id = target_user_id OR profile_id = target_user_id) THEN
       RETURN true;
     END IF;
@@ -229,7 +233,7 @@ CREATE TRIGGER trg_immutable_audit_logs
 BEFORE UPDATE OR DELETE ON public.audit_logs
 FOR EACH ROW EXECUTE FUNCTION public.trg_block_audit_logs_mutation();
 
--- Guard: Reject Pose Exercises in Routine Items when FEATURE_PT_POSE_EXERCISES = false
+-- Guard: When FEATURE_PT_POSE_EXERCISES is false, routine_items may ONLY reference exercises with is_minigame = true
 CREATE OR REPLACE FUNCTION public.trg_check_pose_exercise_guard()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -237,25 +241,25 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_feature_flag text;
-  v_is_pose boolean;
+  v_pose_flag text;
+  v_is_minigame boolean;
 BEGIN
-  -- Read feature flag from system_settings
-  SELECT COALESCE(value->>'FEATURE_PT_POSE_EXERCISES', value->>'pt_pose_exercises', 'false')
-  INTO v_feature_flag
+  -- Single source of truth: Read FEATURE_PT_POSE_EXERCISES from system_settings
+  SELECT trim(both '"' from value::text)
+  INTO v_pose_flag
   FROM public.system_settings
-  WHERE key IN ('FEATURE_PT_POSE_EXERCISES', 'features')
-  LIMIT 1;
+  WHERE key = 'FEATURE_PT_POSE_EXERCISES';
 
-  -- If feature is not explicitly enabled ('true'), verify exercise category
-  IF COALESCE(v_feature_flag, 'false') != 'true' THEN
-    SELECT (category ILIKE '%pose%' OR instructions ILIKE '%pose%' OR name_th ILIKE '%pose%')
-    INTO v_is_pose
+  -- If pose exercises are not enabled ('true'), routine_items may ONLY reference exercises with is_minigame = true
+  IF COALESCE(v_pose_flag, 'false') != 'true' THEN
+    SELECT COALESCE(is_minigame, false)
+    INTO v_is_minigame
     FROM public.exercises
     WHERE id = NEW.exercise_id;
 
-    IF v_is_pose = true THEN
-      RAISE EXCEPTION 'Pose exercises are currently locked (FEATURE_PT_POSE_EXERCISES = false). Cannot assign pose exercise.';
+    IF v_is_minigame != true THEN
+      RAISE EXCEPTION 'Pose exercises are currently locked (FEATURE_PT_POSE_EXERCISES = false). Routine items may only reference mini-games (is_minigame = true).'
+        USING ERRCODE = 'P0001';
     END IF;
   END IF;
 
@@ -272,105 +276,21 @@ BEFORE INSERT OR UPDATE ON public.routine_items
 FOR EACH ROW EXECUTE FUNCTION public.trg_check_pose_exercise_guard();
 
 -- ============================================================================
--- 3. PERMANENTLY DROP ALL OLD OPEN POLICIES BY NAME
--- Eliminates every legacy policy that used USING (true) or WITH CHECK (true).
+-- 3. DYNAMICALLY DROP ALL EXISTING POLICIES IN SCHEMA PUBLIC
+-- Automatically eliminates every legacy policy before recreating strict ones.
 -- ============================================================================
 
--- profiles legacy policies
-DROP POLICY IF EXISTS "profiles_select" ON public.profiles;
-DROP POLICY IF EXISTS "profiles_write" ON public.profiles;
-DROP POLICY IF EXISTS "profiles_update_self" ON public.profiles;
-DROP POLICY IF EXISTS "profiles_admin_all" ON public.profiles;
-DROP POLICY IF EXISTS "profiles_read_auth" ON public.profiles;
-DROP POLICY IF EXISTS "profiles_self_update" ON public.profiles;
-
--- patients legacy policies
-DROP POLICY IF EXISTS "patients_select" ON public.patients;
-DROP POLICY IF EXISTS "patients_write" ON public.patients;
-DROP POLICY IF EXISTS "patients_admin_all" ON public.patients;
-DROP POLICY IF EXISTS "patients_therapist_select" ON public.patients;
-DROP POLICY IF EXISTS "patients_therapist_write" ON public.patients;
-DROP POLICY IF EXISTS "patients_self_select" ON public.patients;
-DROP POLICY IF EXISTS "patients_read_staff" ON public.patients;
-DROP POLICY IF EXISTS "patients_pt_insert" ON public.patients;
-DROP POLICY IF EXISTS "patients_pt_update" ON public.patients;
-
--- therapists legacy policies
-DROP POLICY IF EXISTS "therapists_select" ON public.therapists;
-DROP POLICY IF EXISTS "therapists_write" ON public.therapists;
-DROP POLICY IF EXISTS "therapists_read" ON public.therapists;
-DROP POLICY IF EXISTS "therapists_admin" ON public.therapists;
-DROP POLICY IF EXISTS "therapists_self_update" ON public.therapists;
-DROP POLICY IF EXISTS "therapists_read_staff" ON public.therapists;
-DROP POLICY IF EXISTS "therapists_admin_all" ON public.therapists;
-
--- exercises legacy policies
-DROP POLICY IF EXISTS "exercises_select" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_write" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_read" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_staff_write" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_read_staff" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_admin_all" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_pt_insert" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_pt_update" ON public.exercises;
-DROP POLICY IF EXISTS "exercises_pt_delete" ON public.exercises;
-
--- treatment_sessions / session_logs legacy policies
-DROP POLICY IF EXISTS "sessions_all" ON public.treatment_sessions;
-DROP POLICY IF EXISTS "sessions_admin" ON public.treatment_sessions;
-DROP POLICY IF EXISTS "sessions_therapist" ON public.treatment_sessions;
-DROP POLICY IF EXISTS "sessions_patient_insert" ON public.treatment_sessions;
-DROP POLICY IF EXISTS "sessions_patient_select" ON public.treatment_sessions;
-
 DO $$
+DECLARE
+  pol RECORD;
 BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'session_logs') THEN
-    DROP POLICY IF EXISTS "session_logs_read" ON public.session_logs;
-    DROP POLICY IF EXISTS "session_logs_insert" ON public.session_logs;
-  END IF;
-END $$;
-
--- minigame_results legacy policies
-DROP POLICY IF EXISTS "minigame_all" ON public.minigame_results;
-DROP POLICY IF EXISTS "minigame_admin" ON public.minigame_results;
-DROP POLICY IF EXISTS "minigame_therapist" ON public.minigame_results;
-DROP POLICY IF EXISTS "minigame_patient" ON public.minigame_results;
-
--- activity_logs / audit_logs legacy policies
-DROP POLICY IF EXISTS "logs_select" ON public.activity_logs;
-DROP POLICY IF EXISTS "logs_insert" ON public.activity_logs;
-DROP POLICY IF EXISTS "logs_admin" ON public.activity_logs;
-DROP POLICY IF EXISTS "logs_insert_auth" ON public.activity_logs;
-
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'audit_logs') THEN
-    DROP POLICY IF EXISTS "audit_logs_read" ON public.audit_logs;
-    DROP POLICY IF EXISTS "audit_logs_insert" ON public.audit_logs;
-  END IF;
-END $$;
-
--- system_settings legacy policies
-DROP POLICY IF EXISTS "settings_select" ON public.system_settings;
-DROP POLICY IF EXISTS "settings_write" ON public.system_settings;
-DROP POLICY IF EXISTS "settings_admin" ON public.system_settings;
-DROP POLICY IF EXISTS "settings_read_staff" ON public.system_settings;
-DROP POLICY IF EXISTS "system_settings_read" ON public.system_settings;
-DROP POLICY IF EXISTS "system_settings_admin" ON public.system_settings;
-
--- banned devices & ips legacy policies
-DROP POLICY IF EXISTS "banned_devices_admin" ON public.banned_devices;
-DROP POLICY IF EXISTS "banned_ips_admin" ON public.banned_ips;
-
--- temporary_coverages legacy policies
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'temporary_coverages') THEN
-    DROP POLICY IF EXISTS "temp_cov_read" ON public.temporary_coverages;
-    DROP POLICY IF EXISTS "temp_cov_admin" ON public.temporary_coverages;
-    DROP POLICY IF EXISTS "temp_cov_owner_insert" ON public.temporary_coverages;
-    DROP POLICY IF EXISTS "temp_cov_owner_revoke" ON public.temporary_coverages;
-  END IF;
+  FOR pol IN (
+    SELECT schemaname, tablename, policyname 
+    FROM pg_policies 
+    WHERE schemaname = 'public'
+  ) LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', pol.policyname, pol.schemaname, pol.tablename);
+  END LOOP;
 END $$;
 
 -- ============================================================================
@@ -619,3 +539,33 @@ CREATE POLICY "system_settings_admin" ON public.system_settings
 FOR ALL TO authenticated
 USING (public.is_admin())
 WITH CHECK (public.is_admin());
+
+-- ============================================================================
+-- 5. AUDIT ASSERTION: ZERO OPEN POLICIES (qual/with_check = 'true')
+-- Raises an exception immediately if any policy has qual or with_check = 'true'.
+-- ============================================================================
+
+DO $$
+DECLARE
+  bad_pol RECORD;
+BEGIN
+  SELECT schemaname, tablename, policyname, qual, with_check
+  INTO bad_pol
+  FROM pg_policies
+  WHERE schemaname = 'public'
+    AND (
+      trim(qual) = 'true' 
+      OR trim(with_check) = 'true'
+      OR qual = '(true)'
+      OR with_check = '(true)'
+    )
+  LIMIT 1;
+
+  IF FOUND THEN
+    RAISE EXCEPTION 'SECURITY AUDIT FAILED: Open policy found in schema public: % on %.% (qual: %, with_check: %)',
+      bad_pol.policyname, bad_pol.schemaname, bad_pol.tablename, bad_pol.qual, bad_pol.with_check;
+  END IF;
+
+  RAISE NOTICE 'SECURITY AUDIT PASSED: Zero open policies (qual/with_check = true) in schema public.';
+END $$;
+
