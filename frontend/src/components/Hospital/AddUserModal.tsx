@@ -59,6 +59,13 @@ interface AddUserModalProps {
   onSuccessToast: (msg: string) => void;
 }
 
+const THERAPIST_SPECIALTY_PRESETS = [
+  'Musculoskeletal (ระบบกระดูกและกล้ามเนื้อ)',
+  'Neurological (ระบบประสาทและการเคลื่อนไหว)',
+  'Geriatric (กายภาพบำบัดผู้สูงอายุ)',
+  'Sports PT (เวชศาสตร์การกีฬา)',
+];
+
 export const AddUserModal: React.FC<AddUserModalProps> = ({
   isOpen,
   onClose,
@@ -104,6 +111,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
   const [specialty, setSpecialty] = useState<string>(
     'Musculoskeletal (ระบบกระดูกและกล้ามเนื้อ)'
   );
+  const [isCustomSpecialty, setIsCustomSpecialty] = useState<boolean>(false);
   const [licenseNumber, setLicenseNumber] = useState<string>('กภ. 8920');
   const [bio, setBio] = useState<string>('');
   const [initialAssignedPatientIds, setInitialAssignedPatientIds] = useState<(string | number)[]>([]);
@@ -225,6 +233,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
     setInitialAssignedPatientIds([]);
     setBio('');
     setSpecialty('Musculoskeletal (ระบบกระดูกและกล้ามเนื้อ)');
+    setIsCustomSpecialty(false);
     setLicenseNumber(`กภ. ${Math.floor(1000 + Math.random() * 9000)}`);
     setAdmissionDate(new Date().toISOString().split('T')[0]);
     setErrors({});
@@ -1271,15 +1280,38 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                         แผนก / ความเชี่ยวชาญ (Department / Specialty):
                       </label>
                       <select
-                        value={specialty}
-                        onChange={(e) => setSpecialty(e.target.value)}
+                        value={isCustomSpecialty || !THERAPIST_SPECIALTY_PRESETS.includes(specialty) ? 'other' : specialty}
+                        onChange={(e) => {
+                          if (e.target.value === 'other') {
+                            setIsCustomSpecialty(true);
+                            setSpecialty('');
+                          } else {
+                            setIsCustomSpecialty(false);
+                            setSpecialty(e.target.value);
+                          }
+                        }}
                         className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold text-[#0F2F2B] outline-none focus:border-[#10B981] cursor-pointer"
                       >
-                        <option value="Musculoskeletal (ระบบกระดูกและกล้ามเนื้อ)">Musculoskeletal (ระบบกระดูกและกล้ามเนื้อ)</option>
-                        <option value="Neurological (ระบบประสาทและการเคลื่อนไหว)">Neurological (ระบบประสาทและการเคลื่อนไหว)</option>
-                        <option value="Geriatric (กายภาพบำบัดผู้สูงอายุ)">Geriatric (กายภาพบำบัดผู้สูงอายุ)</option>
-                        <option value="Sports PT (เวชศาสตร์การกีฬา)">Sports PT (เวชศาสตร์การกีฬา)</option>
+                        {THERAPIST_SPECIALTY_PRESETS.map((p) => (
+                          <option key={p} value={p}>
+                            {p}
+                          </option>
+                        ))}
+                        <option value="other">✏️ อื่น ๆ (พิมพ์ระบุเอง)...</option>
                       </select>
+
+                      {(isCustomSpecialty || !THERAPIST_SPECIALTY_PRESETS.includes(specialty)) && (
+                        <div className="mt-2 animate-fadeIn">
+                          <input
+                            type="text"
+                            value={specialty}
+                            onChange={(e) => setSpecialty(e.target.value)}
+                            placeholder="พิมพ์ระบุแผนก / ความเชี่ยวชาญเอง เช่น กายภาพบำบัดเด็ก, ฟื้นฟูปอด..."
+                            className="w-full px-3 py-2 rounded-xl bg-emerald-50/50 border border-emerald-300 text-xs font-bold text-[#0F2F2B] outline-none focus:border-[#10B981] focus:ring-2 focus:ring-emerald-100 placeholder:text-slate-400 placeholder:font-normal"
+                            autoFocus
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
 

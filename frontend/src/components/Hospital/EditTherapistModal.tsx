@@ -397,17 +397,19 @@ export const EditTherapistModal: React.FC<EditTherapistModalProps> = ({
                   onChange={(e) => {
                     if (e.target.value !== 'custom') {
                       setSpecialty(e.target.value);
+                    } else {
+                      setSpecialty('');
                     }
                   }}
                   disabled={!canEdit}
-                  className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border border-emerald-200 bg-white text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#10B981] disabled:bg-slate-100 disabled:text-slate-500"
+                  className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border border-emerald-200 bg-white text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#10B981] disabled:bg-slate-100 disabled:text-slate-500 cursor-pointer"
                 >
                   {SPECIALTY_PRESETS.map((preset) => (
                     <option key={preset} value={preset}>
                       {preset}
                     </option>
                   ))}
-                  <option value="custom">✏️ ระบุสาขาความเชี่ยวชาญอื่น ๆ...</option>
+                  <option value="custom">✏️ อื่น ๆ (พิมพ์ระบุเอง)...</option>
                 </select>
               </div>
 

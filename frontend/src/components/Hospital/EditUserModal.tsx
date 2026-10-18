@@ -752,8 +752,28 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
                     ความเชี่ยวชาญ / สาขา:
                   </label>
                   <select
-                    value={specialty}
-                    onChange={(e) => setSpecialty(e.target.value)}
+                    value={
+                      [
+                        'กายภาพบำบัดระบบกระดูกและกล้ามเนื้อ (Orthopedic PT)',
+                        'กายภาพบำบัดระบบประสาทและหลอดเลือดสมอง (Neurological PT)',
+                        'กายภาพบำบัดผู้สูงอายุ (Geriatric PT)',
+                        'กายภาพบำบัดทางการกีฬา (Sports PT)',
+                        'ฟื้นฟูสมรรถภาพหัวใจและปอด (Cardiopulmonary PT)',
+                        'Musculoskeletal (ระบบกระดูกและกล้ามเนื้อ)',
+                        'Neurological (ระบบประสาทและการเคลื่อนไหว)',
+                        'Geriatric (กายภาพบำบัดผู้สูงอายุ)',
+                        'Sports PT (เวชศาสตร์การกีฬา)',
+                      ].includes(specialty)
+                        ? specialty
+                        : 'other'
+                    }
+                    onChange={(e) => {
+                      if (e.target.value === 'other') {
+                        setSpecialty('');
+                      } else {
+                        setSpecialty(e.target.value);
+                      }
+                    }}
                     className="w-full px-3.5 py-2.5 rounded-2xl bg-white border border-emerald-200 text-xs font-bold text-[#0F2F2B] outline-none focus:border-[#10B981] cursor-pointer"
                   >
                     <option value="กายภาพบำบัดระบบกระดูกและกล้ามเนื้อ (Orthopedic PT)">
@@ -771,7 +791,31 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
                     <option value="ฟื้นฟูสมรรถภาพหัวใจและปอด (Cardiopulmonary PT)">
                       ฟื้นฟูหัวใจและปอด (Cardiopulmonary PT)
                     </option>
+                    <option value="other">✏️ อื่น ๆ (พิมพ์ระบุเอง)...</option>
                   </select>
+
+                  {![
+                    'กายภาพบำบัดระบบกระดูกและกล้ามเนื้อ (Orthopedic PT)',
+                    'กายภาพบำบัดระบบประสาทและหลอดเลือดสมอง (Neurological PT)',
+                    'กายภาพบำบัดผู้สูงอายุ (Geriatric PT)',
+                    'กายภาพบำบัดทางการกีฬา (Sports PT)',
+                    'ฟื้นฟูสมรรถภาพหัวใจและปอด (Cardiopulmonary PT)',
+                    'Musculoskeletal (ระบบกระดูกและกล้ามเนื้อ)',
+                    'Neurological (ระบบประสาทและการเคลื่อนไหว)',
+                    'Geriatric (กายภาพบำบัดผู้สูงอายุ)',
+                    'Sports PT (เวชศาสตร์การกีฬา)',
+                  ].includes(specialty) && (
+                    <div className="mt-2 animate-fadeIn">
+                      <input
+                        type="text"
+                        value={specialty}
+                        onChange={(e) => setSpecialty(e.target.value)}
+                        placeholder="พิมพ์ระบุความเชี่ยวชาญเฉพาะทาง เช่น กายภาพบำบัดเด็ก, ชุมชน..."
+                        className="w-full px-3.5 py-2 rounded-2xl bg-emerald-50/50 border border-emerald-300 text-xs font-bold text-[#0F2F2B] outline-none focus:border-[#10B981] focus:ring-2 focus:ring-emerald-100"
+                        autoFocus
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* License Number */}
