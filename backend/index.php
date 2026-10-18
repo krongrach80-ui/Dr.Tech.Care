@@ -15,6 +15,7 @@ require_once __DIR__ . '/controllers/FaceController.php';
 require_once __DIR__ . '/controllers/AuthController.php';
 require_once __DIR__ . '/controllers/AdaptiveController.php';
 require_once __DIR__ . '/controllers/SyncController.php';
+require_once __DIR__ . '/controllers/AppointmentController.php';
 
 // Buffer output to send exact Content-Length & Connection: close so Vite proxy and browsers do not hang
 ob_start();
@@ -283,6 +284,39 @@ try {
         AuthMiddleware::authorizePatient($patientId);
         $controller = new PatientController();
         $controller->show($patientId);
+        exit();
+    }
+
+    // ==========================================
+    // 3.1 APPOINTMENTS (SCHEDULED COURSES & MODES)
+    // ==========================================
+
+    // /api/appointments
+    if ($uri === '/api/appointments') {
+        $controller = new AppointmentController();
+        if ($method === 'GET') {
+            $controller->index();
+        } elseif ($method === 'POST') {
+            $controller->store();
+        } else {
+            sendMethodNotAllowed('GET, POST');
+        }
+        exit();
+    }
+
+    // /api/appointments/{id}
+    if (preg_match('#^/api/appointments/(\d+)$#', $uri, $matches)) {
+        $appointmentId = (int)$matches[1];
+        $controller = new AppointmentController();
+        if ($method === 'GET') {
+            $controller->show($appointmentId);
+        } elseif ($method === 'PUT' || $method === 'PATCH') {
+            $controller->update($appointmentId);
+        } elseif ($method === 'DELETE') {
+            $controller->destroy($appointmentId);
+        } else {
+            sendMethodNotAllowed('GET, PUT, PATCH, DELETE');
+        }
         exit();
     }
 

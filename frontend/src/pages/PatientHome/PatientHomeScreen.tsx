@@ -1,14 +1,16 @@
 /**
  * Dr.Tech.Care - Patient Home Dashboard (/home)
- * Vertical Kiosk 9:16 (1080x1920) optimized for elderly patients
+ * Vertical Kiosk 9:16 (1080x1920) and Mobile/Tablet Responsive
  * Features:
+ * - Requirement 5: ถ้านัดมี 2 แบบ: หน้าฝึกวันนัดแสดง 2 ส่วน/2 การ์ดพร้อมกัน (กายภาพ + มินิเกม) ให้คนไข้เริ่มทีละอัน
+ *   และแสดงสถานะเสร็จ/ยังไม่เสร็จของแต่ละอัน ถ้ามีแบบเดียว แสดงเฉพาะแบบนั้น
  * - Masked Surname for medical PDPA compliance (e.g. "สมชาย ใ.")
  * - Attending Physiotherapist & Today's Prescription Plan
  * - Large touch targets (>= 64px - 80px) with high contrast StrongCare theme
  * - IdleGuard Auto-Logout (45 seconds inactivity with 10s countdown warning)
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Play,
   LogOut,
@@ -24,6 +26,9 @@ import {
   HeartPulse,
   Activity,
   Sparkles,
+  CheckCircle2,
+  Clock3,
+  Award,
 } from 'lucide-react';
 import { Patient } from '../../types/patient';
 import { TreatmentPlan, PhysicalTherapist } from '../../types/hospital';
@@ -100,13 +105,15 @@ export const PatientHomeScreen: React.FC<PatientHomeScreenProps> = ({
     };
   }, [resetIdle, onLogout]);
 
-  // Thai Date formatting with correct 1-based month (10 = ตุลาคม)
+  // Thai Date formatting with correct 1-based month
   const [thaiDateStr, setThaiDateStr] = useState<string>('');
+  const [todayDateKey, setTodayDateKey] = useState<string>('');
+
   useEffect(() => {
     const thaiDayNames = ['วันอาทิตย์', 'วันจันทร์', 'วันอังคาร', 'วันพุธ', 'วันพฤหัสบดี', 'วันศุกร์', 'วันเสาร์'];
     const thaiMonthNames = [
       'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
-      'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+      'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม',
     ];
     const now = new Date();
     const dName = thaiDayNames[now.getDay()];
@@ -114,30 +121,86 @@ export const PatientHomeScreen: React.FC<PatientHomeScreenProps> = ({
     const mName = thaiMonthNames[now.getMonth()];
     const bYear = now.getFullYear() + 543;
     const mNum = now.getMonth() + 1;
-    setThaiDateStr(`${dName}ที่ ${dNum} ${mName} พ.ศ. ${bYear} (${dNum}/${mNum}/${bYear})`);
+    setThaiDateStr(`${dName}ที่ ${dNum} ${mName} พ.ศ. ${bYear}`);
+    setTodayDateKey(`${now.getFullYear()}-${String(mNum).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`);
   }, []);
 
-  const therapistName = attendingTherapist?.name || 'กภ. ธนากร เจริญสุข (นักกายภาพบำบัดประจำตู้)';
+  // Completion states for today (Requirement 5: แสดงสถานะเสร็จ/ยังไม่เสร็จของแต่ละอัน)
+  const [isRomCompleted, setIsRomCompleted] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(`strongcare_completed_rom_${patient.id}`);
+      return stored === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const [isMinigameCompleted, setIsMinigameCompleted] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(`strongcare_completed_minigame_${patient.id}`);
+      return stored === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  // Determine enabled modes based on activePlan and trainingModes (Requirement 4 & 5)
+  // Backward compatibility: If trainingModes is not set, default to ROM enabled, and check includeMinigame
+  const hasRom = useMemo(() => {
+    if (activePlan?.trainingModes?.rom) {
+      return activePlan.trainingModes.rom.enabled;
+    }
+    // Backward compatible fallback
+    return true;
+  }, [activePlan]);
+
+  const hasMinigame = useMemo(() => {
+    if (activePlan?.trainingModes?.minigame) {
+      return activePlan.trainingModes.minigame.enabled;
+    }
+    // Backward compatible fallback
+    return Boolean(activePlan?.includeMinigame ?? (activePlan as any)?.include_minigame ?? false);
+  }, [activePlan]);
+
+  // Doctor configured minigame question count (Requirement 3.2 & 5)
+  const minigameQuestionCount = useMemo(() => {
+    if (activePlan?.trainingModes?.minigame?.questionCount) {
+      return activePlan.trainingModes.minigame.questionCount;
+    }
+    return activePlan?.minigameQuestionCount || 20;
+  }, [activePlan]);
+
+  const therapistName = attendingTherapist?.name || activePlan?.therapistName || 'กภ. ธนากร วงศ์สวัสดิ์';
+
   const defaultExercises = [
-    { exerciseSlug: 'arm_raise', exerciseName: 'ท่ายกแขนเหนือศีรษะ', reps: 10, sets: 3 },
-    { exerciseSlug: 'shoulder_abduction', exerciseName: 'ท่ากางแขนออกข้างลำตัว', reps: 10, sets: 3 },
-    { exerciseSlug: 'elbow_flexion', exerciseName: 'ท่างอและเหยียดข้อศอก', reps: 12, sets: 3 },
+    { exerciseSlug: 'shoulder_raise', exerciseName: 'กางแขนยกด้านข้าง', reps: 10, sets: 3 },
+    { exerciseSlug: 'cross_body_stretch', exerciseName: 'ยืดไหล่ข้ามอก', reps: 8, sets: 3 },
+    { exerciseSlug: 'chest_expansion', exerciseName: 'ยืดอกเปิดไหล่', reps: 8, sets: 2 },
   ];
-  const planExercises = activePlan?.assignedExercises && activePlan.assignedExercises.length > 0
-    ? activePlan.assignedExercises
-    : defaultExercises;
+
+  const planExercises = useMemo(() => {
+    if (activePlan?.assignedExercises && activePlan.assignedExercises.length > 0) {
+      return activePlan.assignedExercises;
+    }
+    if (activePlan?.trainingModes?.rom?.exercises && activePlan.trainingModes.rom.exercises.length > 0) {
+      return activePlan.trainingModes.rom.exercises;
+    }
+    return defaultExercises;
+  }, [activePlan, defaultExercises]);
+
+  const packTitle = activePlan?.trainingModes?.rom?.packName || 'แผนการทำกายภาพประจำวันนี้';
 
   return (
-    <div className="w-full h-full max-w-xl mx-auto flex flex-col justify-between p-4 sm:p-6 bg-gradient-to-b from-[#E8F8F1] via-white to-[#E4F0FC] text-[#0B2B2B] relative select-none rounded-[32px] sm:rounded-[36px] shadow-2xl border border-emerald-100">
+    <div className="w-full h-full max-w-xl mx-auto flex flex-col justify-between p-4 sm:p-6 bg-gradient-to-b from-[#E8F8F1] via-white to-[#E4F0FC] text-[#0B2B2B] relative select-none rounded-[32px] sm:rounded-[36px] shadow-2xl border border-emerald-100 overflow-y-auto">
       {/* 1. Header Bar: Date & Logout */}
-      <div className="w-full flex items-center justify-between pb-3 border-b border-emerald-200">
+      <div className="w-full flex items-center justify-between pb-3 border-b border-emerald-200 flex-shrink-0">
         <div className="flex items-center gap-2">
           <div className="w-10 h-10 rounded-full bg-white border border-emerald-300 flex items-center justify-center p-1 overflow-hidden shadow-2xs">
             <img src={logoIconImg} alt="Dr. Tech Care" className="w-full h-full object-contain" />
           </div>
           <div>
             <div className="text-[11px] font-black text-emerald-800 tracking-wide uppercase">
-              DR.TECH.CARE • SMART REHAB
+              STRONG CARE • SMART REHAB
             </div>
             <div className="text-xs font-bold text-slate-600">{thaiDateStr}</div>
           </div>
@@ -145,7 +208,7 @@ export const PatientHomeScreen: React.FC<PatientHomeScreenProps> = ({
 
         <button
           onClick={onLogout}
-          className="min-h-[46px] py-2 px-3.5 rounded-2xl bg-white hover:bg-rose-50 border border-rose-300 text-rose-700 font-black text-xs sm:text-sm flex items-center gap-1.5 shadow-sm active:scale-95 transition cursor-pointer"
+          className="min-h-[44px] py-2 px-3.5 rounded-2xl bg-white hover:bg-rose-50 border border-rose-300 text-rose-700 font-black text-xs sm:text-sm flex items-center gap-1.5 shadow-sm active:scale-95 transition cursor-pointer"
           id="btnPatientLogoutTop"
           title="ออกจากระบบ"
         >
@@ -155,13 +218,13 @@ export const PatientHomeScreen: React.FC<PatientHomeScreenProps> = ({
       </div>
 
       {/* 2. Patient Profile Card (Masked Surname PDPA) */}
-      <div className="w-full bg-white border-2 border-emerald-300 rounded-[28px] p-5 shadow-sm my-3 relative overflow-hidden">
+      <div className="w-full bg-white border-2 border-emerald-300 rounded-[28px] p-4 sm:p-5 shadow-sm my-2.5 relative overflow-hidden flex-shrink-0">
         <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-full -mr-10 -mt-10 pointer-events-none" />
 
         <div className="flex items-start justify-between relative z-10">
           <div>
             <span className="inline-block text-[10px] font-black tracking-wider uppercase px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 mb-1.5">
-              ข้อมูลผู้รับบริการ (HN: {patient.patient_code || 'P-0012'})
+              ข้อมูลผู้รับบริการ (HN: {patient.patient_code || 'PT-2026-001'})
             </span>
             <h1 className="text-2xl sm:text-3xl font-black text-[#0B2B2B] tracking-tight">
               {maskSurname(patient.name)}
@@ -171,107 +234,216 @@ export const PatientHomeScreen: React.FC<PatientHomeScreenProps> = ({
             </p>
           </div>
 
-          <div className="w-14 h-14 rounded-2xl bg-emerald-50 border-2 border-emerald-300 flex items-center justify-center text-emerald-700 font-black text-xl shadow-inner">
+          <div className="w-13 h-13 rounded-2xl bg-emerald-50 border-2 border-emerald-300 flex items-center justify-center text-emerald-700 font-black text-xl shadow-inner">
             👴
           </div>
         </div>
 
         {/* Attending Therapist Badge */}
-        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2.5 text-xs sm:text-sm font-bold text-emerald-950">
+        <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center gap-2 text-xs sm:text-sm font-bold text-emerald-950">
           <Stethoscope className="w-4 h-4 text-[#1E8A4C] shrink-0" />
-          <span>นักกายภาพบำบัดผู้ดูแล: <b className="text-[#1E8A4C]">{therapistName}</b></span>
+          <span>
+            นักกายภาพบำบัดผู้ดูแล: <b className="text-[#1E8A4C]">{therapistName}</b>
+          </span>
         </div>
       </div>
 
-      {/* 3. Today's Prescription Schedule Card */}
-      <div className="w-full bg-[#EBF8F2] border border-emerald-300/80 rounded-[28px] p-5 shadow-sm flex-1 flex flex-col justify-between my-1">
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Dumbbell className="w-5 h-5 text-[#1E8A4C]" />
-              <h2 className="text-base sm:text-lg font-black text-[#0B2B2B]">
-                แผนการทำกายภาพประจำวันนี้
-              </h2>
-            </div>
-            <span className="text-[11px] font-extrabold bg-[#1E8A4C] text-white px-2.5 py-0.5 rounded-full">
-              {planExercises.length} ท่ากายภาพ
-            </span>
-          </div>
+      {/* Mode status summary banner when both are scheduled */}
+      {hasRom && hasMinigame && (
+        <div className="w-full px-4 py-2 rounded-2xl bg-gradient-to-r from-emerald-100 to-purple-100 border border-emerald-300 text-xs font-black text-[#0B2B2B] flex items-center justify-between shadow-2xs my-1 flex-shrink-0">
+          <span className="flex items-center gap-1.5">
+            <Sparkles className="w-4 h-4 text-emerald-600" />
+            <span>วันนี้คุณมี 2 รูปแบบการฝึก (กายภาพ + มินิเกม)</span>
+          </span>
+          <span className="text-[11px] text-slate-600 font-bold">
+            เริ่มทำทีละอันได้เลยครับ
+          </span>
+        </div>
+      )}
 
-          {/* Exercise Items List */}
-          <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-            {planExercises.map((ex, idx) => (
-              <div
-                key={idx}
-                className="bg-white rounded-2xl p-3 border border-emerald-200/80 flex items-center justify-between shadow-2xs hover:border-emerald-400 transition"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-xl bg-emerald-100 text-[#1E8A4C] font-black text-sm flex items-center justify-center shrink-0">
-                    {idx + 1}
+      {/* =================================================================== */}
+      {/* 3. TODAY'S WORKOUT SECTIONS (Requirement 5)                        */}
+      {/* =================================================================== */}
+      <div className="w-full space-y-3 my-1 flex-1 overflow-y-auto pr-0.5">
+        {/* CARD 1: กายภาพปกติ (ROM Exercise) */}
+        {hasRom && (
+          <div className="w-full bg-[#EBF8F2] border-2 border-emerald-300 rounded-[28px] p-4 sm:p-5 shadow-sm space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center shadow-xs">
+                  <Activity className="w-4 h-4 stroke-[2.5]" />
+                </div>
+                <div>
+                  <h2 className="text-base sm:text-lg font-black text-[#0B2B2B] leading-tight">
+                    กายภาพปกติ (ROM Exercise)
+                  </h2>
+                  <p className="text-[11px] font-bold text-emerald-800">
+                    {packTitle}
+                  </p>
+                </div>
+              </div>
+
+              {/* Status Badge: เสร็จ / ยังไม่เสร็จ (Requirement 5) */}
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-extrabold bg-[#1E8A4C] text-white px-2.5 py-0.5 rounded-full">
+                  {planExercises.length} ท่า
+                </span>
+
+                {isRomCompleted ? (
+                  <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>เสร็จสิ้นแล้ว</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+                    <Clock3 className="w-3.5 h-3.5 text-amber-600" />
+                    <span>ยังไม่เสร็จ</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Exercise Items List */}
+            <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+              {planExercises.map((ex, idx) => (
+                <div
+                  key={idx}
+                  className="bg-white rounded-xl p-2.5 border border-emerald-200/90 flex items-center justify-between shadow-2xs text-left"
+                >
+                  <div className="flex items-center gap-2.5 truncate">
+                    <div className="w-6 h-6 rounded-lg bg-emerald-100 text-[#1E8A4C] font-black text-xs flex items-center justify-center shrink-0">
+                      {idx + 1}
+                    </div>
+                    <div className="truncate">
+                      <div className="text-xs sm:text-sm font-black text-[#0B2B2B] truncate">
+                        {ex.exerciseName}
+                      </div>
+                      <div className="text-[10px] font-semibold text-slate-500">
+                        {ex.reps || 10} ครั้ง/เซ็ต • {ex.sets || 3} เซ็ต
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-xs sm:text-sm font-black text-[#0B2B2B]">
-                      {ex.exerciseName || 'ท่ากายภาพบำบัด'}
-                    </div>
-                    <div className="text-[11px] font-semibold text-slate-500">
-                      {ex.reps || 10} ครั้ง/เซ็ต • {ex.sets || 3} เซ็ต
-                    </div>
+
+                  <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md flex-shrink-0">
+                    พร้อมฝึก
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Start ROM Button */}
+            <button
+              type="button"
+              onClick={() => onStartExercise('physio')}
+              className={`w-full min-h-[58px] py-3 px-5 rounded-2xl font-black text-base transition flex items-center justify-between cursor-pointer border shadow-md active:scale-95 ${
+                isRomCompleted
+                  ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-emerald-300'
+                  : 'bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white border-white/60 shadow-cyan-500/25 hover:shadow-lg'
+              }`}
+              id="btnStartPrescribedPhysio"
+            >
+              <div className="flex items-center gap-2.5">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${isRomCompleted ? 'bg-emerald-200 text-emerald-800' : 'bg-white/20 text-white'}`}>
+                  <Play className="w-5 h-5 fill-current ml-0.5" />
+                </div>
+                <div className="text-left">
+                  <div className="text-sm sm:text-base font-black">
+                    {isRomCompleted ? 'ฝึกกายภาพบำบัดอีกครั้ง' : 'เริ่มต้นฝึกกายภาพบำบัด'}
+                  </div>
+                  <div className="text-[11px] opacity-90 font-medium">
+                    {planExercises.length} ท่าฝึก พร้อม AI วิเคราะห์มุมข้อต่อ
                   </div>
                 </div>
-
-                <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-lg">
-                  พร้อมฝึก
-                </span>
               </div>
-            ))}
+              <ChevronRight className="w-5 h-5 opacity-80" />
+            </button>
           </div>
-        </div>
+        )}
 
-        {/* Doctor Note Advice Box */}
-        <div className="mt-3 p-3 rounded-2xl bg-white/90 border border-emerald-300/60 text-xs text-slate-700 font-semibold flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-          <span>
-            คำแนะนำ: ให้ค่อยๆ เคลื่อนไหวตามคำแนะนำของเสียงและสเกเลตัน AI หากมีอาการเจ็บสามารถกดปุ่มหยุดได้ทันที
-          </span>
-        </div>
+        {/* CARD 2: มินิเกมฝึกสมอง (Brain Training Mini-Game) */}
+        {hasMinigame && (
+          <div className="w-full bg-[#FAF5FF] border-2 border-purple-300 rounded-[28px] p-4 sm:p-5 shadow-sm space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center shadow-xs">
+                  <Gamepad2 className="w-4 h-4 stroke-[2.5]" />
+                </div>
+                <div>
+                  <h2 className="text-base sm:text-lg font-black text-[#0B2B2B] leading-tight">
+                    มินิเกมฝึกสมองและการตอบสนอง
+                  </h2>
+                  <p className="text-[11px] font-bold text-purple-700">
+                    ตอบคำถามโดยยกมือซ้าย/ขวา เพื่อความเพลิดเพลิน
+                  </p>
+                </div>
+              </div>
+
+              {/* Status Badge: เสร็จ / ยังไม่เสร็จ (Requirement 5) */}
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-extrabold bg-purple-600 text-white px-2.5 py-0.5 rounded-full">
+                  {minigameQuestionCount} คำถาม
+                </span>
+
+                {isMinigameCompleted ? (
+                  <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>เสร็จสิ้นแล้ว</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+                    <Clock3 className="w-3.5 h-3.5 text-amber-600" />
+                    <span>ยังไม่เสร็จ</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-white border border-purple-200/90 text-xs text-slate-700 font-semibold space-y-1 text-left">
+              <div className="flex items-center justify-between">
+                <span>จำนวนคำถามตามที่หมอกำหนด:</span>
+                <span className="font-black text-purple-700">{minigameQuestionCount} ข้อ</span>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                ขยับร่างกายเพื่อเลือกคำตอบ ใช่ หรือ ไม่ ช่วยกระตุ้นระบบประสาทและการสั่งการ
+              </p>
+            </div>
+
+            {/* Start Minigame Button */}
+            <button
+              type="button"
+              onClick={() => onStartExercise('minigame')}
+              className={`w-full min-h-[58px] py-3 px-5 rounded-2xl font-black text-base transition flex items-center justify-between cursor-pointer border shadow-md active:scale-95 ${
+                isMinigameCompleted
+                  ? 'bg-purple-50 hover:bg-purple-100 text-purple-900 border-purple-300'
+                  : 'bg-gradient-to-r from-purple-600 via-indigo-600 to-sky-600 text-white border-white/60 shadow-purple-500/25 hover:shadow-lg'
+              }`}
+              id="btnStartMinigameOption"
+            >
+              <div className="flex items-center gap-2.5">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${isMinigameCompleted ? 'bg-purple-200 text-purple-800' : 'bg-white/20 text-white'}`}>
+                  <Gamepad2 className="w-5 h-5 text-current" />
+                </div>
+                <div className="text-left">
+                  <div className="text-sm sm:text-base font-black">
+                    {isMinigameCompleted ? 'เล่นมินิเกมอีกครั้ง' : `เริ่มต้นเล่นมินิเกม (${minigameQuestionCount} ข้อ)`}
+                  </div>
+                  <div className="text-[11px] opacity-90 font-medium">
+                    แบบฝึกสมองเชิงโต้ตอบ (+50 XP)
+                  </div>
+                </div>
+              </div>
+              <ChevronRight className="w-5 h-5 opacity-80" />
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* 4. Large Action Buttons (Touch targets >= 64px - 80px) */}
-      <div className="w-full space-y-3 pt-3">
-        {/* Main Physical Therapy Workout Button */}
-        <button
-          onClick={() => onStartExercise('physio')}
-          className="w-full min-h-[68px] sm:min-h-[78px] py-4 px-6 rounded-[24px] bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-black text-lg sm:text-xl shadow-xl shadow-cyan-500/25 hover:shadow-2xl hover:scale-[1.01] active:scale-95 transition flex items-center justify-between cursor-pointer border-2 border-white/60"
-          id="btnStartPrescribedPhysio"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0 shadow-inner">
-              <Play className="w-7 h-7 fill-white ml-0.5" />
-            </div>
-            <div className="text-left">
-              <div>เริ่มต้นฝึกกายภาพบำบัด</div>
-              <div className="text-xs font-bold text-cyan-100 opacity-95">
-                พร้อม AI วิเคราะห์ท่าและตรวจสอบความปลอดภัย
-              </div>
-            </div>
-          </div>
-          <ChevronRight className="w-6 h-6 shrink-0 opacity-80" />
-        </button>
-
-        {/* Brain Minigame Training Button */}
-        <button
-          onClick={() => onStartExercise('minigame')}
-          className="w-full min-h-[56px] sm:min-h-[64px] py-3 px-5 rounded-[20px] bg-white hover:bg-cyan-50/50 border-2 border-cyan-400 text-[#0B2B2B] font-black text-sm sm:text-base shadow-sm active:scale-95 transition flex items-center justify-between cursor-pointer"
-          id="btnStartMinigameOption"
-        >
-          <div className="flex items-center gap-2.5">
-            <Gamepad2 className="w-5 h-5 text-cyan-600" />
-            <span>มินิเกมฝึกสมองและการตอบสนอง (Interactive Quiz)</span>
-          </div>
-          <span className="text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
-            +50 XP
-          </span>
-        </button>
+      {/* Bottom Advice Footer */}
+      <div className="p-3 rounded-2xl bg-white/95 border border-emerald-300/60 text-[11px] text-slate-600 font-semibold flex items-center gap-2 mt-2 flex-shrink-0">
+        <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+        <span>
+          คำแนะนำ: ค่อยๆ เคลื่อนไหวตามเสียงและโครงร่าง AI หากมีอาการเจ็บหรือล้า สามารถกดหยุดพักได้ทันที
+        </span>
       </div>
 
       {/* 5. IdleGuard Warning Popup (10s Countdown) */}
@@ -289,7 +461,6 @@ export const PatientHomeScreen: React.FC<PatientHomeScreenProps> = ({
               เพื่อความปลอดภัยของข้อมูล ระบบจะออกจากระบบอัตโนมัติในอีก
             </p>
 
-            {/* Countdown Badge */}
             <div className="w-20 h-20 rounded-full bg-amber-500 text-white font-mono font-black text-3xl flex items-center justify-center mb-5 shadow-lg animate-pulse">
               {IDLE_LIMIT_SECONDS - idleSeconds}
             </div>

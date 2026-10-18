@@ -134,6 +134,21 @@ export interface ExerciseModpack {
   createdBy?: string;
 }
 
+export interface TrainingModes {
+  rom: {
+    enabled: boolean;
+    type: 'pack' | 'custom';
+    packId?: string;
+    packName?: string;
+    poseIds: string[];
+    exercises?: PrescribedExercise[];
+  };
+  minigame: {
+    enabled: boolean;
+    questionCount: number;
+  };
+}
+
 export interface TreatmentPlan {
   id: number | string;
   patientId: number | string;
@@ -160,6 +175,7 @@ export interface TreatmentPlan {
   includeMinigame?: boolean; // รวมมินิเกมฝึกสมองและการตอบสนอง (Interactive Quiz) ในคอร์สประจำวัน
   include_minigame?: boolean; // snake_case compatibility alias
   minigameQuestionCount?: number; // จำนวนคำถามมินิเกมฝึกสมอง เช่น 20 ข้อ
+  trainingModes?: TrainingModes;  // โครงสร้างต่อ 1 นัด (ROM + มินิเกม)
 }
 
 export interface ActivityLog {

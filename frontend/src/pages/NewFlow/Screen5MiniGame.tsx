@@ -41,6 +41,8 @@ interface Screen5MiniGameProps {
   onBack: () => void;
   onOpenTherapistModal: (score: number, poseName: string, romAngle: number | null) => void;
   onOpenSettings: () => void;
+  questionCount?: number;
+  onComplete?: () => void;
 }
 
 export const Screen5MiniGame: React.FC<Screen5MiniGameProps> = ({
@@ -48,10 +50,20 @@ export const Screen5MiniGame: React.FC<Screen5MiniGameProps> = ({
   onBack,
   onOpenTherapistModal,
   onOpenSettings,
+  questionCount,
+  onComplete,
 }) => {
   // Settings
   const [settings, setSettings] = useState<MiniGameSettings>(getSavedMiniGameSettings);
   const [isSoundMuted, setIsSoundMuted] = useState<boolean>(!settings.soundEnabled);
+
+  // Effective question count from doctor's prescription (Requirement 3.2 & 5)
+  const effectiveCount = useMemo(() => {
+    if (typeof questionCount === 'number' && questionCount >= 5 && questionCount <= 50) {
+      return questionCount;
+    }
+    return settings.questionCount || 20;
+  }, [questionCount, settings.questionCount]);
 
   // Listen for settings changes
   useEffect(() => {
@@ -71,9 +83,9 @@ export const Screen5MiniGame: React.FC<Screen5MiniGameProps> = ({
     audioFeedback.setMuted(isSoundMuted);
   }, [isSoundMuted]);
 
-  // Game state
+  // Game state initialized with exact effective count
   const [questions, setQuestions] = useState<MiniGameQuestion[]>(() =>
-    getRandomMiniGameQuestions(settings.questionCount)
+    getRandomMiniGameQuestions(effectiveCount)
   );
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [score, setScore] = useState<number>(0);
@@ -242,6 +254,7 @@ export const Screen5MiniGame: React.FC<Screen5MiniGameProps> = ({
         } else {
           // Game Completed!
           setIsRoundFinished(true);
+          onComplete?.();
           audioFeedback.playWorkoutComplete();
           // Launch Confetti Celebration
           try {

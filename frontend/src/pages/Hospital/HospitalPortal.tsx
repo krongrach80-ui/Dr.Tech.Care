@@ -914,7 +914,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [selectedDateForCourse, setSelectedDateForCourse] = useState<string>('2026-10-16');
 
   // Dynamic Calendar Appointments (Initial appointments matching Image 2 for October 2569)
-  const [calendarAppointments, setCalendarAppointments] = useState<Record<number, Array<{ time: string; name: string; type: 'green' | 'cyan' | 'purple' }>>>({
+  const [calendarAppointments, setCalendarAppointments] = useState<Record<number, Array<{ time: string; name: string; type: 'green' | 'cyan' | 'purple' | 'dual' }>>>({
     7: [
       { time: '09:30', name: 'สมชาย', type: 'green' },
       { time: '15:00', name: 'PJ', type: 'cyan' },
@@ -3514,8 +3514,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                       setIsQuickInfoModalOpen(true);
                                     }
                                   }}
-                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold truncate transition cursor-pointer hover:opacity-90 ${
-                                    apt.type === 'green'
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold truncate transition cursor-pointer hover:opacity-90 flex items-center justify-between gap-1 ${
+                                    apt.type === 'dual'
+                                      ? 'bg-gradient-to-r from-emerald-100 via-teal-50 to-purple-100 text-[#064E3B] border border-emerald-300 shadow-2xs font-extrabold'
+                                      : apt.type === 'green'
                                       ? 'bg-emerald-100 text-emerald-800'
                                       : apt.type === 'cyan'
                                       ? 'bg-sky-100 text-sky-800'
@@ -5548,20 +5550,25 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
           const cleanName = courseData.patientName.replace(/^(นาย|นาง|นางสาว)\s*/, '');
           const timeOnly = courseData.timeSlot.split(' - ')[0] || '09:30';
 
-          // Build list of appointment chips to add per day
-          const aptsToAdd: { time: string; name: string; type: 'purple' | 'green' }[] = [];
-          if (courseData.includePhysio) {
+          // Build list of appointment chips to add per day (Requirement 6: แสดงในชิปเดียวกันหากมี 2 แบบ)
+          const aptsToAdd: { time: string; name: string; type: 'purple' | 'green' | 'dual' }[] = [];
+          if (courseData.includePhysio && courseData.includeMinigame) {
             aptsToAdd.push({
               time: timeOnly,
-              name: cleanName,
-              type: 'green',
+              name: `${cleanName} 🎮`,
+              type: 'dual',
             });
-          }
-          if (courseData.includeMinigame) {
+          } else if (courseData.includeMinigame) {
             aptsToAdd.push({
               time: timeOnly,
               name: `${cleanName} 🎮`,
               type: 'purple',
+            });
+          } else {
+            aptsToAdd.push({
+              time: timeOnly,
+              name: cleanName,
+              type: 'green',
             });
           }
 
@@ -5608,6 +5615,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             roomStation: courseData.station,
             includeMinigame: courseData.includeMinigame,
             minigameQuestionCount: courseData.minigameQuestionCount,
+            trainingModes: courseData.trainingModes,
           });
 
           addActivityLog(

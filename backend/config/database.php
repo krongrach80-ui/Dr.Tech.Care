@@ -179,6 +179,20 @@ class Database {
                         expires_at DATETIME NOT NULL,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+                    CREATE TABLE IF NOT EXISTS appointments (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        patient_id INT NOT NULL,
+                        therapist_id INT NULL,
+                        appointment_date DATE NOT NULL,
+                        time_slot VARCHAR(50) DEFAULT '09:30 - 10:30',
+                        station VARCHAR(100) DEFAULT 'ตู้ Kiosk 1',
+                        training_modes JSON NULL,
+                        notes TEXT NULL,
+                        status VARCHAR(50) DEFAULT 'scheduled',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                 ");
             } else {
                 $pdo->exec("
@@ -301,6 +315,20 @@ class Database {
                         role TEXT DEFAULT 'patient',
                         expires_at DATETIME NOT NULL,
                         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    );
+
+                    CREATE TABLE IF NOT EXISTS appointments (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        patient_id INTEGER NOT NULL,
+                        therapist_id INTEGER,
+                        appointment_date TEXT NOT NULL,
+                        time_slot TEXT DEFAULT '09:30 - 10:30',
+                        station TEXT DEFAULT 'ตู้ Kiosk 1',
+                        training_modes TEXT,
+                        notes TEXT,
+                        status TEXT DEFAULT 'scheduled',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                     );
                 ");
             }

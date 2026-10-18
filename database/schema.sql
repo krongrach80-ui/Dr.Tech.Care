@@ -129,9 +129,26 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
     FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS appointments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    patient_id INT NOT NULL,
+    therapist_id INT NULL,
+    appointment_date DATE NOT NULL,
+    time_slot VARCHAR(50) DEFAULT '09:30 - 10:30',
+    station VARCHAR(100) DEFAULT 'ตู้ Kiosk 1',
+    training_modes JSON NULL, -- { "rom": { "enabled": true, "type": "pack", "packId": "...", "poseIds": [] }, "minigame": { "enabled": true, "questionCount": 20 } }
+    notes TEXT NULL,
+    status VARCHAR(50) DEFAULT 'scheduled',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE INDEX idx_sessions_patient ON sessions(patient_id);
 CREATE INDEX idx_sessions_exercise ON sessions(exercise_id);
 CREATE INDEX idx_session_results_session ON session_results(session_id);
 CREATE INDEX idx_safety_events_session ON safety_events(session_id);
 CREATE INDEX idx_face_embeddings_patient ON face_embeddings(patient_id);
 CREATE INDEX idx_auth_tokens_hash ON auth_tokens(token_hash);
+CREATE INDEX idx_appointments_patient ON appointments(patient_id);
+CREATE INDEX idx_appointments_date ON appointments(appointment_date);

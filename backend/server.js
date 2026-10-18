@@ -41,6 +41,7 @@ let db = {
   face_embeddings: [],
   exercises: [],
   sessions: [],
+  appointments: [],
   activity_logs: [],
   sync_events: [],
 };
@@ -918,6 +919,161 @@ const server = http.createServer(async (req, res) => {
         status: 'success',
         data: sessionRecord,
       });
+    }
+
+    // -------------------------------------------------------------
+    // Appointments: GET /api/appointments, POST /api/appointments
+    // -------------------------------------------------------------
+    const normalizeModes = (raw) => {
+      if (!raw || typeof raw !== 'object') {
+        return {
+          rom: { enabled: true, type: 'pack', packId: 'modpack-shoulder-daily', poseIds: [] },
+          minigame: { enabled: false, questionCount: 20 },
+        };
+      }
+      return {
+        rom: {
+          enabled: raw.rom?.enabled !== undefined ? Boolean(raw.rom.enabled) : true,
+          type: raw.rom?.type === 'custom' ? 'custom' : 'pack',
+          packId: raw.rom?.packId || null,
+          packName: raw.rom?.packName || null,
+          poseIds: Array.isArray(raw.rom?.poseIds) ? raw.rom.poseIds : [],
+        },
+        minigame: {
+          enabled: raw.minigame?.enabled !== undefined ? Boolean(raw.minigame.enabled) : false,
+          questionCount: Math.min(50, Math.max(5, raw.minigame?.questionCount || 20)),
+        },
+      };
+    };
+
+    if (pathname === '/api/appointments' && method === 'GET') {
+      const patientId = parsedUrl.searchParams.get('patient_id');
+      const date = parsedUrl.searchParams.get('date');
+      let list = db.appointments || [];
+
+      if (patientId) {
+        list = list.filter((a) => String(a.patient_id) === String(patientId) || String(a.patientId) === String(patientId));
+      }
+      if (date) {
+        list = list.filter((a) => a.appointment_date === date || a.date === date);
+      }
+
+      const formatted = list.map((a) => ({
+        ...a,
+        training_modes: normalizeModes(a.training_modes || a.trainingModes),
+        trainingModes: normalizeModes(a.training_modes || a.trainingModes),
+      }));
+
+      return sendJson(res, 200, {
+        status: 'success',
+        data: formatted,
+      });
+    }
+
+    if (pathname === '/api/appointments' && method === 'POST') {
+      const body = await parseBody(req);
+      db.appointments = db.appointments || [];
+
+      const dates = body.selectedDates || body.selected_dates;
+      if (Array.isArray(dates) && dates.length > 1) {
+        const createdList = dates.map((dStr, idx) => {
+          const rec = {
+            id: Date.now() + idx,
+            ...body,
+            appointment_date: dStr,
+            date: dStr,
+            training_modes: normalizeModes(body.training_modes || body.trainingModes),
+            trainingModes: normalizeModes(body.training_modes || body.trainingModes),
+            created_at: new Date().toISOString(),
+          };
+          db.appointments.push(rec);
+          return rec;
+        });
+        saveDatabaseToDisk();
+
+        broadcastSseEvent({
+          type: 'APPOINTMENTS_BATCH_CREATED',
+          count: createdList.length,
+          timestamp: Date.now(),
+        });
+
+        return sendJson(res, 201, {
+          status: 'success',
+          message: 'Batch appointments created',
+          data: createdList,
+        });
+      }
+
+      const newRec = {
+        id: Date.now(),
+        ...body,
+        appointment_date: body.appointment_date || body.date || new Date().toISOString().split('T')[0],
+        date: body.appointment_date || body.date || new Date().toISOString().split('T')[0],
+        training_modes: normalizeModes(body.training_modes || body.trainingModes),
+        trainingModes: normalizeModes(body.training_modes || body.trainingModes),
+        created_at: new Date().toISOString(),
+      };
+      db.appointments.push(newRec);
+      saveDatabaseToDisk();
+
+      broadcastSseEvent({
+        type: 'APPOINTMENT_CREATED',
+        appointment: newRec,
+        timestamp: Date.now(),
+      });
+
+      return sendJson(res, 201, {
+        status: 'success',
+        data: newRec,
+      });
+    }
+
+    const appointmentIdMatch = pathname.match(/^\/api\/appointments\/(\d+)$/);
+    if (appointmentIdMatch) {
+      const aptId = parseInt(appointmentIdMatch[1], 10);
+      db.appointments = db.appointments || [];
+      const aptIdx = db.appointments.findIndex((a) => a.id === aptId);
+
+      if (aptIdx === -1) {
+        return sendJson(res, 404, { status: 'error', message: 'Appointment not found' });
+      }
+
+      if (method === 'GET') {
+        const apt = db.appointments[aptIdx];
+        return sendJson(res, 200, {
+          status: 'success',
+          data: {
+            ...apt,
+            training_modes: normalizeModes(apt.training_modes || apt.trainingModes),
+            trainingModes: normalizeModes(apt.training_modes || apt.trainingModes),
+          },
+        });
+      }
+
+      if (method === 'PUT' || method === 'PATCH') {
+        const body = await parseBody(req);
+        db.appointments[aptIdx] = {
+          ...db.appointments[aptIdx],
+          ...body,
+          training_modes: normalizeModes(body.training_modes || body.trainingModes || db.appointments[aptIdx].training_modes),
+          trainingModes: normalizeModes(body.training_modes || body.trainingModes || db.appointments[aptIdx].training_modes),
+          updated_at: new Date().toISOString(),
+        };
+        saveDatabaseToDisk();
+        return sendJson(res, 200, {
+          status: 'success',
+          data: db.appointments[aptIdx],
+        });
+      }
+
+      if (method === 'DELETE') {
+        db.appointments.splice(aptIdx, 1);
+        saveDatabaseToDisk();
+        return sendJson(res, 200, {
+          status: 'success',
+          message: 'Appointment deleted successfully',
+        });
+      }
     }
 
     // 404 Not Found

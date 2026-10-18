@@ -594,8 +594,13 @@ export const App: React.FC = () => {
         {/* หน้า 4: หน้าทำกายภาพ (Pose Biomechanics ROM Exercise) */}
         {currentScreen === 4 && (
           <Screen4Exercise
-            onBack={() => handleNavigate(1)}
+            onBack={() => handleNavigate(2)}
             onOpenTherapistModal={(score, poseName, romAngle) => {
+              if (selectedPatient?.id) {
+                try {
+                  localStorage.setItem(`strongcare_completed_rom_${selectedPatient.id}`, 'true');
+                } catch {}
+              }
               setTherapistReportData({ score, poseName, romAngle });
               setIsTherapistReportOpen(true);
             }}
@@ -603,7 +608,7 @@ export const App: React.FC = () => {
               showToast('🎮 ยินดีต้อนรับเข้าสู่มินิเกมฝึกสมองและการตอบสนอง (+50 XP)');
               handleNavigate(5);
             }}
-            includeMinigame={Boolean(activePlan?.includeMinigame ?? (activePlan as any)?.include_minigame ?? true)}
+            includeMinigame={Boolean(activePlan?.trainingModes?.minigame?.enabled ?? activePlan?.includeMinigame ?? (activePlan as any)?.include_minigame ?? true)}
             selectedExercise={selectedExercise}
             stretchQueue={activeStretchQueue}
             customHoldTimes={activeCustomHoldTimes}
@@ -615,7 +620,15 @@ export const App: React.FC = () => {
         {currentScreen === 5 && (
           <Screen5MiniGame
             patient={selectedPatient}
-            onBack={() => handleNavigate(1)}
+            questionCount={activePlan?.trainingModes?.minigame?.questionCount || activePlan?.minigameQuestionCount || 20}
+            onComplete={() => {
+              if (selectedPatient?.id) {
+                try {
+                  localStorage.setItem(`strongcare_completed_minigame_${selectedPatient.id}`, 'true');
+                } catch {}
+              }
+            }}
+            onBack={() => handleNavigate(2)}
             onOpenTherapistModal={(score, poseName, romAngle) => {
               setTherapistReportData({ score, poseName, romAngle });
               setIsTherapistReportOpen(true);
