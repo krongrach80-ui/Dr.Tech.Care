@@ -924,40 +924,60 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [isCourseModeModalOpen, setIsCourseModeModalOpen] = useState<boolean>(false);
   const [selectedDateForCourse, setSelectedDateForCourse] = useState<string>('2026-10-16');
 
-  // Dynamic Calendar Appointments (Exclusively for real active patients, removing any fake/therapist entries like PJ)
+  // Dynamic Calendar Appointments (strictly for real active patients in the system)
   const [calendarAppointments, setCalendarAppointments] = useState<Record<number, Array<{ time: string; name: string; type: 'green' | 'cyan' | 'purple' | 'dual' }>>>(() => {
     try {
       const raw = localStorage.getItem('strongcare_calendar_appointments');
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
-          const cleaned: Record<number, any[]> = {};
-          Object.keys(parsed).forEach((k) => {
-            const num = Number(k);
-            cleaned[num] = (parsed[k] || []).filter((apt: any) => {
-              const n = (apt.name || '').toLowerCase().trim();
-              return n !== 'pj' && !n.includes('pj');
-            });
-            if (cleaned[num].length === 0) {
-              delete cleaned[num];
-            }
-          });
-          localStorage.setItem('strongcare_calendar_appointments', JSON.stringify(cleaned));
-          return cleaned;
+          return parsed;
         }
       }
     } catch {}
-    const defaultData = {
-      7: [{ time: '09:30', name: 'สมชาย', type: 'green' as const }],
-      14: [{ time: '09:30', name: 'สมชาย', type: 'green' as const }],
-      21: [{ time: '09:30', name: 'สมชาย', type: 'green' as const }],
-      28: [{ time: '09:30', name: 'สมชาย', type: 'green' as const }],
-    };
-    try {
-      localStorage.setItem('strongcare_calendar_appointments', JSON.stringify(defaultData));
-    } catch {}
-    return defaultData;
+    return {};
   });
+
+  // Automatically prune calendar appointments for deleted or non-existent patients
+  useEffect(() => {
+    const validPatientNames = new Set(
+      users
+        .filter((u) => u.role === 'patient')
+        .flatMap((u) => [
+          (u.name || '').toLowerCase().replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').trim(),
+          (u.username || '').toLowerCase(),
+          (u.code || '').toLowerCase(),
+        ])
+        .filter(Boolean)
+    );
+
+    setCalendarAppointments((prev) => {
+      let changed = false;
+      const updated: Record<number, any[]> = {};
+      Object.keys(prev).forEach((k) => {
+        const num = Number(k);
+        const validApts = (prev[num] || []).filter((apt: any) => {
+          const aptName = (apt.name || '').toLowerCase().replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').trim();
+          return Array.from(validPatientNames).some(
+            (pName) => pName === aptName || pName.includes(aptName) || aptName.includes(pName)
+          );
+        });
+        if (validApts.length !== (prev[num] || []).length) {
+          changed = true;
+        }
+        if (validApts.length > 0) {
+          updated[num] = validApts;
+        }
+      });
+      if (changed) {
+        try {
+          localStorage.setItem('strongcare_calendar_appointments', JSON.stringify(updated));
+        } catch {}
+        return updated;
+      }
+      return prev;
+    });
+  }, [users]);
 
   // Sync calendar appointments to localStorage whenever they change
   useEffect(() => {
@@ -1031,11 +1051,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     showToast(`🗑️ ลบวันนัดหมายวันที่ ${day} เรียบร้อยแล้ว`);
   };
 
-  // Default selected calendar patient to Somchai Jaidee if available
+  // Default selected calendar patient to first available real patient
   useEffect(() => {
     if (!selectedCalendarPatient && users.length > 0) {
-      const somchai = users.find((u) => u.code === 'P-0012' || u.name?.includes('สมชาย'));
-      const firstPat = somchai || users.find((u) => u.role === 'patient');
+      const firstPat = users.find((u) => u.role === 'patient');
       if (firstPat) {
         setSelectedCalendarPatient(firstPat);
       }
@@ -2830,10 +2849,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       <div className="text-[10px] text-slate-400 font-semibold leading-tight">กำลังจัดคอร์สให้</div>
                       <div className="flex items-center gap-2">
                         <span className="font-black text-sm text-slate-800 truncate">
-                          {selectedCalendarPatient?.name || 'นายสมชาย ใจดี'}
+                          {selectedCalendarPatient?.name || users.find((u) => u.role === 'patient')?.name || 'ยังไม่มีคนไข้'}
                         </span>
                         <span className="font-mono text-xs font-bold text-slate-400">
-                          HN: {selectedCalendarPatient?.code || selectedCalendarPatient?.patient_code || 'P-0012'}
+                          HN: {selectedCalendarPatient?.code || selectedCalendarPatient?.patient_code || users.find((u) => u.role === 'patient')?.code || '-'}
                         </span>
                       </div>
                     </div>
@@ -3048,7 +3067,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                           {scheduleViewMode === 'individual' ? (
                             <>
                               <User className="w-3.5 h-3.5 text-teal-600" />
-                              <span>รายบุคคล: {(selectedCalendarPatient?.name || 'สมชาย').replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '')}</span>
+                              <span>รายบุคคล: {(selectedCalendarPatient?.name || users.find((u) => u.role === 'patient')?.name || 'คนไข้').replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '')}</span>
                             </>
                           ) : (
                             <>
@@ -3132,30 +3151,35 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => {
                         const isToday = day === 14;
                         const isSelected = day === selectedCalendarDay;
-                        // Strictly filter out non-patients (e.g. PJ/staff) and only show real patients
+                        // Strictly filter out non-patients and only show real patients currently in users
                         const rawApts = calendarAppointments[day] || [];
                         const dayAppointments = rawApts.filter((apt) => {
                           const n = (apt.name || '').toLowerCase().trim();
-                          if (n === 'pj' || n.includes('pj')) return false;
-                          const cleanName = n.replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').trim();
+                          if (!n) return false;
+                          const cleanName = n.replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').trim().toLowerCase();
                           return users.some(
                             (u) =>
                               u.role === 'patient' &&
-                              ((u.name || '').toLowerCase().includes(cleanName) ||
-                                cleanName.includes((u.name || '').replace(/^(นาย|นาง|นางสาว)\s*/, '').trim().toLowerCase()) ||
-                                u.username.toLowerCase() === cleanName)
-                          ) || cleanName.includes('สมชาย');
+                              (((u.name || '').toLowerCase().replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').trim() === cleanName) ||
+                                (u.name || '').toLowerCase().includes(cleanName) ||
+                                cleanName.includes((u.name || '').toLowerCase().replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').trim()) ||
+                                (u.username && u.username.toLowerCase() === cleanName) ||
+                                (u.code && u.code.toLowerCase() === cleanName))
+                          );
                         });
 
-                        const cleanSelectedPatientName = (selectedCalendarPatient?.name || 'สมชาย')
+                        const activePatName = selectedCalendarPatient?.name || users.find((u) => u.role === 'patient')?.name || '';
+                        const cleanSelectedPatientName = activePatName
                           .replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '')
                           .trim()
-                          .split(' ')[0];
+                          .split(' ')[0]
+                          .toLowerCase();
                         const displayedAppointments = scheduleViewMode === 'individual'
                           ? dayAppointments.filter(
                               (apt) =>
-                                apt.name.toLowerCase().includes(cleanSelectedPatientName.toLowerCase()) ||
-                                cleanSelectedPatientName.toLowerCase().includes(apt.name.toLowerCase())
+                                cleanSelectedPatientName &&
+                                ((apt.name || '').toLowerCase().includes(cleanSelectedPatientName) ||
+                                  cleanSelectedPatientName.includes((apt.name || '').toLowerCase()))
                             )
                           : dayAppointments;
 
