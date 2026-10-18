@@ -5073,95 +5073,97 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       {/* ==================================================================== */}
       {/* 29. COURSE MODE SELECTION MODAL (Image 3 UX/UI)                      */}
       {/* ==================================================================== */}
-      <CourseModeSelectionModal
-        isOpen={isCourseModeModalOpen}
-        onClose={() => setIsCourseModeModalOpen(false)}
-        patient={selectedCalendarPatient || users.find((u) => u.role === 'patient')}
-        dateStr={selectedDateForCourse}
-        exercises={exercises}
-        modpacks={modpacks}
-        onSaveCourse={(courseData) => {
-          const cleanName = courseData.patientName.replace(/^(นาย|นาง|นางสาว)\s*/, '');
-          const timeOnly = courseData.timeSlot.split(' - ')[0] || '09:30';
+      {isCourseModeModalOpen && (
+        <CourseModeSelectionModal
+          isOpen={isCourseModeModalOpen}
+          onClose={() => setIsCourseModeModalOpen(false)}
+          patient={selectedCalendarPatient || users.find((u) => u.role === 'patient')}
+          dateStr={selectedDateForCourse}
+          exercises={exercises}
+          modpacks={modpacks}
+          onSaveCourse={(courseData) => {
+            const cleanName = courseData.patientName.replace(/^(นาย|นาง|นางสาว)\s*/, '');
+            const timeOnly = courseData.timeSlot.split(' - ')[0] || '09:30';
 
-          // Build list of appointment chips to add per day (Requirement 6: แสดงในชิปเดียวกันหากมี 2 แบบ)
-          const aptsToAdd: { time: string; name: string; type: 'purple' | 'green' | 'dual' }[] = [];
-          if (courseData.includePhysio && courseData.includeMinigame) {
-            aptsToAdd.push({
-              time: timeOnly,
-              name: `${cleanName} 🎮`,
-              type: 'dual',
+            // Build list of appointment chips to add per day (Requirement 6: แสดงในชิปเดียวกันหากมี 2 แบบ)
+            const aptsToAdd: { time: string; name: string; type: 'purple' | 'green' | 'dual' }[] = [];
+            if (courseData.includePhysio && courseData.includeMinigame) {
+              aptsToAdd.push({
+                time: timeOnly,
+                name: `${cleanName} 🎮`,
+                type: 'dual',
+              });
+            } else if (courseData.includeMinigame) {
+              aptsToAdd.push({
+                time: timeOnly,
+                name: `${cleanName} 🎮`,
+                type: 'purple',
+              });
+            } else {
+              aptsToAdd.push({
+                time: timeOnly,
+                name: cleanName,
+                type: 'green',
+              });
+            }
+
+            const allDates = courseData.selectedDates && courseData.selectedDates.length > 0
+              ? courseData.selectedDates
+              : [courseData.date];
+
+            setCalendarAppointments((prev) => {
+              const next = { ...prev };
+              allDates.forEach((dStr) => {
+                const dayNum = parseInt(dStr.split('-')[2], 10);
+                if (dayNum) {
+                  next[dayNum] = [...(next[dayNum] || []), ...aptsToAdd];
+                }
+              });
+              return next;
             });
-          } else if (courseData.includeMinigame) {
-            aptsToAdd.push({
-              time: timeOnly,
-              name: `${cleanName} 🎮`,
-              type: 'purple',
+
+            const modeLabel =
+              courseData.includePhysio && courseData.includeMinigame
+                ? `กายภาพ (${courseData.assignedExercises.length} ท่า) + มินิเกมฝึกสมอง (${courseData.minigameQuestionCount} ข้อ)`
+                : courseData.includeMinigame
+                ? `มินิเกมฝึกสมอง (${courseData.minigameQuestionCount} ข้อ)`
+                : `กายภาพปกติ (${courseData.assignedExercises.length} ท่า)`;
+
+            saveTreatmentPlan({
+              id: `plan_${Date.now()}`,
+              patientId: courseData.patientId,
+              patientName: courseData.patientName,
+              patientCode: courseData.patientCode,
+              therapistId: currentUserId,
+              therapistName: currentUser?.name || 'นักกายภาพบำบัด',
+              diagnosis: selectedCalendarPatient?.diagnosis || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
+              targetJoint: selectedCalendarPatient?.targetJoint || 'ข้อไหล่และกล้ามเนื้อสะบัก (Shoulder & Scapula)',
+              assignedExercises: courseData.includePhysio ? courseData.assignedExercises : [],
+              clinicalNotes: courseData.notes || `ตัดคอร์ส ${modeLabel} จำนวน ${allDates.length} ครั้ง (เริ่ม ${courseData.date})`,
+              status: 'active',
+              scheduleDays: ['จันทร์', 'ศุกร์'],
+              timeSlot: courseData.timeSlot,
+              startTime: timeOnly,
+              endTime: courseData.timeSlot.split(' - ')[1] || '10:30',
+              startDate: courseData.date,
+              endDate: courseData.endDate || allDates[allDates.length - 1] || '2026-11-16',
+              roomStation: courseData.station,
+              includeMinigame: courseData.includeMinigame,
+              minigameQuestionCount: courseData.minigameQuestionCount,
+              trainingModes: courseData.trainingModes,
             });
-          } else {
-            aptsToAdd.push({
-              time: timeOnly,
-              name: cleanName,
-              type: 'green',
-            });
-          }
 
-          const allDates = courseData.selectedDates && courseData.selectedDates.length > 0
-            ? courseData.selectedDates
-            : [courseData.date];
+            addActivityLog(
+              'ASSIGN_TREATMENT_PLAN',
+              'TREATMENT',
+              `ตัดคอร์ส ${modeLabel} จำนวน ${allDates.length} ครั้ง สำหรับ ${courseData.patientName} (${courseData.patientCode})`
+            );
 
-          setCalendarAppointments((prev) => {
-            const next = { ...prev };
-            allDates.forEach((dStr) => {
-              const dayNum = parseInt(dStr.split('-')[2], 10);
-              if (dayNum) {
-                next[dayNum] = [...(next[dayNum] || []), ...aptsToAdd];
-              }
-            });
-            return next;
-          });
-
-          const modeLabel =
-            courseData.includePhysio && courseData.includeMinigame
-              ? `กายภาพ (${courseData.assignedExercises.length} ท่า) + มินิเกมฝึกสมอง (${courseData.minigameQuestionCount} ข้อ)`
-              : courseData.includeMinigame
-              ? `มินิเกมฝึกสมอง (${courseData.minigameQuestionCount} ข้อ)`
-              : `กายภาพปกติ (${courseData.assignedExercises.length} ท่า)`;
-
-          saveTreatmentPlan({
-            id: `plan_${Date.now()}`,
-            patientId: courseData.patientId,
-            patientName: courseData.patientName,
-            patientCode: courseData.patientCode,
-            therapistId: currentUserId,
-            therapistName: currentUser?.name || 'นักกายภาพบำบัด',
-            diagnosis: selectedCalendarPatient?.diagnosis || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
-            targetJoint: selectedCalendarPatient?.targetJoint || 'ข้อไหล่และกล้ามเนื้อสะบัก (Shoulder & Scapula)',
-            assignedExercises: courseData.includePhysio ? courseData.assignedExercises : [],
-            clinicalNotes: courseData.notes || `ตัดคอร์ส ${modeLabel} จำนวน ${allDates.length} ครั้ง (เริ่ม ${courseData.date})`,
-            status: 'active',
-            scheduleDays: ['จันทร์', 'ศุกร์'],
-            timeSlot: courseData.timeSlot,
-            startTime: timeOnly,
-            endTime: courseData.timeSlot.split(' - ')[1] || '10:30',
-            startDate: courseData.date,
-            endDate: courseData.endDate || allDates[allDates.length - 1] || '2026-11-16',
-            roomStation: courseData.station,
-            includeMinigame: courseData.includeMinigame,
-            minigameQuestionCount: courseData.minigameQuestionCount,
-            trainingModes: courseData.trainingModes,
-          });
-
-          addActivityLog(
-            'ASSIGN_TREATMENT_PLAN',
-            'TREATMENT',
-            `ตัดคอร์ส ${modeLabel} จำนวน ${allDates.length} ครั้ง สำหรับ ${courseData.patientName} (${courseData.patientCode})`
-          );
-
-          showToast(`✅ ยืนยันตัดคอร์ส ${allDates.length} ครั้ง (${modeLabel}) สำหรับ ${courseData.patientName} เรียบร้อย!`);
-          setIsCourseModeModalOpen(false);
-        }}
-      />
+            showToast(`✅ ยืนยันตัดคอร์ส ${allDates.length} ครั้ง (${modeLabel}) สำหรับ ${courseData.patientName} เรียบร้อย!`);
+            setIsCourseModeModalOpen(false);
+          }}
+        />
+      )}
 
       {/* ==================================================================== */}
       {/* 30. PATIENT PICKER MODAL (For Calendar View Top-Right)               */}

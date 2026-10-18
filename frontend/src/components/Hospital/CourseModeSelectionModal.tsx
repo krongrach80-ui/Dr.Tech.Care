@@ -304,6 +304,35 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, isPhysioModalOpen, isMinigameModalOpen, onClose]);
 
+  // Find currently selected pack object
+  const currentPack = systemModpacks.find((p) => String(p.id) === String(selectedPackId)) || systemModpacks[0];
+  const currentPackName = currentPack?.name || 'คอร์สฟื้นฟูไหล่ติดประจำวัน';
+
+  // Build assigned exercises from active configuration
+  const assignedExercises: PrescribedExercise[] = useMemo(() => {
+    if (physioMode === 'pack') {
+      return currentPack?.exercises || [];
+    } else {
+      return selectedCustomSlugs.map((slug) => {
+        const found = systemExercises.find((ex) => {
+          const exSlug = (ex as any).slug || (ex as any).svgType || `ex_${ex.id}`;
+          return exSlug === slug;
+        });
+        if (found) {
+          return exerciseToPrescribed(found);
+        }
+        return {
+          exerciseSlug: slug,
+          exerciseName: slug,
+          sets: 3,
+          reps: 10,
+          holdSeconds: 3,
+          difficulty: 'beginner',
+        };
+      });
+    }
+  }, [physioMode, currentPack, selectedCustomSlugs, systemExercises]);
+
   if (!isOpen || !patient) return null;
 
   const patientName = patient.name || 'คุณสมชาย ใจดี';
@@ -373,37 +402,6 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
   const daysInMonth = new Date(safeViewDate.getFullYear(), safeViewDate.getMonth() + 1, 0).getDate() || 31;
   const firstDayOfMonth = new Date(safeViewDate.getFullYear(), safeViewDate.getMonth(), 1).getDay();
   const startColOffset = isNaN(firstDayOfMonth) ? 3 : (firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1);
-
-
-
-  // Find currently selected pack object
-  const currentPack = systemModpacks.find((p) => String(p.id) === String(selectedPackId)) || systemModpacks[0];
-  const currentPackName = currentPack?.name || 'คอร์สฟื้นฟูไหล่ติดประจำวัน';
-
-  // Build assigned exercises from active configuration
-  const assignedExercises: PrescribedExercise[] = useMemo(() => {
-    if (physioMode === 'pack') {
-      return currentPack?.exercises || [];
-    } else {
-      return selectedCustomSlugs.map((slug) => {
-        const found = systemExercises.find((ex) => {
-          const exSlug = (ex as any).slug || (ex as any).svgType || `ex_${ex.id}`;
-          return exSlug === slug;
-        });
-        if (found) {
-          return exerciseToPrescribed(found);
-        }
-        return {
-          exerciseSlug: slug,
-          exerciseName: slug,
-          sets: 3,
-          reps: 10,
-          holdSeconds: 3,
-          difficulty: 'beginner',
-        };
-      });
-    }
-  }, [physioMode, currentPack, selectedCustomSlugs, systemExercises]);
 
   // Open Physio Edit Popup
   const handleOpenPhysioEdit = () => {
