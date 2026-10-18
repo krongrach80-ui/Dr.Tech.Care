@@ -897,7 +897,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [planCareFilter, setPlanCareFilter] = useState<'my_patients' | 'covered_cases' | 'all'>('my_patients');
 
   // Timetable scheduling states (ตารางเรียนกายภาพ) & Approval Gate (P2-10)
-  const [scheduleViewMode, setScheduleViewMode] = useState<'calendar' | 'approvals'>('calendar');
+  const [scheduleViewMode, setScheduleViewMode] = useState<'individual' | 'combined'>('individual');
   const [scheduleSelectedMonth, setScheduleSelectedMonth] = useState<number>(9); // 0-indexed, 9 = ตุลาคม (October)
   const [scheduleSelectedYear, setScheduleSelectedYear] = useState<number>(2026);
   const [scheduleDayFilter, setScheduleDayFilter] = useState<string>('all');
@@ -2671,15 +2671,16 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
           {/* ================================================================== */}
           {activeTab === 'schedules' && (
             <div className="space-y-5 sm:space-y-6 animate-fadeIn">
-              {/* Header Bar: Dynamically adapts to Calendar Mode (Image 2) or Timetable Mode (Image 1) */}
-              {scheduleViewMode === 'calendar' ? (
+              {/* Header Bar: Dynamically adapts to Individual vs Combined Calendar */}
+              {scheduleViewMode === 'individual' ? (
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fadeIn">
                   <div>
-                    <h3 className="font-black text-xl text-[#0F2F2B]">
-                      ปฏิทินนัดหมายคนไข้ (Interactive Calendar)
+                    <h3 className="font-black text-xl text-[#0F2F2B] flex items-center gap-2">
+                      <CalendarDays className="w-5 h-5 text-[#0097A7]" />
+                      <span>ปฏิทินนัดหมายคนไข้ (รายบุคคล)</span>
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      แตะวันที่ในปฏิทินเพื่อเริ่มตัดคอร์สกายภาพให้คนไข้
+                      แตะวันที่ในปฏิทินเพื่อเริ่มตัดคอร์สกายภาพให้คนไข้ที่เลือก
                     </p>
                   </div>
 
@@ -2708,15 +2709,39 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fadeIn">
                   <div>
-                    <h3 className="font-black text-lg text-[#0F2F2B] flex items-center gap-2">
+                    <h3 className="font-black text-xl text-[#0F2F2B] flex items-center gap-2">
                       <CalendarDays className="w-5 h-5 text-[#0097A7]" />
-                      <span>ตารางจัดเวลาฝึกกายภาพบำบัดคนไข้ (Rehabilitation Timetable & Schedules)</span>
+                      <span>ปฏิทินคนไข้รวม (All Patients Calendar)</span>
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      จัดสรรเวลาฝึกเหมือนตารางเรียน กำหนดวันในสัปดาห์ เวลา และตู้ Kiosk เพื่อการฟื้นฟูอย่างมีวินัย
+                      แสดงภาพรวมตารางนัดหมายและการฝึกกายภาพของคนไข้ทุกคนในโรงพยาบาล
                     </p>
+                  </div>
+
+                  {/* Combined Patients Overview Card */}
+                  <div className="flex items-center gap-3 bg-white px-4 py-2.5 rounded-2xl border border-slate-200 shadow-2xs">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#0097A7] to-emerald-600 text-white flex items-center justify-center flex-shrink-0 shadow-sm">
+                      <Users className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0 text-left">
+                      <div className="text-[10px] text-slate-400 font-semibold leading-tight">ภาพรวมคนไข้ทั้งแผนก</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-sm text-slate-800 truncate">
+                          {users.filter((u) => u.role === 'patient').length} คน
+                        </span>
+                        <span className="font-mono text-xs font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-full border border-teal-200">
+                          รวม {treatmentPlans.length} คอร์ส
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setIsPatientPickerModalOpen(true)}
+                      className="ml-2 px-3 py-1.5 rounded-full border border-slate-200 hover:border-teal-500 text-xs font-bold text-slate-600 hover:text-teal-700 hover:bg-teal-50 transition cursor-pointer whitespace-nowrap"
+                    >
+                      เลือกคนไข้ตัดคอร์ส
+                    </button>
                   </div>
                 </div>
               )}
@@ -2727,28 +2752,28 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   {/* Schedule View Pills */}
                   <div className="flex items-center p-1 bg-white border border-emerald-200 rounded-full shadow-2xs flex-wrap gap-1">
                     <button
-                      onClick={() => setScheduleViewMode('calendar')}
+                      onClick={() => setScheduleViewMode('individual')}
                       className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                        scheduleViewMode === 'calendar'
+                        scheduleViewMode === 'individual'
                           ? 'bg-[#0097A7] text-white font-black shadow-xs'
                           : 'text-slate-600 hover:text-teal-700'
                       }`}
-                      title="มุมมองปฏิทินคนไข้แบบ Interactive (ตัดคอร์ส/ตั้งค่ามินิเกม)"
+                      title="มุมมองปฏิทินนัดหมายคนไข้รายบุคคล (ตัดคอร์ส/ตั้งค่ามินิเกม)"
                     >
-                      <Calendar className="w-3.5 h-3.5" />
-                      <span>ปฏิทินคนไข้ (Interactive Calendar)</span>
+                      <User className="w-3.5 h-3.5" />
+                      <span>ปฏิทินรายบุคคล</span>
                     </button>
                     <button
-                      onClick={() => setScheduleViewMode('approvals')}
+                      onClick={() => setScheduleViewMode('combined')}
                       className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                        scheduleViewMode === 'approvals'
+                        scheduleViewMode === 'combined'
                           ? 'bg-[#0097A7] text-white font-black shadow-xs'
                           : 'text-slate-600 hover:text-emerald-800'
                       }`}
-                      title="ระบบอนุมัติคำแนะนำทางคลินิกจาก AI"
+                      title="มุมมองปฏิทินคนไข้รวม (แสดงนัดหมายทุกคนในระบบ)"
                     >
-                      <ShieldCheck className="w-3.5 h-3.5" />
-                      <span>อนุมัติแผน AI ({aiProposals.filter((p) => p.status === 'PENDING_CLINICAL_APPROVAL').length})</span>
+                      <Users className="w-3.5 h-3.5" />
+                      <span>ปฏิทินคนไข้รวม</span>
                     </button>
                   </div>
                 </div>
@@ -2824,143 +2849,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
 
 
-              {/* C. มุมมองระบบกลั่นกรองคำแนะนำทางคลินิก (Therapist Approval Gate P2-10) */}
-              {scheduleViewMode === 'approvals' && (
-                <div className="space-y-4 animate-fadeIn">
-                  {/* Banner Human-in-the-Loop */}
-                  <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-900 to-[#0F2F2B] text-white border-2 border-emerald-400/80 shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <ShieldCheck className="w-5 h-5 text-[#4AE387]" />
-                        <h4 className="font-extrabold text-base sm:text-lg text-white">
-                          🛡️ ระบบกลั่นกรองคำแนะนำทางคลินิก (Therapist Approval Gate)
-                        </h4>
-                      </div>
-                      <p className="text-xs text-emerald-200/90 leading-relaxed max-w-2xl">
-                        หลักการ <strong>Human-in-the-Loop:</strong> AI วิเคราะห์และเสนอแนะการปรับปรุงโปรแกรมตามผลการฝึกจริง
-                        แต่นักกายภาพบำบัดวิชาชีพเป็นผู้มีอำนาจตัดสินใจอนุมัติ ปรับแก้ หรือปฏิเสธก่อนบันทึกลง Prescription จริงเสมอ
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <div className="px-3 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-400 text-emerald-300 text-xs font-bold font-mono">
-                        Direct DB Write: FORBIDDEN 🔒
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* List of Proposals */}
-                  <div className="space-y-3">
-                    {aiProposals.length === 0 ? (
-                      <div className="p-8 text-center bg-white rounded-2xl border border-emerald-100 text-slate-500">
-                        <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
-                        <p className="font-bold text-sm text-[#0F2F2B]">ไม่มีข้อเสนอแนะค้างการพิจารณา</p>
-                        <p className="text-xs text-slate-400 mt-0.5">เมื่อคนไข้ฝึกเสร็จที่ตู้ Kiosk ข้อเสนอแนะ AI จะปรากฏที่นี่</p>
-                      </div>
-                    ) : (
-                      aiProposals.map((proposal) => (
-                        <div
-                          key={proposal.id}
-                          className={`p-4 sm:p-5 rounded-2xl bg-white border-2 transition shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 ${
-                            proposal.status === 'PENDING_CLINICAL_APPROVAL'
-                              ? 'border-amber-400 bg-amber-50/20 shadow-amber-500/10'
-                              : proposal.status === 'APPROVED'
-                              ? 'border-emerald-300 bg-emerald-50/10'
-                              : 'border-slate-200 bg-slate-50 opacity-80'
-                          }`}
-                        >
-                          <div className="space-y-2 flex-1 min-w-0">
-                            <div className="flex items-center gap-2.5 flex-wrap">
-                              <span className="font-extrabold text-sm sm:text-base text-[#0F2F2B]">
-                                {proposal.patientName}
-                              </span>
-                              <span className="text-xs font-mono font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">
-                                {proposal.patientCode}
-                              </span>
-                              <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
-                                proposal.status === 'PENDING_CLINICAL_APPROVAL'
-                                  ? 'bg-amber-100 text-amber-900 border-amber-300'
-                                  : proposal.status === 'APPROVED'
-                                  ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                                  : 'bg-rose-100 text-rose-900 border-rose-300'
-                              }`}>
-                                {proposal.status === 'PENDING_CLINICAL_APPROVAL'
-                                  ? '⏳ รอการอนุมัติ (Pending Approval)'
-                                  : proposal.status === 'APPROVED'
-                                  ? '✅ อนุมัติแล้ว (Approved)'
-                                  : '❌ ปฏิเสธ (Rejected)'}
-                              </span>
-                              <span className="text-[11px] text-slate-400">
-                                {new Date(proposal.createdAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
-                              </span>
-                            </div>
-
-                            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1">
-                              <div className="text-xs sm:text-sm font-bold text-[#0F2F2B] flex items-center gap-1.5 flex-wrap">
-                                <span className="text-emerald-700">💡 ข้อเสนอแนะ AI:</span>
-                                <span>{proposal.proposedAdjustment}</span>
-                              </div>
-                              <p className="text-[11px] text-slate-500">
-                                <strong>เหตุผลทางชีวกลศาสตร์:</strong> {proposal.clinicalRationale}
-                              </p>
-                              {proposal.therapistNotes && (
-                                <p className="text-[11px] text-emerald-800 font-semibold pt-1 border-t border-slate-200 mt-1">
-                                  🩺 บันทึกของนักกายภาพ: {proposal.therapistNotes}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Action Buttons */}
-                          <div className="flex items-center gap-2 flex-shrink-0 self-end md:self-center">
-                            {proposal.status === 'PENDING_CLINICAL_APPROVAL' ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => handleApproveProposal(proposal)}
-                                  className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#10B981] to-[#059669] hover:brightness-105 text-white font-extrabold text-xs shadow-md transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
-                                  title="อนุมัติและปรับปรุง Prescription คนไข้ทันที"
-                                >
-                                  <Check className="w-3.5 h-3.5" />
-                                  <span>อนุมัติ (Approve)</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleAdjustProposal(proposal)}
-                                  className="px-3 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-bold text-xs transition active:scale-95 flex items-center gap-1 cursor-pointer"
-                                  title="ปรับแก้ข้อเสนอแนะก่อนอนุมัติ"
-                                >
-                                  <Pencil className="w-3.5 h-3.5 text-slate-500" />
-                                  <span>ปรับแก้ (Adjust)</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRejectProposal(proposal)}
-                                  className="px-3 py-2 rounded-xl bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-bold text-xs transition active:scale-95 flex items-center gap-1 cursor-pointer"
-                                  title="ปฏิเสธข้อเสนอแนะ AI"
-                                >
-                                  <X className="w-3.5 h-3.5 text-rose-500" />
-                                  <span>ปฏิเสธ (Reject)</span>
-                                </button>
-                              </>
-                            ) : (
-                              <div className="text-xs font-bold text-slate-500 px-3 py-1.5 rounded-lg bg-slate-100">
-                                ดำเนินการแล้ว
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
-
+                            {/* ================================================================== */}
+              {/* INTERACTIVE CALENDAR VIEW (รองรับทั้งรายบุคคล และ ปฏิทินคนไข้รวม)       */}
               {/* ================================================================== */}
-              {/* VIEW 6: INTERACTIVE CALENDAR VIEW (Exact UI/UX from Image 2)        */}
-              {/* ================================================================== */}
-              {scheduleViewMode === 'calendar' && (
-                <div className="space-y-6 animate-fadeIn text-left">
+              <div className="space-y-6 animate-fadeIn text-left">
                   {/* Calendar Card Container matching Image 2 */}
                   <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm p-6 sm:p-8 space-y-6">
                     {/* Header: Month Navigator + Status Legends */}
@@ -3013,6 +2905,27 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         >
                           วันนี้
                         </button>
+
+                        {/* View Mode Indicator Badge */}
+                        <div
+                          className={`hidden md:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black border transition ${
+                            scheduleViewMode === 'individual'
+                              ? 'bg-teal-50 text-teal-800 border-teal-200'
+                              : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          }`}
+                        >
+                          {scheduleViewMode === 'individual' ? (
+                            <>
+                              <User className="w-3.5 h-3.5 text-teal-600" />
+                              <span>รายบุคคล: {(selectedCalendarPatient?.name || 'สมชาย').replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '')}</span>
+                            </>
+                          ) : (
+                            <>
+                              <Users className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>นัดหมายคนไข้รวมทุกคน</span>
+                            </>
+                          )}
+                        </div>
                       </div>
 
                       {/* Status Legends matching Image 2 */}
@@ -3075,7 +2988,18 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => {
                         const isToday = day === 14;
                         const isSelected = day === selectedCalendarDay;
-                        const appointments = calendarAppointments[day] || [];
+                        const dayAppointments = calendarAppointments[day] || [];
+                        const cleanSelectedPatientName = (selectedCalendarPatient?.name || 'สมชาย')
+                          .replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '')
+                          .trim()
+                          .split(' ')[0];
+                        const displayedAppointments = scheduleViewMode === 'individual'
+                          ? dayAppointments.filter(
+                              (apt) =>
+                                apt.name.toLowerCase().includes(cleanSelectedPatientName.toLowerCase()) ||
+                                cleanSelectedPatientName.toLowerCase().includes(apt.name.toLowerCase())
+                            )
+                          : dayAppointments;
 
                         return (
                           <div
@@ -3112,7 +3036,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
                             {/* Middle: Appointment Pills or Action Button */}
                             <div className="space-y-1 my-1">
-                              {appointments.map((apt, aIdx) => (
+                              {displayedAppointments.map((apt, aIdx) => (
                                 <div
                                   key={aIdx}
                                   onClick={(e) => {
@@ -3168,8 +3092,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     </div>
                   </div>
                 </div>
-              )}
-            </div>
+              </div>
           )}
 
           {/* ================================================================== */}
@@ -5141,7 +5064,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         onNavigateToCalendar={(pat) => {
           setIsQuickInfoModalOpen(false);
           setSelectedCalendarPatient(pat);
-          setScheduleViewMode('calendar');
+          setScheduleViewMode('individual');
           setSelectedCalendarDay(16);
           showToast(`เปิดหน้าปฏิทินเพื่อตัดคอร์สใหม่ให้ ${pat.name || 'คนไข้'}`);
         }}
