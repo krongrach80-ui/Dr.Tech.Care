@@ -1,6 +1,7 @@
 export interface Patient {
   id: number | string;
   patient_code: string;
+  code?: string;
   name: string;
   age: number;
   gender: 'male' | 'female' | 'other';

@@ -392,9 +392,20 @@ export const App: React.FC = () => {
       console.info('[AUTH] Suppressed login because user is on another screen/modal');
       return;
     }
-    setCurrentUserName(patient.name);
-    selectPatient(patient);
-    showToast(`เข้าสู่ระบบสำเร็จ ยินดีต้อนรับ ${patient.name}`);
+    const normalizedPatient: Patient = {
+      ...patient,
+      code: (patient as any).code || patient.patient_code || '',
+      patient_code: patient.patient_code || (patient as any).code || '',
+      name: patient.name || 'ผู้รับบริการ',
+    };
+    setCurrentUserName(normalizedPatient.name);
+    selectPatient(normalizedPatient);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('drtechcare_active_patient', JSON.stringify(normalizedPatient));
+      } catch {}
+    }
+    showToast(`เข้าสู่ระบบสำเร็จ ยินดีต้อนรับ ${normalizedPatient.name}`);
     setTimeout(() => {
       handleNavigate(2);
     }, 350);
@@ -629,13 +640,27 @@ export const App: React.FC = () => {
                     }
                   } catch {}
                 }
+                const firstPat = patients.find((p) => p.patient_code);
+                if (firstPat) return firstPat;
+                const patientUser = users.find((u) => u.role === 'patient');
+                if (patientUser) {
+                  return {
+                    id: patientUser.id,
+                    patient_code: patientUser.code,
+                    code: patientUser.code,
+                    name: patientUser.name,
+                    age: patientUser.age || 45,
+                    gender: (patientUser.gender as any) || 'other',
+                    chief_complaint: 'ฟื้นฟูกล้ามเนื้อและข้อต่อ',
+                  } as Patient;
+                }
                 return {
                   id: 1,
-                  patient_code: 'P-0012',
-                  name: currentUserName || 'คุณสมชาย ใจดี',
-                  age: 68,
+                  patient_code: 'P-0001',
+                  name: currentUserName || 'ผู้รับบริการ',
+                  age: 65,
                   gender: 'male',
-                  chief_complaint: 'ฟื้นฟูกล้ามเนื้อและข้อไหล่ติด',
+                  chief_complaint: 'ฟื้นฟูกล้ามเนื้อและข้อต่อ',
                 } as Patient;
               })()
             }
@@ -759,10 +784,23 @@ export const App: React.FC = () => {
             handleNavigate(4);
           }}
           onSelectPatientForKiosk={(patient) => {
-            selectPatient(patient);
-            setCurrentUserName(patient.name);
+            const normalizedPatient: Patient = {
+              ...patient,
+              code: patient.code || patient.patient_code || '',
+              patient_code: patient.patient_code || patient.code || '',
+              name: patient.name || 'ผู้รับบริการ',
+              id: patient.id || patient.code || patient.patient_code || String(Date.now()),
+            };
+            selectPatient(normalizedPatient);
+            setCurrentUserName(normalizedPatient.name);
+            if (typeof window !== 'undefined') {
+              try {
+                localStorage.setItem('drtechcare_active_patient', JSON.stringify(normalizedPatient));
+              } catch {}
+            }
             setIsHospitalPortalOpen(false);
-            handleNavigate(1);
+            showToast(`ยินดีต้อนรับ ${normalizedPatient.name} เข้าสู่ระบบเรียบร้อย`);
+            handleNavigate(2);
           }}
         />
       )}

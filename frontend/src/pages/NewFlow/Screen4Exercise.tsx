@@ -50,6 +50,7 @@ import { IndexedDBStorageService } from '../../services/indexedDbService';
 import { Session } from '../../types/session';
 import { SafetyEngine, SafetyTelemetry } from '../../biomechanics/SafetyEngine';
 import { evaluateStretchPose } from '../../biomechanics/stretchEvaluator';
+import { usePatientStore } from '../../store/patientStore';
 
 interface Screen4ExerciseProps {
   onBack: () => void;
@@ -72,6 +73,8 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
   onNavigateToMinigame,
   includeMinigame = true,
 }) => {
+  const { selectedPatient } = usePatientStore();
+
   // Check if we are running in Stretch Queue Mode
   const isStretchMode = Boolean(stretchQueue && stretchQueue.length > 0);
   const queue = useMemo(() => stretchQueue || [], [stretchQueue]);
@@ -1204,12 +1207,41 @@ export const Screen4Exercise: React.FC<Screen4ExerciseProps> = ({
                     audioFeedback.playRepSuccess();
                     voiceAssistant.speakInstruction('ส่งคำแนะนำให้นักกายภาพเพื่อรออนุมัติแล้วครับ', { force: true });
                     try {
+                      const curName =
+                        selectedPatient?.name ||
+                        (typeof window !== 'undefined'
+                          ? (() => {
+                              try {
+                                const raw = localStorage.getItem('drtechcare_active_patient');
+                                if (raw) return JSON.parse(raw)?.name;
+                              } catch {}
+                              return null;
+                            })()
+                          : null) ||
+                        'ผู้รับบริการ';
+
+                      const curCode =
+                        selectedPatient?.patient_code ||
+                        (selectedPatient as any)?.code ||
+                        (typeof window !== 'undefined'
+                          ? (() => {
+                              try {
+                                const raw = localStorage.getItem('drtechcare_active_patient');
+                                if (raw) return JSON.parse(raw)?.patient_code || JSON.parse(raw)?.code;
+                              } catch {}
+                              return null;
+                            })()
+                          : null) ||
+                        'P-0001';
+
+                      const curId = selectedPatient?.id || (patientId ?? 1);
+
                       const pendingQueue = JSON.parse(localStorage.getItem('strongcare_pending_approvals') || '[]');
                       pendingQueue.push({
                         id: Date.now(),
-                        patientId: patientId ?? 12,
-                        patientName: 'นายสมชาย ใจดี',
-                        patientCode: 'P-0012',
+                        patientId: curId,
+                        patientName: curName,
+                        patientCode: curCode,
                         proposedAdjustment: averageScore !== null && averageScore >= 75
                           ? 'ปรับเพิ่มเวลาค้างท่าเป็น 25 วินาที (+5s) พร้อมท่ายืดอกเปิดไหล่'
                           : 'คงเวลาค้างท่า 15 วินาที และเน้นจังหวะยกแขนอย่างนุ่มนวล',

@@ -630,12 +630,13 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       } catch {}
     }
     return {
-      id: 12,
-      patient_code: 'P-0012',
-      name: 'นายสมชาย ใจดี',
-      age: 68,
+      id: 1,
+      patient_code: 'P-1425',
+      code: 'P-1425',
+      name: 'ผู้รับบริการ',
+      age: 65,
       gender: 'male',
-      notes: 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
+      notes: 'ฟื้นฟูกายภาพบำบัด',
     };
   });
   const [activePlan, setActivePlan] = useState<TreatmentPlan | null>(null);
@@ -2782,13 +2783,14 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     if (!activePatient) return;
 
     // 1. Check isolated dossier single source of truth
-    const isolatedRecord = patientFaceStorageService.getPatientRecord(activePatient.patient_code);
+    const patientHN = activePatient.patient_code || (activePatient as any).code || '';
+    const isolatedRecord = patientHN ? patientFaceStorageService.getPatientRecord(patientHN) : null;
     const isolatedSchedule = isolatedRecord?.medical_records?.schedule;
 
     const plan = treatmentPlans.find(
       (p) =>
-        p.patientCode?.toLowerCase() === activePatient.patient_code.toLowerCase() ||
-        p.patientName?.includes(activePatient.name) ||
+        (patientHN && p.patientCode?.toLowerCase() === patientHN.toLowerCase()) ||
+        (activePatient.name && p.patientName?.includes(activePatient.name)) ||
         p.patientId === activePatient.id
     );
 
@@ -2797,7 +2799,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         id: plan?.id || 1,
         patientId: activePatient.id,
         patientName: activePatient.name,
-        patientCode: activePatient.patient_code,
+        patientCode: patientHN,
         therapistId: 1,
         therapistName:
           isolatedRecord.medical_records.responsible_therapist ||
@@ -2883,10 +2885,34 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   };
 
   const handleSelectQuickPatient = (pat: Patient, pinCode: string) => {
-    setActivePatient(pat);
+    const targetCode = pat.patient_code || (pat as any).code || 'P-0001';
+    const safePat: Patient = {
+      ...pat,
+      id: pat.id,
+      patient_code: targetCode,
+      code: targetCode,
+      name: pat.name,
+      age: pat.age || 65,
+      gender: pat.gender || 'male',
+      notes: pat.notes || (pat as any).diagnosis || (pat as any).chiefComplaint || 'ฟื้นฟูกายภาพบำบัด',
+      photo: pat.photo || (pat as any).face_image_url,
+      face_image_url: (pat as any).face_image_url || pat.photo,
+    };
+    const exactPlan = treatmentPlans.find(
+      (p) =>
+        (p.patientCode && p.patientCode.toLowerCase() === targetCode.toLowerCase()) ||
+        (p.patientName && safePat.name.includes(p.patientName)) ||
+        p.patientId === safePat.id
+    );
+    setActivePatient(safePat);
+    selectPatient(safePat);
+    if (exactPlan) setActivePlan(exactPlan);
     setPinInput(pinCode);
     setPinError(null);
     stopMediaStream();
+    if (onLoginComplete) {
+      onLoginComplete(safePat);
+    }
     setTimeout(() => {
       setShowPinModal(false);
       audioFeedback.playRepSuccess();
@@ -2901,64 +2927,111 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       return;
     }
 
-    // ตรวจสอบ PIN และรหัสคนไข้ทั้งในโหมด DEV และ Production
-    if (cleanPin === '1234' || cleanPin === '123456' || cleanPin.toUpperCase() === 'P-0012') {
-      const somchai: Patient = {
-        id: 12,
-        patient_code: 'P-0012',
-        name: 'นายสมชาย ใจดี',
-        age: 68,
-        gender: 'male',
-        notes: 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
-      };
-      setActivePatient(somchai);
-      setShowPinModal(false);
-      stopMediaStream();
-      audioFeedback.playRepSuccess();
-      changeStep(5);
-      return;
+    const cleanUpper = cleanPin.toUpperCase();
+    const cleanLower = cleanPin.toLowerCase();
+
+    // 1. Search in patient store and hospital users by HN, username, name, phone, or PIN/password
+    const patientUsers = users.filter((u) => u.role === 'patient');
+
+    // Direct match by HN / Code / Username / Phone / Name
+    let matchedPatient = patientUsers.find((u) => {
+      const codeUpper = (u.code || '').toUpperCase();
+      const codeNumber = (u.code || '').replace(/\D/g, '');
+      const pinNumber = cleanPin.replace(/\D/g, '');
+      const usernameClean = (u.username || '').toLowerCase();
+      const nameClean = (u.name || '').toLowerCase();
+      const phoneClean = (u.phone || '').replace(/\D/g, '');
+
+      return (
+        codeUpper === cleanUpper ||
+        (codeNumber && pinNumber && codeNumber === pinNumber) ||
+        usernameClean === cleanLower ||
+        usernameClean === `user_${cleanLower}` ||
+        `@${usernameClean}` === cleanLower ||
+        nameClean === cleanLower ||
+        nameClean.includes(cleanLower) ||
+        (phoneClean && pinNumber && phoneClean.includes(pinNumber))
+      );
+    });
+
+    // Match by PIN or Password if numeric PIN entered
+    if (!matchedPatient) {
+      matchedPatient = patientUsers.find((u) => {
+        const uPin = (u as any).pin || (u as any).password;
+        return uPin === cleanPin;
+      });
     }
 
-    if (cleanPin === '5678' || cleanPin.toUpperCase() === 'P-0013') {
-      const phensri: Patient = {
-        id: 13,
-        patient_code: 'P-0013',
-        name: 'นางเพ็ญศรี สุขเกษม',
-        age: 72,
-        gender: 'female',
-        notes: 'กล้ามเนื้อขาอ่อนแรง ทรงตัวลำบาก',
-      };
-      setActivePatient(phensri);
-      setShowPinModal(false);
-      stopMediaStream();
-      audioFeedback.playRepSuccess();
-      changeStep(5);
-      return;
+    // Match from patientStore patients list
+    if (!matchedPatient) {
+      const fromPatStore = patients.find((p) => {
+        const pCodeUpper = (p.patient_code || (p as any).code || '').toUpperCase();
+        const pNameLower = (p.name || '').toLowerCase();
+        return pCodeUpper === cleanUpper || pNameLower === cleanLower;
+      });
+      if (fromPatStore) {
+        matchedPatient = {
+          id: fromPatStore.id,
+          code: fromPatStore.patient_code,
+          name: fromPatStore.name,
+          age: fromPatStore.age,
+          gender: fromPatStore.gender as any,
+          phone: fromPatStore.phone,
+          diagnosis: fromPatStore.notes,
+          role: 'patient',
+          status: 'active',
+        } as any;
+      }
     }
 
-    const foundInStore = patients.find(
-      (p) => p.patient_code.toLowerCase() === cleanPin.toLowerCase()
-    ) || users.find(
-      (u) => (u.code?.toLowerCase() === cleanPin.toLowerCase() || u.username?.toLowerCase() === cleanPin.toLowerCase()) && u.role === 'patient'
-    );
-    if (foundInStore) {
+    // Fallback: If cleanPin is '1234' or '123456' and no specific patient matched, pick the active patient or first patient in store!
+    if (!matchedPatient && (cleanPin === '1234' || cleanPin === '123456')) {
+      if (activePatient && activePatient.name && activePatient.name !== 'ผู้รับบริการ' && activePatient.patient_code) {
+        matchedPatient = activePatient as any;
+      } else if (patientUsers.length > 0) {
+        matchedPatient = patientUsers[0];
+      }
+    }
+
+    if (matchedPatient) {
+      const targetCode = matchedPatient.code || (matchedPatient as any).patient_code || 'P-0001';
       const patObj: Patient = {
-        id: typeof foundInStore.id === 'number' ? foundInStore.id : 99,
-        patient_code: (foundInStore as any).patient_code || (foundInStore as any).code || 'P-0001',
-        name: foundInStore.name,
-        age: (foundInStore as any).age || 65,
-        gender: (foundInStore as any).gender || 'male',
-        notes: (foundInStore as any).notes || (foundInStore as any).diagnosis || 'ฟื้นฟูกายภาพบำบัด',
+        id: typeof matchedPatient.id === 'number' ? matchedPatient.id : (Number(matchedPatient.id) || 1),
+        patient_code: targetCode,
+        code: targetCode,
+        name: matchedPatient.name,
+        age: Number(matchedPatient.age) || 65,
+        gender: (matchedPatient.gender as any) || 'male',
+        notes: (matchedPatient as any).diagnosis || (matchedPatient as any).chiefComplaint || (matchedPatient as any).notes || 'ฟื้นฟูกายภาพบำบัด',
+        photo: (matchedPatient as any).face_image_url || (matchedPatient as any).photo,
+        face_image_url: (matchedPatient as any).face_image_url || (matchedPatient as any).photo,
       };
+
+      const exactPlan = treatmentPlans.find(
+        (p) =>
+          (p.patientCode && p.patientCode.toLowerCase() === targetCode.toLowerCase()) ||
+          (p.patientName && patObj.name.includes(p.patientName)) ||
+          p.patientId === patObj.id
+      );
+
       setActivePatient(patObj);
+      selectPatient(patObj);
+      if (exactPlan) setActivePlan(exactPlan);
+      if (onLoginComplete) {
+        onLoginComplete(patObj);
+      }
+
       setShowPinModal(false);
       stopMediaStream();
       audioFeedback.playRepSuccess();
+      try {
+        voiceAssistant.speak(`ยินดีต้อนรับคุณ ${patObj.name} เข้าสู่ระบบสำเร็จค่ะ`, { level: 'system' });
+      } catch {}
       changeStep(5);
       return;
     }
 
-    setPinError('❌ รหัส PIN หรือ HN ไม่ถูกต้อง (ทดสอบ: 1234, 5678 หรือ P-0012)');
+    setPinError('❌ ไม่พบบัญชีคนไข้ที่ตรงกับรหัสนี้ (กรุณากรอกรหัส HN เช่น P-1425 หรือแตะเลือกจากรายชื่อด้านบน)');
     audioFeedback.playHoldTick();
   };
 
@@ -4333,48 +4406,42 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               </p>
             )}
 
-            {import.meta.env.DEV && (
+            {/* Quick Patient Selector from actual registered patients in system */}
+            {users.filter((u) => u.role === 'patient').length > 0 && (
               <div className="w-full mb-3">
                 <span className="text-[11px] font-bold text-slate-500 block mb-1">
-                  บัญชีคนไข้ตัวอย่าง (แตะเพื่อเข้าทันที):
+                  แตะชื่อคนไข้เพื่อเข้าสู่ระบบทันที:
                 </span>
-                <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                  <button
-                    onClick={() =>
-                      handleSelectQuickPatient(
-                        {
-                          id: 12,
-                          patient_code: 'P-0012',
-                          name: 'นายสมชาย ใจดี',
-                          age: 68,
-                          gender: 'male',
-                          notes: 'ข้อไหล่ติดระยะฟื้นฟู',
-                        },
-                        '1234'
-                      )
-                    }
-                    className="p-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold border border-emerald-200 text-left truncate cursor-pointer"
-                  >
-                    🟢 นายสมชาย (1234)
-                  </button>
-                  <button
-                    onClick={() =>
-                      handleSelectQuickPatient(
-                        {
-                          id: 13,
-                          patient_code: 'P-0013',
-                          name: 'นางเพ็ญศรี สุขเกษม',
-                          age: 72,
-                          gender: 'female',
-                          notes: 'กล้ามเนื้อขาอ่อนแรง',
-                        },
-                        '5678'
-                      )
-                    }
-                    className="p-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold border border-emerald-200 text-left truncate cursor-pointer"
-                  >
-                    🟢 นางเพ็ญศรี (5678)
-                  </button>
+                <div className="grid grid-cols-2 gap-1.5 text-[11px] max-h-28 overflow-y-auto p-0.5">
+                  {users
+                    .filter((u) => u.role === 'patient')
+                    .map((pat) => (
+                      <button
+                        key={pat.id}
+                        type="button"
+                        onClick={() =>
+                          handleSelectQuickPatient(
+                            {
+                              id: pat.id,
+                              patient_code: pat.code,
+                              code: pat.code,
+                              name: pat.name,
+                              age: pat.age || 65,
+                              gender: (pat.gender as any) || 'male',
+                              notes: pat.diagnosis || pat.chiefComplaint || 'ฟื้นฟูกายภาพบำบัด',
+                              photo: pat.face_image_url,
+                              face_image_url: pat.face_image_url,
+                            },
+                            pat.code
+                          )
+                        }
+                        className="p-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold border border-emerald-200 text-left truncate cursor-pointer transition flex items-center gap-1.5"
+                        title={`เข้าสู่ระบบ ${pat.name} (${pat.code})`}
+                      >
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                        <span className="truncate">{pat.name} ({pat.code})</span>
+                      </button>
+                    ))}
                 </div>
               </div>
             )}
@@ -4538,39 +4605,55 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 <span>🛡️ เจ้าหน้าที่เข้าสู่ระบบบุคลากร / รพ. (Staff Bypass)</span>
               </button>
 
-              {/* Dev / Demo Quick Test (if isDemoMode or DEV) */}
-              {(isDemoMode || import.meta.env.DEV) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowNoAccountModal(false);
-                    const demoPatient = users.find((u) => u.code === 'P-0012') || {
-                      id: 12,
-                      code: 'P-0012',
-                      name: 'นายสมชาย ใจดี',
-                      age: 68,
-                      gender: 'male',
-                      diagnosis: 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
-                    };
-                    const targetPatient: Patient = {
-                      id: Number(demoPatient.id) || 12,
-                      patient_code: demoPatient.code || 'P-0012',
-                      name: demoPatient.name,
-                      age: demoPatient.age || 68,
-                      gender: (demoPatient.gender as any) || 'male',
-                      notes: demoPatient.diagnosis || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
-                    };
-                    const exactPlan = treatmentPlans.find((p) => p.patientCode === 'P-0012');
-                    setActivePatient(targetPatient);
-                    selectPatient(targetPatient);
-                    if (exactPlan) setActivePlan(exactPlan);
-                    if (onLoginComplete) onLoginComplete(targetPatient);
-                    changeStep(5);
-                  }}
-                  className="w-full mt-1 py-2 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold text-[11px] transition text-center cursor-pointer"
-                >
-                  🧪 [โหมดทดสอบ] ล็อกอินด่วน: นายสมชาย ใจดี (P-0012)
-                </button>
+              {/* Registered patients quick entry list */}
+              {users.filter((u) => u.role === 'patient').length > 0 && (
+                <div className="w-full mt-2 pt-2 border-t border-slate-200 text-left">
+                  <span className="text-[11px] font-bold text-slate-700 block mb-1">
+                    👤 หรือเลือกล็อกอินด้วยบัญชีคนไข้ในระบบ:
+                  </span>
+                  <div className="flex flex-col gap-1.5 max-h-36 overflow-y-auto">
+                    {users
+                      .filter((u) => u.role === 'patient')
+                      .map((pat) => (
+                        <button
+                          key={pat.id}
+                          type="button"
+                          onClick={() => {
+                            setShowNoAccountModal(false);
+                            const targetHN = pat.code || (pat as any).patient_code || 'P-0001';
+                            const targetPatient: Patient = {
+                              id: typeof pat.id === 'number' ? pat.id : (Number(pat.id) || 1),
+                              patient_code: targetHN,
+                              code: targetHN,
+                              name: pat.name,
+                              age: pat.age || 65,
+                              gender: (pat.gender as any) || 'male',
+                              notes: pat.diagnosis || pat.chiefComplaint || 'ฟื้นฟูกายภาพบำบัด',
+                              face_image_url: pat.face_image_url,
+                              photo: pat.face_image_url,
+                            };
+                            const exactPlan = treatmentPlans.find(
+                              (p) =>
+                                (p.patientCode && p.patientCode.toLowerCase() === targetHN.toLowerCase()) ||
+                                (p.patientName && targetPatient.name.includes(p.patientName)) ||
+                                p.patientId === targetPatient.id
+                            );
+                            setActivePatient(targetPatient);
+                            selectPatient(targetPatient);
+                            if (exactPlan) setActivePlan(exactPlan);
+                            if (onLoginComplete) onLoginComplete(targetPatient);
+                            changeStep(5);
+                          }}
+                          className="w-full py-2 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-900 font-bold text-xs transition flex items-center justify-between cursor-pointer"
+                        >
+                          <span className="truncate">{pat.name} (HN: {pat.code})</span>
+                          <span className="text-[10px] bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded-full font-extrabold shrink-0">
+                            เข้าสู่ระบบ ➔
+                          </span>
+                        </button>
+                      ))}
+                  </div>
+                </div>
               )}
             </div>
           </div>

@@ -663,12 +663,23 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       }
 
       try {
+        await supabaseService.createProfile({
+          username: userData.username,
+          name: userData.name.trim(),
+          role: 'patient',
+          phone: userData.phone?.trim() || undefined,
+          email: userData.email?.trim() || undefined,
+          status: userData.status || 'active',
+        });
+
         await supabaseService.createPatient({
           patient_code: code,
           full_name: userData.name.trim(),
           age: Number(userData.age) || 65,
           gender: userData.gender || 'male',
           phone: userData.phone?.trim() || null,
+          pin: userData.password || '1234',
+          pin_hash: userData.password || '1234',
           chief_complaint: userData.chiefComplaint || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
           medical_history: userData.patientBackground || 'ลงทะเบียนผู้ป่วยใหม่ผ่านระบบแอดมิน (10-Snap Biometric)',
           treatment_outcome: userData.treatmentOutcome || '',
@@ -2327,6 +2338,50 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                               {/* 7. Actions: Edit Account (Modal B), Biometric Reset (Modal C), Delete */}
                               <td className="py-2.5 px-3 sm:px-4 text-right whitespace-nowrap">
                                 <div className="inline-flex items-center gap-1.5 justify-end">
+                                  {/* Direct Enter for Patients */}
+                                  {user.role === 'patient' && (
+                                    <button
+                                      onClick={() => {
+                                        if (onSelectPatientForKiosk) {
+                                          onSelectPatientForKiosk({
+                                            id: user.id,
+                                            patient_code: user.code,
+                                            code: user.code,
+                                            name: user.name,
+                                            age: user.age || 45,
+                                            gender: (user.gender as any) || 'other',
+                                            chief_complaint: user.chiefComplaint || user.diagnosis || 'ฟื้นฟูกล้ามเนื้อและข้อต่อ',
+                                            photo: (user as any).avatar || user.face_image_url,
+                                          });
+                                          showToast(`เข้าสู่ระบบในฐานะคนไข้ ${user.name} (${user.code}) เรียบร้อยแล้ว`);
+                                        } else {
+                                          showToast(`เลือกคนไข้ ${user.name}`);
+                                        }
+                                      }}
+                                      title={`เข้าใช้งานระบบในฐานะคนไข้ ${user.name} (${user.code})`}
+                                      className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-xs active:scale-95"
+                                    >
+                                      <LogIn className="w-3 h-3" />
+                                      <span>เข้าใช้งาน</span>
+                                    </button>
+                                  )}
+
+                                  {/* Direct Switch for Staff */}
+                                  {(user.role === 'therapist' || user.role === 'admin') && currentRole === 'admin' && (
+                                    <button
+                                      onClick={() => {
+                                        setCurrentRole(user.role as any);
+                                        setCurrentUserId(user.code);
+                                        showToast(`สลับใช้งานเป็น: ${user.name} (${user.role === 'admin' ? 'ผู้อำนวยการ/Admin' : 'นักกายภาพ'})`);
+                                      }}
+                                      title={`สลับเซสชันเป็น ${user.name} (${user.code})`}
+                                      className="px-2.5 py-1 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-xs active:scale-95"
+                                    >
+                                      <RefreshCw className="w-3 h-3" />
+                                      <span>สลับบัญชี</span>
+                                    </button>
+                                  )}
+
                                   {currentRole === 'therapist' && user.role !== 'patient' ? (
                                     <span className="px-2.5 py-1 rounded-xl bg-slate-100 text-slate-400 font-semibold text-[11px] border border-slate-200" title="สิทธิ์ไม่เพียงพอ: นักกายภาพไม่สามารถแก้ไขข้อมูลของเพื่อนร่วมงานหรือผู้ดูแลระบบได้">
                                       🔒 Read-Only
@@ -2642,9 +2697,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                           {onSelectPatientForKiosk && (
                             <button
                               onClick={() => {
-                                onSelectPatientForKiosk(patient);
-                                if (onLaunchKioskExercise) onLaunchKioskExercise();
-                                showToast(`เลือกคนไข้ ${patient.name} เข้าสู่การฝึกกายภาพที่ตู้`);
+                                onSelectPatientForKiosk({
+                                  ...patient,
+                                  code: patient.code || (patient as any).patient_code || '',
+                                  patient_code: (patient as any).patient_code || patient.code || '',
+                                  name: patient.name || 'ผู้รับบริการ',
+                                  id: patient.id || patient.code || (patient as any).patient_code || String(Date.now()),
+                                });
+                                showToast(`เลือกคนไข้ ${patient.name} เข้าสู่ระบบเรียบร้อย`);
                                 onClose();
                               }}
                               className="px-4 py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-bold hover:opacity-95 transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-cyan-500/25 active:scale-95"

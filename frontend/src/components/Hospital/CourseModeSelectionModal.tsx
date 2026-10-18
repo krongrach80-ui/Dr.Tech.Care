@@ -332,8 +332,8 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
 
   if (!isOpen || !patient) return null;
 
-  const patientName = patient.name || 'คุณสมชาย ใจดี';
-  const patientCode = patient.code || patient.patient_code || 'PT-2026-001';
+  const patientName = patient.name || 'ผู้รับบริการ';
+  const patientCode = patient.code || patient.patient_code || 'P-0001';
 
   // Format Thai dates
   const formatFullThaiDate = (isoStr: string) => {

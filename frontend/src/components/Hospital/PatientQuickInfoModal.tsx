@@ -30,8 +30,8 @@ export const PatientQuickInfoModal: React.FC<PatientQuickInfoModalProps> = ({
 }) => {
   if (!isOpen || !patient) return null;
 
-  const patientName = patient.name || treatmentPlan?.patientName || 'นายสมชาย ใจดี';
-  const patientHn = patient.code || patient.patient_code || treatmentPlan?.patientCode || 'P-0012';
+  const patientName = patient.name || treatmentPlan?.patientName || 'ผู้รับบริการ';
+  const patientHn = patient.code || patient.patient_code || treatmentPlan?.patientCode || 'P-0001';
   const diagnosis =
     treatmentPlan?.diagnosis ||
     patient.diagnosis ||

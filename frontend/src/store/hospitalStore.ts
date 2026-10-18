@@ -88,13 +88,13 @@ const INITIAL_THERAPISTS: PhysicalTherapist[] = [
   {
     id: 4,
     code: 'T-6512',
-    name: 'pj',
+    name: 'pjj',
     specialty: 'หมอpj',
     phone: '0632531669',
     email: 'pjj@drtechcare.hospital',
     activePatientsCount: 0,
     assignedCases: [],
-    bio: 'ไม่เรียน',
+    bio: 'กายภาพบำบัดฟื้นฟูเฉพาะทาง',
     status: 'active',
     licenseNumber: 'ภก. 5110',
   },
@@ -180,8 +180,8 @@ const INITIAL_USERS: UserAccount[] = [
   },
   {
     id: 4,
-    username: 'pj',
-    name: 'pj',
+    username: 'pjj',
+    name: 'pjj',
     role: 'therapist',
     status: 'active',
     code: 'T-6512',
@@ -1065,10 +1065,10 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
           for (const t of therapists) {
             const tNameClean = (t.name || '').trim().toLowerCase();
             const tCodeUpper = String(t.code || '').trim().toUpperCase();
-            const isPj = tNameClean === 'pj' || tCodeUpper === 'T-6512' || (t.email && t.email.toLowerCase().includes('pjj'));
+            const isPj = tNameClean === 'pjj' || tNameClean === 'pj' || tCodeUpper === 'T-6512' || (t.email && t.email.toLowerCase().includes('pjj'));
 
             const suggestedUsername = isPj
-              ? 'pj'
+              ? 'pjj'
               : (t.email && !t.email.includes('drtechcare.com') && !t.email.includes('example.com')
                   ? t.email.split('@')[0].toLowerCase()
                   : (t.name.toLowerCase().replace(/^(กภ\.|นาย|นางสาว|ดร\.)\s*/, '').trim().replace(/\s+/g, '_') || t.code.toLowerCase().replace(/[^a-z0-9]/g, '')));
@@ -1136,6 +1136,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
                 return {
                   id: p.id,
                   code: p.patient_code,
+                  patient_code: p.patient_code,
                   username: `user_${(p.patient_code || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`,
                   name: p.full_name,
                   role: 'patient' as UserRole,
@@ -1144,6 +1145,8 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
                   age: Number(p.age) || 65,
                   gender: normGender,
                   phone: p.phone || '',
+                  password: p.pin || p.password || DEFAULT_PASSWORD_HASH,
+                  pin: p.pin || '1234',
                   diagnosis: cleanComplaint,
                   chiefComplaint: cleanComplaint,
                   patientBackground: (p.medical_history || '')
@@ -1258,8 +1261,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       (u.username.toLowerCase() === cleanUsername ||
        u.name.toLowerCase() === cleanUsername ||
        (u.code && u.code.toLowerCase() === cleanUsername) ||
-       (u.email && u.email.toLowerCase() === cleanUsername) ||
-       (cleanUsername === 'pj' && (u.username.toLowerCase().includes('pj') || u.name.toLowerCase().includes('pj'))))
+       (u.email && u.email.toLowerCase() === cleanUsername))
     );
 
     // 2. If not found in staff users, check if therapist exists in therapists list and auto-link/create!
@@ -1267,7 +1269,6 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       const matchedTherapist = get().therapists.find((t) =>
         t.name.toLowerCase() === cleanUsername ||
         t.code.toLowerCase() === cleanUsername ||
-        (cleanUsername === 'pj' && (t.name.toLowerCase().includes('pj') || t.code === 'T-6512')) ||
         (t.email && t.email.toLowerCase().startsWith(cleanUsername))
       );
 
@@ -1899,9 +1900,9 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
 
     // ALSO ensure there is a UserAccount in users so it displays in Tab 1 (User Management) & can log in!
     const tNameClean = therapistData.name.trim().toLowerCase();
-    const isPj = tNameClean === 'pj' || therapistData.code === 'T-6512';
+    const isPj = tNameClean === 'pjj' || tNameClean === 'pj' || therapistData.code === 'T-6512';
     const usernameClean = isPj
-      ? 'pj'
+      ? 'pjj'
       : (therapistData.email && !therapistData.email.includes('example.com')
           ? therapistData.email.split('@')[0].toLowerCase()
           : (therapistData.name.toLowerCase().replace(/^(กภ\.|นาย|นางสาว|ดร\.)\s*/, '').replace(/\s+/g, '_') || therapistData.code.toLowerCase()));
