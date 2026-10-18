@@ -1127,6 +1127,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [isAddTherapistOpen, setIsAddTherapistOpen] = useState<boolean>(false);
   const [newTherapistForm, setNewTherapistForm] = useState<{
     name: string;
+    username: string;
+    password: string;
     specialty: string;
     phone: string;
     email: string;
@@ -1135,6 +1137,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     status: 'active' | 'on_leave';
   }>({
     name: '',
+    username: '',
+    password: '1234',
     specialty: 'กายภาพบำบัดระบบกระดูกและกล้ามเนื้อ (Orthopedics)',
     phone: '',
     email: '',
@@ -1144,7 +1148,17 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   });
 
   const filteredTherapists = useMemo(() => {
-    return therapists.filter((t) => {
+    // Deduplicate therapists by code and clean name to avoid duplicate cards
+    const seen = new Set<string>();
+    const deduped: PhysicalTherapist[] = [];
+    for (const t of therapists) {
+      const key = `${String(t.code || '').trim().toUpperCase()}_${(t.name || '').trim().toLowerCase()}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        deduped.push(t);
+      }
+    }
+    return deduped.filter((t) => {
       const q = therapistSearch.toLowerCase().trim();
       return (
         !q ||
@@ -1185,23 +1199,48 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       showToast('กรุณากรอกชื่อนักกายภาพบำบัด');
       return;
     }
-    const randCode = `T-00${therapists.length + 1}`;
+    const randCode = `T-${Math.floor(1000 + Math.random() * 9000)}`;
+    const usernameClean = (
+      newTherapistForm.username.trim() ||
+      newTherapistForm.name.trim().toLowerCase().replace(/^(กภ\.|นาย|นางสาว|ดร\.)\s*/, '').replace(/\s+/g, '_') ||
+      randCode.toLowerCase()
+    ).toLowerCase();
+    const pass = newTherapistForm.password.trim() || '1234';
+
+    // 1. Add to therapists directory
     addTherapist({
       code: randCode,
       name: newTherapistForm.name.trim(),
       specialty: newTherapistForm.specialty,
       phone: newTherapistForm.phone || '08x-xxx-xxxx',
-      email: newTherapistForm.email || 'therapist@drtechcare.com',
+      email: newTherapistForm.email || `${usernameClean}@drtechcare.hospital`,
       licenseNumber: newTherapistForm.licenseNumber || 'กภ. 9999',
       activePatientsCount: 0,
       assignedCases: [],
       bio: newTherapistForm.bio || 'นักกายภาพบำบัดวิชาชีพ โรงพยาบาล Dr.Tech.Care',
       status: newTherapistForm.status,
     });
+
+    // 2. Add to users so they immediately show in Tab 1 (จัดการผู้ใช้งาน) and can log in
+    addUser({
+      username: usernameClean,
+      name: newTherapistForm.name.trim(),
+      role: 'therapist',
+      status: newTherapistForm.status === 'on_leave' ? 'suspended' : 'active',
+      code: randCode,
+      password: pass,
+      must_change_password: false,
+      phone: newTherapistForm.phone || undefined,
+      email: newTherapistForm.email || `${usernameClean}@drtechcare.hospital`,
+      last_active: 'เพิ่งลงทะเบียน',
+    });
+
     setIsAddTherapistOpen(false);
-    showToast(`เพิ่มนักกายภาพบำบัดใหม่สำเร็จ: ${newTherapistForm.name}`);
+    showToast(`เพิ่มนักกายภาพบำบัดใหม่สำเร็จ: ${newTherapistForm.name} (Username: ${usernameClean})`);
     setNewTherapistForm({
       name: '',
+      username: '',
+      password: '1234',
       specialty: 'กายภาพบำบัดระบบกระดูกและกล้ามเนื้อ (Orthopedics)',
       phone: '',
       email: '',
@@ -4619,14 +4658,40 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
             <form onSubmit={handleAddTherapistSubmit} className="space-y-3.5 text-xs font-semibold">
               <div>
-                <label className="block text-slate-700 mb-1">ชื่อ-นามสกุล (เช่น กภ. สุภาพร มั่งคั่ง):</label>
+                <label className="block text-slate-700 mb-1">ชื่อ-นามสกุล (เช่น กภ. สุภาพร มั่งคั่ง หรือ pj):</label>
                 <input
                   type="text"
                   value={newTherapistForm.name}
                   onChange={(e) => setNewTherapistForm({ ...newTherapistForm, name: e.target.value })}
+                  placeholder="เช่น กภ. สุภาพร มั่งคั่ง หรือ pj"
                   className="w-full px-3.5 py-2.5 rounded-2xl border border-emerald-200 text-sm font-bold outline-none"
                   required
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 mb-1">ชื่อผู้ใช้ (Username สำหรับ Login):</label>
+                  <input
+                    type="text"
+                    value={newTherapistForm.username}
+                    onChange={(e) => setNewTherapistForm({ ...newTherapistForm, username: e.target.value })}
+                    placeholder="เช่น pj หรือ pt_somchai"
+                    className="w-full px-3.5 py-2.5 rounded-2xl border border-emerald-200 text-sm font-semibold outline-none"
+                  />
+                  <span className="text-[10px] text-slate-400">ถ้าเว้นว่าง ระบบจะใช้ชื่อภาษาอังกฤษ</span>
+                </div>
+                <div>
+                  <label className="block text-slate-700 mb-1">รหัสผ่านเริ่มต้น (Password):</label>
+                  <input
+                    type="text"
+                    value={newTherapistForm.password}
+                    onChange={(e) => setNewTherapistForm({ ...newTherapistForm, password: e.target.value })}
+                    placeholder="1234"
+                    className="w-full px-3.5 py-2.5 rounded-2xl border border-emerald-200 text-sm font-semibold outline-none"
+                  />
+                  <span className="text-[10px] text-slate-400">ค่าเริ่มต้น: 1234</span>
+                </div>
               </div>
 
               <div>
@@ -4660,6 +4725,17 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     className="w-full px-3.5 py-2.5 rounded-2xl border border-emerald-200 text-sm outline-none"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 mb-1">อีเมลบุคลากร (Staff Email):</label>
+                <input
+                  type="email"
+                  value={newTherapistForm.email}
+                  onChange={(e) => setNewTherapistForm({ ...newTherapistForm, email: e.target.value })}
+                  placeholder="therapist@drtechcare.hospital"
+                  className="w-full px-3.5 py-2.5 rounded-2xl border border-emerald-200 text-sm outline-none"
+                />
               </div>
 
               <div>

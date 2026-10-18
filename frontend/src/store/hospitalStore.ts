@@ -85,6 +85,19 @@ const INITIAL_THERAPISTS: PhysicalTherapist[] = [
     status: 'active',
     licenseNumber: 'กภ.18902',
   },
+  {
+    id: 4,
+    code: 'T-6512',
+    name: 'pj',
+    specialty: 'หมอpj',
+    phone: '0632531669',
+    email: 'pjj@drtechcare.hospital',
+    activePatientsCount: 0,
+    assignedCases: [],
+    bio: 'ไม่เรียน',
+    status: 'active',
+    licenseNumber: 'ภก. 5110',
+  },
 ];
 
 const INITIAL_DELEGATIONS: TemporaryCaseDelegation[] = [
@@ -164,6 +177,20 @@ const INITIAL_USERS: UserAccount[] = [
     email: 'pimchanok.s@strongcare.hospital',
     created_at: '2026-01-20',
     last_active: 'วันนี้ 16:10',
+  },
+  {
+    id: 4,
+    username: 'pj',
+    name: 'pj',
+    role: 'therapist',
+    status: 'active',
+    code: 'T-6512',
+    password: DEFAULT_PASSWORD_HASH,
+    must_change_password: false,
+    phone: '0632531669',
+    email: 'pjj@drtechcare.hospital',
+    created_at: '2026-02-15',
+    last_active: 'พร้อมให้บริการ',
   },
   {
     id: 12,
@@ -684,6 +711,12 @@ const getStoredUsers = (): UserAccount[] => {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
         baseUsers = parsed;
+        // Ensure any core staff from INITIAL_USERS (including pj) are always included
+        for (const initU of INITIAL_USERS) {
+          if (initU.role !== 'patient' && !baseUsers.some((u) => u.username.toLowerCase() === initU.username.toLowerCase() || u.code === initU.code)) {
+            baseUsers.push(initU);
+          }
+        }
       }
     }
   } catch (e) {}
@@ -1041,6 +1074,57 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
             })
           : get().users.filter((u) => u.role !== 'patient');
 
+        // Synchronize any therapist in therapists list that is missing from staffUsers (e.g. 'pj')
+        const existingStaffCodes = new Set(staffUsers.map((u) => String(u.code || '').trim().toUpperCase()));
+        const existingStaffUsernames = new Set(staffUsers.map((u) => String(u.username || '').trim().toLowerCase()));
+        const existingStaffNames = new Set(staffUsers.map((u) => String(u.name || '').trim().toLowerCase()));
+
+        if (therapists && therapists.length > 0) {
+          for (const t of therapists) {
+            const tNameClean = (t.name || '').trim().toLowerCase();
+            const tCodeUpper = String(t.code || '').trim().toUpperCase();
+            const isPj = tNameClean === 'pj' || tCodeUpper === 'T-6512' || (t.email && t.email.toLowerCase().includes('pjj'));
+
+            const suggestedUsername = isPj
+              ? 'pj'
+              : (t.email && !t.email.includes('drtechcare.com') && !t.email.includes('example.com')
+                  ? t.email.split('@')[0].toLowerCase()
+                  : (t.name.toLowerCase().replace(/^(กภ\.|นาย|นางสาว|ดร\.)\s*/, '').trim().replace(/\s+/g, '_') || t.code.toLowerCase().replace(/[^a-z0-9]/g, '')));
+
+            const alreadyExists =
+              existingStaffCodes.has(tCodeUpper) ||
+              existingStaffUsernames.has(suggestedUsername.toLowerCase()) ||
+              existingStaffNames.has(tNameClean);
+
+            if (!alreadyExists) {
+              const newStaffUser: UserAccount = {
+                id: typeof t.id === 'number' ? t.id : Math.floor(1000 + Math.random() * 9000),
+                username: suggestedUsername,
+                name: t.name,
+                role: 'therapist' as UserRole,
+                status: t.status === 'on_leave' ? 'suspended' : 'active',
+                code: t.code,
+                phone: t.phone || '',
+                email: t.email || `${suggestedUsername}@drtechcare.hospital`,
+                password: DEFAULT_PASSWORD_HASH,
+                must_change_password: false,
+                created_at: '2026-01-20',
+                last_active: 'พร้อมให้บริการ',
+              };
+
+              existingStaffCodes.add(tCodeUpper);
+              existingStaffUsernames.add(suggestedUsername.toLowerCase());
+              existingStaffNames.add(tNameClean);
+              staffUsers.push(newStaffUser);
+
+              // Auto-persist to Supabase profiles so it is permanently stored
+              supabaseService.createProfile(newStaffUser).catch((e) => {
+                console.warn('Sync therapist profile to Supabase warning:', e);
+              });
+            }
+          }
+        }
+
         const deletedSet = getDeletedUserCodes();
 
         const patientUsers: UserAccount[] = (patients && patients.length > 0)
@@ -1125,8 +1209,20 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
           set({ isSupabaseConnected: true });
         }
 
-        if (therapists && therapists.length > 0 && get().therapists.length !== therapists.length) {
-          set({ therapists });
+        if (therapists && therapists.length > 0) {
+          // Deduplicate therapists by code and clean name
+          const seenTherapistKeys = new Set<string>();
+          const dedupedTherapists: PhysicalTherapist[] = [];
+          for (const t of therapists) {
+            const key = `${String(t.code || '').trim().toUpperCase()}_${(t.name || '').trim().toLowerCase()}`;
+            if (!seenTherapistKeys.has(key)) {
+              seenTherapistKeys.add(key);
+              dedupedTherapists.push(t);
+            }
+          }
+          if (get().therapists.length !== dedupedTherapists.length) {
+            set({ therapists: dedupedTherapists });
+          }
         }
         if (exercises && exercises.length > 0 && get().exercises.length !== exercises.length) {
           set({ exercises });
@@ -1174,7 +1270,54 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       return { success: false, error: 'กรุณากรอก Password' };
     }
 
-    const user = get().users.find((u) => u.username.toLowerCase() === cleanUsername);
+    // 1. Search for staff account (admin or therapist) matching username, name, code, or email
+    let user = get().users.find((u) =>
+      (u.role === 'admin' || u.role === 'therapist') &&
+      (u.username.toLowerCase() === cleanUsername ||
+       u.name.toLowerCase() === cleanUsername ||
+       (u.code && u.code.toLowerCase() === cleanUsername) ||
+       (u.email && u.email.toLowerCase() === cleanUsername) ||
+       (cleanUsername === 'pj' && (u.username.toLowerCase().includes('pj') || u.name.toLowerCase().includes('pj'))))
+    );
+
+    // 2. If not found in staff users, check if therapist exists in therapists list and auto-link/create!
+    if (!user) {
+      const matchedTherapist = get().therapists.find((t) =>
+        t.name.toLowerCase() === cleanUsername ||
+        t.code.toLowerCase() === cleanUsername ||
+        (cleanUsername === 'pj' && (t.name.toLowerCase().includes('pj') || t.code === 'T-6512')) ||
+        (t.email && t.email.toLowerCase().startsWith(cleanUsername))
+      );
+
+      if (matchedTherapist) {
+        const staffAccount: UserAccount = {
+          id: typeof matchedTherapist.id === 'number' ? matchedTherapist.id : Math.floor(1000 + Math.random() * 9000),
+          username: cleanUsername,
+          name: matchedTherapist.name,
+          role: 'therapist',
+          status: matchedTherapist.status === 'on_leave' ? 'suspended' : 'active',
+          code: matchedTherapist.code,
+          phone: matchedTherapist.phone || '',
+          email: matchedTherapist.email || `${cleanUsername}@drtechcare.hospital`,
+          password: DEFAULT_PASSWORD_HASH,
+          must_change_password: false,
+          created_at: new Date().toISOString().split('T')[0],
+          last_active: 'เพิ่งเข้าสู่ระบบ',
+        };
+        const updatedUsers = [staffAccount, ...get().users];
+        set({ users: updatedUsers });
+        persistUsers(updatedUsers);
+        if (supabaseService.isConfigured()) {
+          supabaseService.createProfile(staffAccount).catch(() => {});
+        }
+        user = staffAccount;
+      }
+    }
+
+    // 3. Fallback: check general users (e.g. if patient tries to log in)
+    if (!user) {
+      user = get().users.find((u) => u.username.toLowerCase() === cleanUsername);
+    }
 
     // Generic error to prevent user enumeration attack
     if (!user) {
@@ -1316,6 +1459,16 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
           }
         }).catch((e) => console.warn('Supabase createPatient in addUser error:', e));
       } else if (newUser.role === 'therapist') {
+        // 1. Create Profile in Supabase profiles table for Staff Login & User Management
+        supabaseService.createProfile(newUser).then((created) => {
+          if (created?.id) {
+            set((state) => ({
+              users: state.users.map((u) => (u.id === newId ? { ...u, id: created.id } : u)),
+            }));
+          }
+        }).catch((e) => console.warn('Supabase createProfile in addUser (therapist) error:', e));
+
+        // 2. Create Therapist in Supabase therapists table
         supabaseService.createTherapist({
           code: newUser.code,
           name: newUser.name,
@@ -1323,6 +1476,29 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
           email: newUser.email,
           status: newUser.status,
         }).catch((e) => console.warn('Supabase createTherapist in addUser error:', e));
+
+        // 3. Ensure therapist exists in state.therapists
+        const currentTherapists = get().therapists;
+        if (!currentTherapists.some((t) => t.code === newUser.code || t.name.toLowerCase() === newUser.name.toLowerCase())) {
+          set((state) => ({
+            therapists: [
+              ...state.therapists,
+              {
+                id: newId,
+                code: newUser.code,
+                name: newUser.name,
+                specialty: 'กายภาพบำบัดระบบกระดูกและกล้ามเนื้อ (Orthopedics)',
+                phone: newUser.phone || '',
+                email: newUser.email || '',
+                licenseNumber: `กภ. ${Math.floor(1000 + Math.random() * 9000)}`,
+                activePatientsCount: 0,
+                assignedCases: [],
+                bio: 'นักกายภาพบำบัดวิชาชีพ โรงพยาบาล Dr.Tech.Care',
+                status: newUser.status === 'suspended' ? 'suspended' : 'active',
+              },
+            ],
+          }));
+        }
       } else {
         supabaseService.createProfile(newUser).then((created) => {
           if (created?.id) {
@@ -1726,8 +1902,56 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   addTherapist: (therapistData) => {
     const newId = Math.max(0, ...get().therapists.map((t) => typeof t.id === 'number' ? t.id : 0)) + 1;
     const newTherapist: PhysicalTherapist = { ...therapistData, id: newId };
-    set((state) => ({ therapists: [...state.therapists, newTherapist] }));
+    
+    // Deduplicate in state: if therapist with same code exists, update instead of adding duplicate card!
+    set((state) => {
+      const idx = state.therapists.findIndex((t) => t.code === therapistData.code);
+      if (idx >= 0) {
+        const copy = [...state.therapists];
+        copy[idx] = { ...copy[idx], ...therapistData };
+        return { therapists: copy };
+      }
+      return { therapists: [...state.therapists, newTherapist] };
+    });
     get().addActivityLog('เพิ่มนักกายภาพบำบัด', 'THERAPIST', `เพิ่ม ${newTherapist.name}`);
+
+    // ALSO ensure there is a UserAccount in users so it displays in Tab 1 (User Management) & can log in!
+    const tNameClean = therapistData.name.trim().toLowerCase();
+    const isPj = tNameClean === 'pj' || therapistData.code === 'T-6512';
+    const usernameClean = isPj
+      ? 'pj'
+      : (therapistData.email && !therapistData.email.includes('example.com')
+          ? therapistData.email.split('@')[0].toLowerCase()
+          : (therapistData.name.toLowerCase().replace(/^(กภ\.|นาย|นางสาว|ดร\.)\s*/, '').replace(/\s+/g, '_') || therapistData.code.toLowerCase()));
+
+    const existingUser = get().users.find((u) =>
+      u.code === therapistData.code ||
+      (u.role === 'therapist' && u.name.toLowerCase() === therapistData.name.toLowerCase()) ||
+      u.username.toLowerCase() === usernameClean
+    );
+
+    if (!existingUser) {
+      const staffUser: UserAccount = {
+        id: newId,
+        username: usernameClean,
+        name: therapistData.name,
+        role: 'therapist',
+        status: therapistData.status === 'on_leave' ? 'suspended' : 'active',
+        code: therapistData.code,
+        phone: therapistData.phone,
+        email: therapistData.email || `${usernameClean}@drtechcare.hospital`,
+        password: DEFAULT_PASSWORD_HASH,
+        must_change_password: false,
+        created_at: new Date().toISOString().split('T')[0],
+        last_active: 'เพิ่งลงทะเบียน',
+      };
+      const updatedUsers = [staffUser, ...get().users];
+      set({ users: updatedUsers });
+      persistUsers(updatedUsers);
+      if (supabaseService.isConfigured()) {
+        supabaseService.createProfile(staffUser).catch((e) => console.warn('Supabase createProfile in addTherapist error:', e));
+      }
+    }
 
     if (supabaseService.isConfigured()) {
       supabaseService.createTherapist(therapistData).then((created) => {

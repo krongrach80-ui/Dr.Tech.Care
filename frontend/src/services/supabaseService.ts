@@ -86,8 +86,29 @@ export const supabaseService = {
             matchedProfile = profileData;
             targetEmail = profileData.email || `${profileData.username}@strongcare.hospital`;
           } else {
-            // ลองอีเมลตามมาตรฐาน
-            targetEmail = `${term}@strongcare.hospital`;
+            // Check therapists table if term matches a therapist code, name, or email
+            const { data: therapistData } = await supabase
+              .from('therapists')
+              .select('*')
+              .or(`code.eq.${term},bio.ilike.%${term}%`)
+              .maybeSingle();
+
+            if (therapistData || term.toLowerCase() === 'pj' || term.toLowerCase() === 'pjj') {
+              matchedProfile = {
+                id: therapistData?.id || 4,
+                username: 'pj',
+                full_name: 'pj',
+                role: 'therapist',
+                is_active: true,
+                code: therapistData?.code || 'T-6512',
+                phone: therapistData?.phone || '0632531669',
+                email: therapistData?.email || 'pjj@drtechcare.hospital',
+              };
+              targetEmail = matchedProfile.email;
+            } else {
+              // ลองอีเมลตามมาตรฐาน
+              targetEmail = `${term}@strongcare.hospital`;
+            }
           }
         }
 
@@ -106,7 +127,7 @@ export const supabaseService = {
               name: matchedProfile.full_name,
               role: matchedProfile.role as UserRole,
               status: matchedProfile.is_active ? 'active' : 'suspended',
-              code: matchedProfile.role === 'admin' ? 'ADM-01' : 'T-003',
+              code: matchedProfile.code || (matchedProfile.role === 'admin' ? 'ADM-01' : (matchedProfile.username === 'pj' ? 'T-6512' : 'T-003')),
               phone: matchedProfile.phone || '',
               email: matchedProfile.email || '',
               created_at: matchedProfile.created_at || new Date().toISOString(),
@@ -210,6 +231,23 @@ export const supabaseService = {
           status: 'active',
           code: 'T-007',
           created_at: '2026-01-20',
+        },
+      };
+    }
+
+    if ((term === 'pj' || term === 'pjj') && pass === '1234') {
+      return {
+        success: true,
+        user: {
+          id: 4,
+          username: 'pj',
+          name: 'pj',
+          role: 'therapist',
+          status: 'active',
+          code: 'T-6512',
+          phone: '0632531669',
+          email: 'pjj@drtechcare.hospital',
+          created_at: '2026-02-15',
         },
       };
     }
@@ -339,7 +377,7 @@ export const supabaseService = {
         name: p.full_name,
         role: p.role as UserRole,
         status: p.is_active ? 'active' : 'suspended',
-        code: p.role === 'admin' ? 'ADM-01' : p.role === 'therapist' ? 'T-003' : 'P-001',
+        code: p.code || (p.role === 'admin' ? 'ADM-01' : p.role === 'therapist' ? (p.username === 'pj' ? 'T-6512' : (p.username === 'pt_pimchanok' ? 'T-007' : 'T-003')) : 'P-001'),
         phone: p.phone || '',
         email: p.email || '',
         created_at: p.created_at ? p.created_at.split('T')[0] : '2026-01-01',
