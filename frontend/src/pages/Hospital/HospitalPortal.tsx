@@ -5365,10 +5365,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
             const modeLabel =
               courseData.includePhysio && courseData.includeMinigame
-                ? `กายภาพ (${courseData.assignedExercises.length} ท่า) + มินิเกมฝึกสมอง (${courseData.minigameQuestionCount} ข้อ)`
+                ? `กายภาพ + มินิเกมฝึกสมอง (${courseData.minigameQuestionCount} ข้อ)`
                 : courseData.includeMinigame
                 ? `มินิเกมฝึกสมอง (${courseData.minigameQuestionCount} ข้อ)`
-                : `กายภาพปกติ (${courseData.assignedExercises.length} ท่า)`;
+                : `กายภาพปกติ (ROM Exercise)`;
 
             saveTreatmentPlan({
               id: `plan_${Date.now()}`,

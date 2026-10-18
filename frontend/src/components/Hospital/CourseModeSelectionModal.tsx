@@ -403,43 +403,7 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
   const firstDayOfMonth = new Date(safeViewDate.getFullYear(), safeViewDate.getMonth(), 1).getDay();
   const startColOffset = isNaN(firstDayOfMonth) ? 3 : (firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1);
 
-  // Open Physio Edit Popup
-  const handleOpenPhysioEdit = () => {
-    setTempPhysioMode(physioMode);
-    setTempPackId(selectedPackId);
-    setTempCustomSlugs([...selectedCustomSlugs]);
-    setIsPhysioModalOpen(true);
-  };
 
-  // Save Physio Configuration from popup (3.1)
-  const handleSavePhysioConfig = () => {
-    if (tempPhysioMode === 'custom' && tempCustomSlugs.length === 0) {
-      return; // Disabled if 0 poses
-    }
-    setPhysioMode(tempPhysioMode);
-    setSelectedPackId(tempPackId);
-    setSelectedCustomSlugs(tempCustomSlugs);
-    setIsPhysioModalOpen(false);
-  };
-
-  // Toggle pose in custom mode
-  const handleToggleCustomPose = (slug: string) => {
-    if (tempCustomSlugs.includes(slug)) {
-      setTempCustomSlugs(tempCustomSlugs.filter((s) => s !== slug));
-    } else {
-      setTempCustomSlugs([...tempCustomSlugs, slug]);
-    }
-  };
-
-  // Select all / clear all custom poses
-  const handleSelectAllCustomPoses = () => {
-    const allSlugs = systemExercises.map((ex) => (ex as any).slug || (ex as any).svgType || `ex_${ex.id}`);
-    setTempCustomSlugs(allSlugs);
-  };
-
-  const handleClearAllCustomPoses = () => {
-    setTempCustomSlugs([]);
-  };
 
   // Open Minigame Edit Popup
   const handleOpenMinigameEdit = () => {
@@ -532,7 +496,7 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
                     {includePhysio && (
                       <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                         <Activity className="w-3.5 h-3.5" />
-                        <span>กายภาพปกติ ({assignedExercises.length} ท่า)</span>
+                        <span>กายภาพปกติ (ROM Exercise)</span>
                       </span>
                     )}
                     {includeMinigame && (
@@ -568,7 +532,7 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
         </div>
 
         {/* ================================================================= */}
-        {/* STEP 1: Select Mode (Multi-select: กายภาพ & มินิเกม พร้อมปุ่มแก้ไข) */}
+        {/* STEP 1: Select Mode (Multi-select: กายภาพ & มินิเกม)                 */}
         {/* ================================================================= */}
         {step === 1 && (
           <div className="p-5 sm:p-7 space-y-6">
@@ -594,22 +558,6 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
                     : 'border-slate-200 hover:border-slate-300 bg-white opacity-85'
                 }`}
               >
-                {/* มุมขวาบน: ปุ่มแก้ไข (Requirement 3: stopPropagation ป้องกัน toggle) */}
-                <div className="absolute top-4 right-4">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleOpenPhysioEdit();
-                    }}
-                    className="px-3 py-1 rounded-xl bg-white hover:bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-black shadow-2xs hover:shadow transition flex items-center gap-1.5 cursor-pointer active:scale-95"
-                    title="คลิกเพื่อแก้ไขชุดท่าหรือเลือกท่าเอง"
-                  >
-                    <Pencil className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>แก้ไข</span>
-                  </button>
-                </div>
-
                 <div className="space-y-3">
                   {/* แถวไอคอน + เครื่องหมายถูกที่มุมซ้ายบน / ข้างไอคอน (Requirement 3) */}
                   <div className="flex items-center gap-3">
@@ -633,25 +581,19 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
                       กายภาพปกติ (ROM Exercise)
                     </h3>
                     <p className="text-xs text-slate-500 font-medium mt-1 leading-relaxed">
-                      โปรแกรมกายภาพบำบัดฟื้นฟูกล้ามเนื้อและข้อต่อตามชุดท่าที่คุณหมอกำหนด เช่น กางแขน เหยียดไหล่ และข้อศอก
+                      โปรแกรมกายภาพบำบัดฟื้นฟูกล้ามเนื้อและข้อต่อตามมาตรฐานของโรงพยาบาล ตรวจจับท่าทางผ่านกล้อง AI
                     </p>
                   </div>
 
-                  {/* สรุปค่าที่ตั้งไว้เป็นข้อความสั้นๆ (Requirement 3) */}
                   <div className="p-3 rounded-2xl bg-white border border-emerald-200/90 shadow-2xs space-y-1">
                     <div className="text-[11px] font-bold text-slate-500 flex items-center justify-between">
-                      <span>รูปแบบการฝึกที่ตั้งไว้:</span>
+                      <span>รูปแบบโปรแกรม:</span>
                       <span className="font-black text-emerald-700">
-                        {physioMode === 'pack' ? 'แบบชุด/แพ็ก' : 'เลือกท่าเอง'}
+                        กายภาพบำบัดฟื้นฟูมาตรฐาน
                       </span>
                     </div>
-                    <div className="text-xs font-black text-[#0B2B2B] truncate">
-                      {physioMode === 'pack'
-                        ? `ชุด: ${currentPackName}`
-                        : `เลือกเอง ${assignedExercises.length} ท่า`}
-                    </div>
-                    <div className="text-[10px] text-slate-400 font-medium">
-                      รวม {assignedExercises.length} ท่าฝึก (คลิกปุ่ม &quot;แก้ไข&quot; เพื่อเปลี่ยน)
+                    <div className="text-[11px] text-slate-600 font-medium leading-relaxed">
+                      ฟื้นฟูช่วงการเคลื่อนไหวของข้อต่อและกล้ามเนื้อผ่านระบบกล้องตรวจจับท่าทางอัตโนมัติ
                     </div>
                   </div>
                 </div>
@@ -847,11 +789,11 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
                         <div className="flex items-center gap-2">
                           <Activity className="w-4 h-4 text-emerald-700 flex-shrink-0" />
                           <h4 className="text-xs font-black">
-                            กายภาพปกติ: {physioMode === 'pack' ? `ชุด: ${currentPackName}` : `เลือกเอง ${assignedExercises.length} ท่า`}
+                            โปรแกรมกายภาพบำบัดฟื้นฟู (ROM Exercise)
                           </h4>
                         </div>
                         <p className="text-[11px] text-emerald-800 mt-1 pl-6 leading-relaxed">
-                          ✓ รวม {assignedExercises.length} ท่า: {assignedExercises.map((e) => e.exerciseName).join(', ')}
+                          ✓ โปรแกรมกายภาพบำบัดฟื้นฟูมาตรฐาน บันทึกองศาและติดตามผลผ่านกล้อง AI
                         </p>
                       </div>
                     )}
@@ -1133,239 +1075,7 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
         </div>
       </div>
 
-      {/* =================================================================== */}
-      {/* POPUP 1: ตั้งค่าท่ากายภาพปกติ (3.1: แบบชุด หรือ ติ๊กเลือกท่าเอง)    */}
-      {/* =================================================================== */}
-      {isPhysioModalOpen && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-fadeIn"
-          onClick={() => setIsPhysioModalOpen(false)}
-        >
-          <div
-            className="w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-left animate-scaleUp flex flex-col max-h-[85vh]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-emerald-50 to-teal-50">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs">
-                  <Activity className="w-5 h-5 stroke-[2.2]" />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-[#0B2B2B]">
-                    กำหนดท่ากายภาพบำบัดฟื้นฟู
-                  </h3>
-                  <p className="text-[11px] text-slate-500 font-semibold">
-                    เลือกวิธีออกกำลังกาย: เลือกชุดสำเร็จรูป หรือ ติ๊กเลือกท่าเอง
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsPhysioModalOpen(false)}
-                className="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            {/* Segmented Control / Tabs (Requirement 3.1) */}
-            <div className="p-3 bg-slate-50 border-b border-slate-200/80 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setTempPhysioMode('pack')}
-                className={`flex-1 py-2 px-3 rounded-2xl text-xs font-black transition flex items-center justify-center gap-2 cursor-pointer ${
-                  tempPhysioMode === 'pack'
-                    ? 'bg-emerald-600 text-white shadow-xs'
-                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                }`}
-              >
-                <Layers className="w-4 h-4" />
-                <span>(ก) แบบชุด/แพ็ก</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setTempPhysioMode('custom')}
-                className={`flex-1 py-2 px-3 rounded-2xl text-xs font-black transition flex items-center justify-center gap-2 cursor-pointer ${
-                  tempPhysioMode === 'custom'
-                    ? 'bg-emerald-600 text-white shadow-xs'
-                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                }`}
-              >
-                <Sliders className="w-4 h-4" />
-                <span>(ข) เลือกท่าเอง</span>
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-3">
-              {tempPhysioMode === 'pack' ? (
-                /* (ก) แบบชุด/แพ็ก จากระบบ */
-                <div className="space-y-2.5">
-                  <p className="text-xs font-bold text-slate-600">
-                    เลือกชุดสำเร็จรูป 1 ชุด จากรายการชุดที่มีอยู่ในระบบ:
-                  </p>
-                  <div className="grid grid-cols-1 gap-2.5">
-                    {systemModpacks.map((pack) => {
-                      const isSelected = String(tempPackId) === String(pack.id);
-                      return (
-                        <div
-                          key={pack.id}
-                          onClick={() => setTempPackId(String(pack.id))}
-                          className={`p-3.5 rounded-2xl border-2 transition cursor-pointer flex items-start justify-between gap-3 ${
-                            isSelected
-                              ? 'border-[#00C49F] bg-emerald-50/50 shadow-xs ring-2 ring-emerald-200/60'
-                              : 'border-slate-200 hover:border-slate-300 bg-white'
-                          }`}
-                        >
-                          <div className="flex items-start gap-3">
-                            <span className="text-2xl mt-0.5">{pack.icon || '🦴'}</span>
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <h4 className="text-xs sm:text-sm font-black text-[#0B2B2B]">
-                                  {pack.name}
-                                </h4>
-                                {pack.category && (
-                                  <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-extrabold">
-                                    {pack.category}
-                                  </span>
-                                )}
-                              </div>
-                              {pack.description && (
-                                <p className="text-[11px] text-slate-500 leading-relaxed">
-                                  {pack.description}
-                                </p>
-                              )}
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {pack.exercises?.map((ex, i) => (
-                                  <span
-                                    key={i}
-                                    className="px-2 py-0.5 rounded-lg bg-white border border-slate-200 text-slate-700 text-[10px] font-bold"
-                                  >
-                                    • {ex.exerciseName} ({ex.sets || 3} เซ็ต x {ex.reps || 10} ครั้ง)
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div
-                            className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-1 ${
-                              isSelected ? 'bg-emerald-600 text-white shadow-xs' : 'border border-slate-300'
-                            }`}
-                          >
-                            {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : (
-                /* (ข) เลือกท่าเอง (Requirement 3.1: checkbox ทุกท่าในระบบ, เลือกทั้งหมด/ล้างทั้งหมด, แสดงจำนวน) */
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between flex-wrap gap-2 pb-1 border-b border-slate-100">
-                    <div>
-                      <p className="text-xs font-bold text-slate-600">
-                        ติ๊กเลือกท่าที่ต้องการให้คนไข้ฝึก (เลือกได้หลายท่า):
-                      </p>
-                      <div className="text-[11px] font-extrabold text-emerald-700 mt-0.5">
-                        เลือกแล้ว {tempCustomSlugs.length} ท่า จากทั้งหมด {systemExercises.length} ท่า
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleSelectAllCustomPoses}
-                        className="px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold transition cursor-pointer"
-                      >
-                        เลือกทั้งหมด
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleClearAllCustomPoses}
-                        className="px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 text-[11px] font-bold transition cursor-pointer"
-                      >
-                        ล้างทั้งหมด
-                      </button>
-                    </div>
-                  </div>
-
-                  {tempCustomSlugs.length === 0 && (
-                    <div className="p-3 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-bold flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-                      <span>กรุณาเลือกอย่างน้อย 1 ท่าสำหรับโปรแกรมกายภาพบำบัด</span>
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {systemExercises.map((ex) => {
-                      const slug = (ex as any).slug || (ex as any).svgType || `ex_${ex.id}`;
-                      const isChecked = tempCustomSlugs.includes(slug);
-                      return (
-                        <div
-                          key={slug}
-                          onClick={() => handleToggleCustomPose(slug)}
-                          className={`p-3 rounded-2xl border transition cursor-pointer flex items-center justify-between gap-2 ${
-                            isChecked
-                              ? 'border-[#00C49F] bg-emerald-50/50 shadow-2xs font-extrabold ring-1 ring-emerald-300/60'
-                              : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2.5 truncate">
-                            {isChecked ? (
-                              <CheckSquare className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                            ) : (
-                              <Square className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                            )}
-                            <div className="truncate text-left">
-                              <div className="text-xs font-bold truncate text-[#0B2B2B]">
-                                {ex.name}
-                              </div>
-                              <div className="text-[10px] text-slate-400 font-semibold truncate">
-                                {ex.category || ex.targetJoint}
-                              </div>
-                            </div>
-                          </div>
-
-                          <span className="text-[10px] text-slate-500 px-1.5 py-0.5 rounded bg-slate-100 flex-shrink-0">
-                            {ex.sets || 3} เซ็ต x {ex.repsPerSet || 10} ครั้ง
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-slate-50">
-              <button
-                type="button"
-                onClick={() => setIsPhysioModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-200 text-xs font-bold transition cursor-pointer"
-              >
-                ยกเลิก
-              </button>
-
-              <button
-                type="button"
-                disabled={tempPhysioMode === 'custom' && tempCustomSlugs.length === 0}
-                onClick={handleSavePhysioConfig}
-                className={`px-6 py-2 rounded-xl text-xs font-black shadow-md transition cursor-pointer active:scale-95 ${
-                  tempPhysioMode === 'custom' && tempCustomSlugs.length === 0
-                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
-                    : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                }`}
-              >
-                บันทึกการตั้งค่าท่าฝึก
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* =================================================================== */}
       {/* POPUP 2: ป็อบอัปแก้ไขมินิเกมฝึกสมอง (3.2: เฉพาะจำนวนคำถามเท่านั้น) */}
