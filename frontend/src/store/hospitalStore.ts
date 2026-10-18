@@ -1039,7 +1039,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     // 2. Fetch from Supabase Cloud if configured
     if (supabaseService.isConfigured()) {
       try {
-        const [profiles, therapists, exercises, logs, settings, bannedDevices, bannedIps, patients] = await Promise.all([
+        const [profiles, therapists, exercises, logs, settings, bannedDevices, bannedIps, patients, remotePlans, remoteModpacks] = await Promise.all([
           supabaseService.fetchProfiles(),
           supabaseService.fetchTherapists(),
           supabaseService.fetchExercises(),
@@ -1048,6 +1048,8 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
           supabaseService.fetchBannedDevices(),
           supabaseService.fetchBannedIps(),
           supabaseService.fetchPatients(),
+          supabaseService.fetchTreatmentPlans(),
+          supabaseService.fetchModpacks(),
         ]);
 
         const staffUsers: UserAccount[] = (profiles && profiles.length > 0)
@@ -1155,7 +1157,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
                   patientBackground: (p.medical_history || '')
                     .replace(/\[PENDING_INFO\]/g, '')
                     .replace(/FACE_EMB:\[.*?\]/gs, '')
-                    .replace(/FACE_PHOTO:data:image\/[^\s\n]+/g, '')
+                    .replace(/FACE_PHOTO:[^\s\n]+/g, '')
                     .replace(/รอลงข้อมูลส่วนตัว/g, '')
                     .trim(),
                   treatmentOutcome: p.treatment_outcome || '',
@@ -1166,11 +1168,36 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
                   assignedTherapistName: p.profiles?.full_name || 'กภ. ธนากร วงศ์สวัสดิ์',
                   assignedTherapistId: p.responsible_therapist_id || 1,
                   face_image_url: p.photo || p.avatar_url,
+                  biometricVector: p.face_vector,
+                  face_vector: p.face_vector,
                   created_at: p.created_at ? p.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
                   last_active: isPending ? 'รอลงข้อมูลส่วนตัว' : 'พร้อมรับบริการ',
                 };
               })
           : get().users.filter((u) => u.role === 'patient');
+
+        // Hydrate patientFaceStorageService and faceRegistryService so that any kiosk or client has all patient face photos and records in memory
+        if (patientUsers && patientUsers.length > 0) {
+          for (const pu of patientUsers) {
+            if (pu.face_image_url || (pu as any).biometricVector) {
+              patientFaceStorageService.savePatientRecord(pu.code, {
+                patient_profile: {
+                  id: pu.id,
+                  patient_id: pu.code,
+                  full_name: pu.name,
+                  age: pu.age,
+                  gender: pu.gender,
+                  status: (pu.status === 'suspended' || pu.status === 'pending_info') ? pu.status : 'active',
+                },
+                biometric_data: {
+                  face_vector: (pu as any).biometricVector || (pu as any).face_vector || [],
+                  registered_face_url: pu.face_image_url || '',
+                  enrolled_at: pu.created_at || new Date().toISOString(),
+                },
+              }, pu.face_image_url);
+            }
+          }
+        }
 
         const mergedUsers = [...staffUsers, ...patientUsers];
         const currentUsers = get().users;
@@ -1185,7 +1212,8 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
               cur.status !== u.status ||
               cur.phone !== u.phone ||
               cur.diagnosis !== u.diagnosis ||
-              cur.chiefComplaint !== u.chiefComplaint
+              cur.chiefComplaint !== u.chiefComplaint ||
+              cur.face_image_url !== u.face_image_url
             );
           });
 
@@ -1195,6 +1223,32 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
           console.info(`✓ HospitalStore updated: loaded ${patientUsers.length} patients and ${staffUsers.length} staff from Supabase`);
         } else {
           set({ isSupabaseConnected: true });
+        }
+
+        // Treatment Plans Cloud Sync
+        if (remotePlans && remotePlans.length > 0) {
+          set({ treatmentPlans: remotePlans });
+          try {
+            localStorage.setItem('strongcare_hospital_treatment_plans', JSON.stringify(remotePlans));
+          } catch {}
+        } else {
+          // If Supabase system_settings doesn't have plans yet, sync our existing treatment plans to Supabase!
+          const currentPlans = get().treatmentPlans;
+          if (currentPlans && currentPlans.length > 0) {
+            supabaseService.saveTreatmentPlans(currentPlans).catch(() => {});
+          }
+        }
+
+        // Modpacks Cloud Sync
+        if (remoteModpacks && remoteModpacks.length > 0) {
+          set({ modpacks: remoteModpacks });
+          persistModpacks(remoteModpacks);
+        } else {
+          // If Supabase system_settings doesn't have modpacks yet, sync our existing modpacks to Supabase!
+          const currentModpacks = get().modpacks;
+          if (currentModpacks && currentModpacks.length > 0) {
+            supabaseService.saveModpacks(currentModpacks).catch(() => {});
+          }
         }
 
         if (therapists && therapists.length > 0) {
@@ -1576,6 +1630,10 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
         chief_complaint: updatedUser.chiefComplaint || updatedUser.diagnosis || '',
         responsible_therapist_id: updatedUser.assignedTherapistId || null,
         status: 'active',
+        face_image_url: updatedUser.face_image_url,
+        photo: updatedUser.face_image_url,
+        face_vector: (updatedUser as any).biometricVector || (updatedUser as any).face_vector,
+        patientBackground: updatedUser.patientBackground,
       }).then(() => {
         try {
           const payload = {
@@ -1626,9 +1684,18 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       .trim() || (isPending ? 'รอตรวจประเมินกายภาพบำบัด' : 'ตรวจประเมินกายภาพบำบัด');
 
     let photo = p.photo || p.avatar_url || p.face_image_url;
-    if (!photo && typeof p.medical_history === 'string' && p.medical_history.includes('FACE_PHOTO:')) {
-      const match = p.medical_history.match(/FACE_PHOTO:(data:image\/[^\s\n]+)/);
-      if (match) photo = match[1];
+    let vector = p.face_vector || p.embeddings;
+    if (typeof p.medical_history === 'string') {
+      if (!photo && p.medical_history.includes('FACE_PHOTO:')) {
+        const match = p.medical_history.match(/FACE_PHOTO:([^\s\n]+)/);
+        if (match) photo = match[1];
+      }
+      if (!vector && p.medical_history.includes('FACE_EMB:')) {
+        const match = p.medical_history.match(/FACE_EMB:(\[.*?\])/);
+        if (match) {
+          try { vector = JSON.parse(match[1]); } catch {}
+        }
+      }
     }
 
     const patientUser: UserAccount = {
@@ -1647,7 +1714,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       patientBackground: (p.medical_history || '')
         .replace(/\[PENDING_INFO\]/g, '')
         .replace(/FACE_EMB:\[.*?\]/gs, '')
-        .replace(/FACE_PHOTO:data:image\/[^\s\n]+/g, '')
+        .replace(/FACE_PHOTO:[^\s\n]+/g, '')
         .replace(/รอลงข้อมูลส่วนตัว/g, '')
         .trim(),
       treatmentOutcome: p.treatment_outcome || '',
@@ -1658,9 +1725,29 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       assignedTherapistName: p.profiles?.full_name || p.assigned_therapist_name || 'กภ. ธนากร วงศ์สวัสดิ์',
       assignedTherapistId: p.responsible_therapist_id || p.assigned_therapist_id || 1,
       face_image_url: photo,
+      biometricVector: vector,
+      face_vector: vector,
       created_at: p.created_at ? p.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
       last_active: isPending ? 'รอลงข้อมูลส่วนตัว' : 'พร้อมรับบริการ',
     };
+
+    if (photo || vector) {
+      patientFaceStorageService.savePatientRecord(patientCode, {
+        patient_profile: {
+          id: patientUser.id,
+          patient_id: patientCode,
+          full_name: patientUser.name,
+          age: patientUser.age,
+          gender: patientUser.gender,
+          status: (patientUser.status === 'suspended' || patientUser.status === 'pending_info') ? patientUser.status : 'active',
+        },
+        biometric_data: {
+          face_vector: vector || [],
+          registered_face_url: photo || '',
+          enrolled_at: patientUser.created_at || new Date().toISOString(),
+        },
+      }, photo);
+    }
 
     const currentUsers = get().users;
     const existsIndex = currentUsers.findIndex(
@@ -1707,6 +1794,11 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
           chief_complaint: (updatedUser.chiefComplaint || '').replace(/\[PENDING_INFO\]/g, '').trim(),
           therapist_notes: (updatedUser.therapistNotes || '').replace(/\[PENDING_INFO\]/g, '').trim(),
           status: updatedUser.status === 'suspended' ? 'suspended' : 'active',
+          responsible_therapist_id: updatedUser.assignedTherapistId,
+          face_image_url: updatedUser.face_image_url || data.face_image_url || (data as any).photo,
+          photo: updatedUser.face_image_url || data.face_image_url || (data as any).photo,
+          face_vector: (updatedUser as any).biometricVector || (updatedUser as any).face_vector || (data as any).biometricVector || (data as any).face_vector,
+          patientBackground: updatedUser.patientBackground || data.patientBackground,
         }).catch((e) => console.warn('Supabase updatePatient in updateUser error:', e));
 
         try {
@@ -1771,6 +1863,9 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     try {
       localStorage.setItem('strongcare_hospital_treatment_plans', JSON.stringify(remainingPlans));
     } catch {}
+    if (supabaseService.isConfigured()) {
+      supabaseService.saveTreatmentPlans(remainingPlans).catch(() => {});
+    }
 
     // Remove from mock patients.json persistent storage
     removePatientFromPatientsJson(id, user?.code);
@@ -2023,6 +2118,9 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     const updated = [newModpack, ...get().modpacks];
     set({ modpacks: updated });
     persistModpacks(updated);
+    if (supabaseService.isConfigured()) {
+      supabaseService.saveModpacks(updated).catch((e) => console.warn('Supabase saveModpacks error:', e));
+    }
     get().addActivityLog('สร้างชุดท่าฝึกกายภาพ (Modpack)', 'TREATMENT', `สร้างชุดท่าใหม่: ${newModpack.name} (${newModpack.exercises.length} ท่า)`);
     return newModpack;
   },
@@ -2033,6 +2131,9 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     );
     set({ modpacks: updated });
     persistModpacks(updated);
+    if (supabaseService.isConfigured()) {
+      supabaseService.saveModpacks(updated).catch((e) => console.warn('Supabase saveModpacks error:', e));
+    }
     const mp = get().modpacks.find((m) => m.id === id);
     get().addActivityLog('แก้ไขชุดท่าฝึกกายภาพ', 'TREATMENT', `อัปเดตชุดท่า: ${mp?.name || id}`);
   },
@@ -2042,6 +2143,9 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     const updated = get().modpacks.filter((m) => m.id !== id);
     set({ modpacks: updated });
     persistModpacks(updated);
+    if (supabaseService.isConfigured()) {
+      supabaseService.saveModpacks(updated).catch((e) => console.warn('Supabase saveModpacks error:', e));
+    }
     get().addActivityLog('ลบชุดท่าฝึกกายภาพ', 'TREATMENT', `ลบชุดท่า: ${mp?.name || id}`);
   },
 
@@ -2055,6 +2159,9 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
         try {
           localStorage.setItem('strongcare_hospital_treatment_plans', JSON.stringify(updated));
         } catch (e) {}
+        if (supabaseService.isConfigured()) {
+          supabaseService.saveTreatmentPlans(updated).catch((e) => console.warn('Supabase saveTreatmentPlans error:', e));
+        }
         return { treatmentPlans: updated };
       });
       get().addActivityLog('อัปเดตแผนการรักษา', 'TREATMENT', `อัปเดตแผนการรักษาของ ${planData.patientName}`);
@@ -2070,6 +2177,9 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
         try {
           localStorage.setItem('strongcare_hospital_treatment_plans', JSON.stringify(updated));
         } catch (e) {}
+        if (supabaseService.isConfigured()) {
+          supabaseService.saveTreatmentPlans(updated).catch((e) => console.warn('Supabase saveTreatmentPlans error:', e));
+        }
         return { treatmentPlans: updated };
       });
       get().addActivityLog('สร้างแผนการรักษาใหม่', 'TREATMENT', `สร้างแผนการรักษาให้ ${planData.patientName}`);
@@ -2082,6 +2192,9 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       try {
         localStorage.setItem('strongcare_hospital_treatment_plans', JSON.stringify(updated));
       } catch (e) {}
+      if (supabaseService.isConfigured()) {
+        supabaseService.saveTreatmentPlans(updated).catch((e) => console.warn('Supabase saveTreatmentPlans error:', e));
+      }
       return { treatmentPlans: updated };
     });
     get().addActivityLog('ลบแผนการรักษา', 'TREATMENT', `ลบแผนการรักษา ID: ${id}`);

@@ -14,6 +14,7 @@
 import { FaceRegistryService } from './faceRegistryService';
 import { resolveDefaultApiUrl } from '../config/apiConfig';
 import { cameraOrientationService } from './cameraOrientationService';
+import { supabaseService } from './supabaseService';
 
 export interface PatientProfileData {
   patient_id: string; // e.g. P-6022, P-0012
@@ -435,6 +436,16 @@ class PatientFaceStorageService {
       } catch (err) {
         console.warn('⚠️ LocalStorage quota warning when saving patient record:', err);
       }
+    }
+
+    // Synchronize directly to Supabase Cloud (Single Source of Truth across all devices & reloads)
+    if (supabaseService.isConfigured() && (resolvedPhoto || fullRecord.biometric_data?.face_vector)) {
+      const vec = fullRecord.biometric_data?.face_vector || [];
+      supabaseService.saveFaceEmbeddings(
+        code,
+        vec,
+        resolvedPhoto || undefined
+      ).catch((e: any) => console.warn('[SUPABASE] saveFaceEmbeddings background error:', e));
     }
 
     // Synchronize to Central Backend API (Multi-Device Single Source of Truth)

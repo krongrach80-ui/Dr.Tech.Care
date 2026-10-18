@@ -1,3 +1,5 @@
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+
 export interface MiniGameSettings {
   questionCount: number; // e.g. 5, 10, 15, 20
   soundEnabled: boolean;
@@ -36,7 +38,37 @@ export function saveMiniGameSettings(settings: MiniGameSettings): void {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
     window.dispatchEvent(new CustomEvent('minigame:settings_updated', { detail: settings }));
+
+    if (isSupabaseConfigured()) {
+      void supabase.from('system_settings').upsert({
+        key: 'minigame_settings',
+        value: settings,
+        updated_at: new Date().toISOString(),
+      });
+    }
   } catch (err) {
     console.warn('Failed to save mini game settings:', err);
   }
+}
+
+export async function syncMiniGameSettingsFromCloud(): Promise<MiniGameSettings> {
+  if (!isSupabaseConfigured()) return getSavedMiniGameSettings();
+  try {
+    const { data } = await supabase.from('system_settings').select('value').eq('key', 'minigame_settings').maybeSingle();
+    if (data?.value) {
+      const parsed = data.value;
+      const valid: MiniGameSettings = {
+        questionCount: typeof parsed.questionCount === 'number' && parsed.questionCount > 0 ? parsed.questionCount : 10,
+        soundEnabled: typeof parsed.soundEnabled === 'boolean' ? parsed.soundEnabled : true,
+        inputMode: parsed.inputMode === 'touch' ? 'touch' : 'camera',
+        holdDurationSec: typeof parsed.holdDurationSec === 'number' ? parsed.holdDurationSec : 0.7,
+      };
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(valid));
+        window.dispatchEvent(new CustomEvent('minigame:settings_updated', { detail: valid }));
+      }
+      return valid;
+    }
+  } catch {}
+  return getSavedMiniGameSettings();
 }

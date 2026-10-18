@@ -17,6 +17,7 @@ import confetti from 'canvas-confetti';
 import { livenessEngine } from '../../services/livenessEngine';
 import { patientFaceStorageService } from '../../services/patientFaceStorageService';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
+import { supabaseService } from '../../services/supabaseService';
 import { useHospitalStore } from '../../store/hospitalStore';
 import { faceRegistryService } from '../../services/faceRegistryService';
 import { UserAccount } from '../../types/hospital';
@@ -374,7 +375,14 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
         medical_history: newMedHistory,
       });
 
-      // 5. Broadcast to Kiosk Terminal via Supabase Realtime
+      // 5. Persist Face Photo and Biometrics directly to Supabase Cloud
+      if (supabaseService.isConfigured()) {
+        await supabaseService.saveFaceEmbeddings(hn, capturedVector, distinctPhotoUrl || photo).catch((err) => {
+          console.warn('[SUPABASE] saveFaceEmbeddings in PatientFaceEnrollModal error:', err);
+        });
+      }
+
+      // 6. Broadcast to Kiosk Terminal via Supabase Realtime
       try {
         await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
           type: 'broadcast',

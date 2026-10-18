@@ -16,6 +16,7 @@ import { patientFaceStorageService } from '../../services/patientFaceStorageServ
 import { faceRegistryService } from '../../services/faceRegistryService';
 import { useHospitalStore } from '../../store/hospitalStore';
 import { supabase } from '../../lib/supabase';
+import { supabaseService } from '../../services/supabaseService';
 import { livenessEngine } from '../../services/livenessEngine';
 import { faceService, FaceDetectionResult } from '../../services/faceService';
 import { audioFeedback } from '../../services/audioService';
@@ -286,15 +287,7 @@ export const BiometricResetModal: React.FC<BiometricResetModalProps> = ({
         });
 
         // Sync to Supabase
-        await supabase
-          .from('patients')
-          .update({
-            face_vector: JSON.stringify(normalizedAvg),
-            face_image_url: photoUrl,
-            face_registered: true,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('patient_code', user.code);
+        await supabaseService.saveFaceEmbeddings(user.code, normalizedAvg, photoUrl);
       }
 
       audioFeedback.playRepSuccess();
@@ -330,15 +323,7 @@ export const BiometricResetModal: React.FC<BiometricResetModalProps> = ({
         patientFaceStorageService.deletePatientDirectoryAndData(user.code);
         faceRegistryService.deleteProfile(user.code);
 
-        await supabase
-          .from('patients')
-          .update({
-            face_vector: null,
-            face_image_url: null,
-            face_registered: false,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('patient_code', user.code);
+        await supabaseService.saveFaceEmbeddings(user.code, [], '');
       }
 
       onSuccessToast(`ลบข้อมูลเวกเตอร์ชีวมิติของ ${user.name} เรียบร้อยแล้ว (สถานะ: Pending)`);
