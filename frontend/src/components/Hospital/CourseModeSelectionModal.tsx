@@ -156,9 +156,6 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
 
   // Step 2 Form States
   const [startDateStr, setStartDateStr] = useState<string>(() => dateStr || '2026-10-16');
-  const [targetSessionCount, setTargetSessionCount] = useState<number>(10);
-  const [isCustomCount, setIsCustomCount] = useState<boolean>(false);
-  const [customCountInput, setCustomCountInput] = useState<string>('10');
   const [calendarView, setCalendarView] = useState<'month' | 'week'>('month');
 
   // Safe date parser
@@ -272,30 +269,23 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
     return `${String(day).padStart(2, '0')}/${String(month + 1).padStart(2, '0')}/${year}`;
   };
 
-  const generateRecurringDates = useCallback((startDateIso: string, count: number): string[] => {
-    const dates: string[] = [];
-    const { year, month, day } = parseDateSafe(startDateIso);
-    const curr = new Date(year, month, day);
-
-    dates.push(formatIso(curr.getFullYear(), curr.getMonth(), curr.getDate()));
-
-    let nextDate = new Date(curr);
-    let loopGuard = 0;
-    while (dates.length < count && loopGuard < 120) {
-      loopGuard++;
-      nextDate.setDate(nextDate.getDate() + 1);
-      const dayOfWeek = nextDate.getDay();
-      if (dayOfWeek === 1 || dayOfWeek === 5) {
-        dates.push(formatIso(nextDate.getFullYear(), nextDate.getMonth(), nextDate.getDate()));
-      }
+  useEffect(() => {
+    if (startDateStr) {
+      setSelectedDates((prev) => {
+        if (prev.length === 0 || !prev.includes(startDateStr)) {
+          return [startDateStr, ...prev.filter((d) => d > startDateStr)].sort();
+        }
+        return prev;
+      });
     }
-    return dates;
-  }, [parseDateSafe]);
+  }, [startDateStr]);
 
   useEffect(() => {
-    const generated = generateRecurringDates(startDateStr, targetSessionCount);
-    setSelectedDates(generated);
-  }, [startDateStr, targetSessionCount, generateRecurringDates]);
+    if (isOpen && dateStr) {
+      setStartDateStr(dateStr);
+      setSelectedDates([dateStr]);
+    }
+  }, [isOpen, dateStr]);
 
   // ESC key handler for modals
   useEffect(() => {
@@ -384,18 +374,7 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
   const firstDayOfMonth = new Date(safeViewDate.getFullYear(), safeViewDate.getMonth(), 1).getDay();
   const startColOffset = isNaN(firstDayOfMonth) ? 3 : (firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1);
 
-  const handleSelectPreset = (count: number) => {
-    setIsCustomCount(false);
-    setTargetSessionCount(count);
-  };
 
-  const handleCustomCountSubmit = () => {
-    const num = parseInt(customCountInput, 10);
-    if (!isNaN(num) && num >= 1 && num <= 40) {
-      setTargetSessionCount(num);
-      setIsCustomCount(false);
-    }
-  };
 
   // Find currently selected pack object
   const currentPack = systemModpacks.find((p) => String(p.id) === String(selectedPackId)) || systemModpacks[0];
@@ -858,83 +837,10 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
                   </div>
                 </div>
 
-                {/* 2. จำนวนครั้งในคอร์ส */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-xs font-bold text-slate-700">
-                      2. จำนวนครั้งในคอร์ส
-                    </label>
-                    <span className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200">
-                      รวม: {targetSessionCount} ครั้ง
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-4 gap-1.5">
-                    {[5, 8, 10, 12].map((cnt) => {
-                      const isSelected = !isCustomCount && targetSessionCount === cnt;
-                      return (
-                        <button
-                          key={cnt}
-                          type="button"
-                          onClick={() => handleSelectPreset(cnt)}
-                          className={`py-2 px-1 rounded-xl text-xs font-bold transition cursor-pointer border ${
-                            isSelected
-                              ? 'bg-gradient-to-r from-[#00C49F] to-[#0096C7] text-white border-transparent shadow-sm shadow-teal-500/25 font-black'
-                              : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
-                          }`}
-                        >
-                          {cnt} ครั้ง
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div className="mt-2">
-                    {isCustomCount ? (
-                      <div className="flex items-center gap-1.5 animate-fadeIn">
-                        <input
-                          type="number"
-                          min="1"
-                          max="40"
-                          value={customCountInput}
-                          onChange={(e) => setCustomCountInput(e.target.value)}
-                          placeholder="ระบุจำนวนครั้ง"
-                          className="flex-1 px-3 py-1.5 rounded-xl border border-[#00C49F] text-xs font-bold text-[#0B2B2B] focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={handleCustomCountSubmit}
-                          className="px-3 py-1.5 rounded-xl bg-[#00C49F] text-white text-xs font-bold hover:opacity-90 cursor-pointer"
-                        >
-                          ตกลง
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setIsCustomCount(false)}
-                          className="px-2.5 py-1.5 rounded-xl bg-slate-100 text-slate-600 text-xs hover:bg-slate-200 cursor-pointer"
-                        >
-                          ยกเลิก
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsCustomCount(true);
-                          setCustomCountInput(String(targetSessionCount));
-                        }}
-                        className="w-full py-2 px-3 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold transition cursor-pointer text-center"
-                      >
-                        กำหนดเอง
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* 3. โปรแกรมในคอร์สที่จะฝึกในแต่ละวัน */}
+                {/* 2. โปรแกรมในคอร์สที่จะฝึกในแต่ละวัน */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    3. โปรแกรมในคอร์สที่จะฝึกในแต่ละวัน
+                    2. โปรแกรมในคอร์สที่จะฝึกในแต่ละวัน
                   </label>
 
                   <div className="space-y-2">
@@ -1005,7 +911,7 @@ export const CourseModeSelectionModal: React.FC<CourseModeSelectionModalProps> =
                   </div>
 
                   <span className="text-xs font-extrabold px-3 py-1 rounded-full bg-teal-50 text-teal-800 border border-teal-200 shadow-2xs">
-                    เลือกแล้ว {selectedDates.length} / {targetSessionCount} ครั้ง
+                    เลือกแล้ว {selectedDates.length} ครั้ง
                   </span>
                 </div>
 
