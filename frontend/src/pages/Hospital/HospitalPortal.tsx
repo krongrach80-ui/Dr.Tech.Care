@@ -2857,7 +2857,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     </p>
                   </div>
 
-                  {/* Combined Patients Overview Card */}
+                  {/* Combined Patients Overview Card (Pure Department Overview, No Individual Patient Selector) */}
                   <div className="flex items-center gap-3 bg-white px-4 py-2.5 rounded-2xl border border-slate-200 shadow-2xs">
                     <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#0097A7] to-emerald-600 text-white flex items-center justify-center flex-shrink-0 shadow-sm">
                       <Users className="w-5 h-5" />
@@ -2873,12 +2873,6 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                         </span>
                       </div>
                     </div>
-                    <button
-                      onClick={() => setIsPatientPickerModalOpen(true)}
-                      className="ml-2 px-3 py-1.5 rounded-full border border-slate-200 hover:border-teal-500 text-xs font-bold text-slate-600 hover:text-teal-700 hover:bg-teal-50 transition cursor-pointer whitespace-nowrap"
-                    >
-                      เลือกคนไข้ตัดคอร์ส
-                    </button>
                   </div>
                 </div>
               )}
