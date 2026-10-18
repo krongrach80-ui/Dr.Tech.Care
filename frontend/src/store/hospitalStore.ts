@@ -611,31 +611,6 @@ const INITIAL_TREATMENT_PLANS: TreatmentPlan[] = [
     endDate: '2026-11-05',
     roomStation: 'ตู้ Kiosk 1',
   },
-  {
-    id: 4,
-    patientId: 'p_p3059',
-    patientName: 'PJ',
-    patientCode: 'P-3059',
-    therapistId: 1,
-    therapistName: 'กภ. ธนากร วงศ์สวัสดิ์',
-    diagnosis: 'ออฟฟิศซินโดรมและกล้ามเนื้อคอบ่าตึง (Cervicogenic Muscle Strain)',
-    targetJoint: 'กระดูกคอและสะบัก (Cervical Spine & Trapezius)',
-    assignedExercises: [
-      { exerciseSlug: 'stretch_neck_lateral', exerciseName: 'ยืดคอด้านข้าง', sets: 3, reps: 5, holdSeconds: 15, difficulty: 'beginner' },
-      { exerciseSlug: 'stretch_neck_flexion', exerciseName: 'ก้มคอยืดท้ายทอย', sets: 3, reps: 5, holdSeconds: 15, difficulty: 'beginner' },
-      { exerciseSlug: 'stretch_shoulder_cross', exerciseName: 'ยืดไหล่ข้ามอก', sets: 2, reps: 5, holdSeconds: 15, difficulty: 'beginner' },
-    ],
-    clinicalNotes: 'ผ่อนคลายกล้ามเนื้อคอ ไม่เกร็งยกสะบัก พักสายตาและปรับความสูงหน้าจอคอมพิวเตอร์',
-    createdAt: '2026-10-06',
-    status: 'active',
-    scheduleDays: ['พุธ', 'ศุกร์'],
-    timeSlot: '15:00 - 16:00',
-    startTime: '15:00',
-    endTime: '16:00',
-    startDate: '2026-10-01',
-    endDate: '2026-10-31',
-    roomStation: 'ตู้ Kiosk 3',
-  },
 ];
 
 const getStoredTreatmentPlans = (): TreatmentPlan[] => {
@@ -644,7 +619,14 @@ const getStoredTreatmentPlans = (): TreatmentPlan[] => {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed.map((p: TreatmentPlan, idx: number) => {
+        const cleaned = parsed.filter(
+          (p: TreatmentPlan) => p.patientName?.toUpperCase() !== 'PJ' && p.patientCode !== 'P-3059'
+        );
+        // Clean localStorage if it contained fake PJ plan
+        if (cleaned.length !== parsed.length) {
+          localStorage.setItem('strongcare_hospital_treatment_plans', JSON.stringify(cleaned));
+        }
+        return cleaned.map((p: TreatmentPlan, idx: number) => {
           const fallback = INITIAL_TREATMENT_PLANS[idx % INITIAL_TREATMENT_PLANS.length];
           return {
             ...fallback,

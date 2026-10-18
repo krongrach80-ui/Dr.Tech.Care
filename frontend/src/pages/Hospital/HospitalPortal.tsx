@@ -920,28 +920,116 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [isQuickInfoModalOpen, setIsQuickInfoModalOpen] = useState<boolean>(false);
   const [quickInfoPatient, setQuickInfoPatient] = useState<any>(null);
   const [quickInfoPlan, setQuickInfoPlan] = useState<TreatmentPlan | null>(null);
+  const [quickInfoSelectedDay, setQuickInfoSelectedDay] = useState<number | null>(null);
   const [isCourseModeModalOpen, setIsCourseModeModalOpen] = useState<boolean>(false);
   const [selectedDateForCourse, setSelectedDateForCourse] = useState<string>('2026-10-16');
 
-  // Dynamic Calendar Appointments (Initial appointments matching Image 2 for October 2569)
-  const [calendarAppointments, setCalendarAppointments] = useState<Record<number, Array<{ time: string; name: string; type: 'green' | 'cyan' | 'purple' | 'dual' }>>>({
-    7: [
-      { time: '09:30', name: 'สมชาย', type: 'green' },
-      { time: '15:00', name: 'PJ', type: 'cyan' },
-    ],
-    14: [
-      { time: '09:30', name: 'สมชาย', type: 'green' },
-      { time: '15:00', name: 'PJ', type: 'cyan' },
-    ],
-    21: [
-      { time: '09:30', name: 'สมชาย', type: 'green' },
-      { time: '15:00', name: 'PJ', type: 'cyan' },
-    ],
-    28: [
-      { time: '09:30', name: 'สมชาย', type: 'green' },
-      { time: '15:00', name: 'PJ', type: 'cyan' },
-    ],
+  // Dynamic Calendar Appointments (Exclusively for real active patients, removing any fake/therapist entries like PJ)
+  const [calendarAppointments, setCalendarAppointments] = useState<Record<number, Array<{ time: string; name: string; type: 'green' | 'cyan' | 'purple' | 'dual' }>>>(() => {
+    try {
+      const raw = localStorage.getItem('strongcare_calendar_appointments');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          const cleaned: Record<number, any[]> = {};
+          Object.keys(parsed).forEach((k) => {
+            const num = Number(k);
+            cleaned[num] = (parsed[k] || []).filter((apt: any) => {
+              const n = (apt.name || '').toLowerCase().trim();
+              return n !== 'pj' && !n.includes('pj');
+            });
+            if (cleaned[num].length === 0) {
+              delete cleaned[num];
+            }
+          });
+          localStorage.setItem('strongcare_calendar_appointments', JSON.stringify(cleaned));
+          return cleaned;
+        }
+      }
+    } catch {}
+    const defaultData = {
+      7: [{ time: '09:30', name: 'สมชาย', type: 'green' as const }],
+      14: [{ time: '09:30', name: 'สมชาย', type: 'green' as const }],
+      21: [{ time: '09:30', name: 'สมชาย', type: 'green' as const }],
+      28: [{ time: '09:30', name: 'สมชาย', type: 'green' as const }],
+    };
+    try {
+      localStorage.setItem('strongcare_calendar_appointments', JSON.stringify(defaultData));
+    } catch {}
+    return defaultData;
   });
+
+  // Sync calendar appointments to localStorage whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem('strongcare_calendar_appointments', JSON.stringify(calendarAppointments));
+    } catch {}
+  }, [calendarAppointments]);
+
+  // Handler: Delete single appointment on a specific date
+  const handleDeleteAppointment = (day: number, aptIndex: number, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const targetApt = calendarAppointments[day]?.[aptIndex];
+    if (!targetApt) return;
+
+    if (!window.confirm(`ยืนยันการลบนัดหมาย "${targetApt.time} ${targetApt.name}" ในวันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]} ใช่หรือไม่?`)) {
+      return;
+    }
+
+    setCalendarAppointments((prev) => {
+      const next = { ...prev };
+      if (next[day]) {
+        const updatedList = next[day].filter((_, idx) => idx !== aptIndex);
+        if (updatedList.length === 0) {
+          delete next[day];
+        } else {
+          next[day] = updatedList;
+        }
+      }
+      try {
+        localStorage.setItem('strongcare_calendar_appointments', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    addActivityLog(
+      'CANCEL_APPOINTMENT',
+      'TREATMENT',
+      `ลบนัดหมายวันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]} ของคนไข้ ${targetApt.name} (${targetApt.time})`
+    );
+    showToast(`🗑️ ลบนัดหมายของ ${targetApt.name} วันที่ ${day} เรียบร้อยแล้ว`);
+  };
+
+  // Handler: Delete all appointments on a specific day (ลบวันนัด)
+  const handleDeleteDayAppointments = (day: number, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const dayApts = calendarAppointments[day] || [];
+    if (dayApts.length === 0) {
+      showToast(`วันที่ ${day} ยังไม่มีรายการนัดหมาย`);
+      return;
+    }
+
+    const names = dayApts.map((a) => a.name).join(', ');
+    if (!window.confirm(`ยืนยันการลบวันนัดหมายในวันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]} (${names}) ใช่หรือไม่?`)) {
+      return;
+    }
+
+    setCalendarAppointments((prev) => {
+      const next = { ...prev };
+      delete next[day];
+      try {
+        localStorage.setItem('strongcare_calendar_appointments', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    addActivityLog(
+      'CANCEL_APPOINTMENT_DATE',
+      'TREATMENT',
+      `ลบวันนัดหมายวันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]} (${names}) ทั้งหมด`
+    );
+    showToast(`🗑️ ลบวันนัดหมายวันที่ ${day} เรียบร้อยแล้ว`);
+  };
 
   // Default selected calendar patient to Somchai Jaidee if available
   useEffect(() => {
@@ -2975,6 +3063,19 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                             </>
                           )}
                         </div>
+
+                        {/* Selected Day Quick Action: Delete Date button */}
+                        {calendarAppointments[selectedCalendarDay]?.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteDayAppointments(selectedCalendarDay, e)}
+                            className="px-3.5 py-1 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-black border border-rose-300 transition flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95"
+                            title={`ลบวันนัดหมายวันที่ ${selectedCalendarDay} ${THAI_MONTH_NAMES[scheduleSelectedMonth]}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                            <span>ลบวันนัด (วันที่ {selectedCalendarDay})</span>
+                          </button>
+                        )}
                       </div>
 
                       {/* Status Legends matching Image 2 */}
@@ -3037,7 +3138,21 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => {
                         const isToday = day === 14;
                         const isSelected = day === selectedCalendarDay;
-                        const dayAppointments = calendarAppointments[day] || [];
+                        // Strictly filter out non-patients (e.g. PJ/staff) and only show real patients
+                        const rawApts = calendarAppointments[day] || [];
+                        const dayAppointments = rawApts.filter((apt) => {
+                          const n = (apt.name || '').toLowerCase().trim();
+                          if (n === 'pj' || n.includes('pj')) return false;
+                          const cleanName = n.replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').trim();
+                          return users.some(
+                            (u) =>
+                              u.role === 'patient' &&
+                              ((u.name || '').toLowerCase().includes(cleanName) ||
+                                cleanName.includes((u.name || '').replace(/^(นาย|นาง|นางสาว)\s*/, '').trim().toLowerCase()) ||
+                                u.username.toLowerCase() === cleanName)
+                          ) || cleanName.includes('สมชาย');
+                        });
+
                         const cleanSelectedPatientName = (selectedCalendarPatient?.name || 'สมชาย')
                           .replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '')
                           .trim()
@@ -3090,15 +3205,24 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                   key={aIdx}
                                   onClick={(e) => {
                                     e.stopPropagation();
+                                    setQuickInfoSelectedDay(day);
+                                    const cleanApt = apt.name.replace(/^(นาย|นาง|นางสาว)\s*/, '').trim().toLowerCase();
                                     const targetPat =
-                                      users.find((u) => u.name?.includes(apt.name)) ||
-                                      selectedCalendarPatient;
+                                      users.find(
+                                        (u) =>
+                                          u.role === 'patient' &&
+                                          ((u.name || '').toLowerCase().includes(cleanApt) ||
+                                            cleanApt.includes((u.name || '').replace(/^(นาย|นาง|นางสาว)\s*/, '').trim().toLowerCase()) ||
+                                            u.username.toLowerCase() === cleanApt)
+                                      ) ||
+                                      selectedCalendarPatient ||
+                                      users.find((u) => u.role === 'patient');
                                     if (targetPat) {
                                       setQuickInfoPatient(targetPat);
                                       setIsQuickInfoModalOpen(true);
                                     }
                                   }}
-                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold truncate transition cursor-pointer hover:opacity-90 flex items-center justify-between gap-1 ${
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold truncate transition cursor-pointer hover:opacity-90 flex items-center justify-between gap-1 group/pill ${
                                     apt.type === 'dual'
                                       ? 'bg-gradient-to-r from-emerald-100 via-teal-50 to-purple-100 text-[#064E3B] border border-emerald-300 shadow-2xs font-extrabold'
                                       : apt.type === 'green'
@@ -3109,24 +3233,45 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                   }`}
                                   title="คลิกเพื่อดูข้อมูลคนไข้ด่วน"
                                 >
-                                  {apt.time} {apt.name}
+                                  <span className="truncate">{apt.time} {apt.name}</span>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleDeleteAppointment(day, aIdx, e)}
+                                    className="p-0.5 rounded-full hover:bg-rose-200 text-slate-400 hover:text-rose-600 transition flex items-center justify-center flex-shrink-0 cursor-pointer ml-1"
+                                    title={`ลบนัดหมาย ${apt.time} ${apt.name}`}
+                                  >
+                                    <X className="w-2.5 h-2.5 stroke-[3]" />
+                                  </button>
                                 </div>
                               ))}
 
                               {/* Selected Day Action Button matching Image 2 (+ ตัดคอร์สที่นี่) */}
                               {isSelected && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedDateForCourse(`2026-10-${String(day).padStart(2, '0')}`);
-                                    setIsCourseModeModalOpen(true);
-                                  }}
-                                  className="w-full mt-1 py-1.5 px-2 bg-[#009FD9] hover:bg-[#0089BD] text-white rounded-full text-[11px] font-black shadow-xs hover:shadow transition flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
-                                  title="คลิกเพื่อเลือกรูปแบบการฝึกและตัดคอร์ส"
-                                >
-                                  <span>+ ตัดคอร์สที่นี่</span>
-                                </button>
+                                <div className="space-y-1 mt-1">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedDateForCourse(`2026-10-${String(day).padStart(2, '0')}`);
+                                      setIsCourseModeModalOpen(true);
+                                    }}
+                                    className="w-full py-1.5 px-2 bg-[#009FD9] hover:bg-[#0089BD] text-white rounded-full text-[11px] font-black shadow-xs hover:shadow transition flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                                    title="คลิกเพื่อเลือกรูปแบบการฝึกและตัดคอร์ส"
+                                  >
+                                    <span>+ ตัดคอร์สที่นี่</span>
+                                  </button>
+                                  {dayAppointments.length > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleDeleteDayAppointments(day, e)}
+                                      className="w-full py-1 px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-full text-[10px] font-black shadow-2xs hover:shadow transition flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                                      title={`ลบวันนัดหมายวันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]}`}
+                                    >
+                                      <Trash2 className="w-3 h-3 text-rose-600" />
+                                      <span>ลบวันนัด</span>
+                                    </button>
+                                  )}
+                                </div>
                               )}
                             </div>
 
@@ -5157,6 +5302,12 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         onClose={() => setIsQuickInfoModalOpen(false)}
         patient={quickInfoPatient || selectedCalendarPatient || users.find((u) => u.role === 'patient')}
         treatmentPlan={quickInfoPlan}
+        dayNumber={quickInfoSelectedDay}
+        onDeleteAppointmentDate={
+          quickInfoSelectedDay
+            ? () => handleDeleteDayAppointments(quickInfoSelectedDay)
+            : undefined
+        }
         onNavigateToCalendar={(pat) => {
           setIsQuickInfoModalOpen(false);
           setSelectedCalendarPatient(pat);

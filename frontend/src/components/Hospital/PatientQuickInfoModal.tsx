@@ -1,4 +1,3 @@
-import React from 'react';
 import {
   X,
   User,
@@ -6,6 +5,7 @@ import {
   Activity,
   Clock,
   ArrowRight,
+  Trash2,
 } from 'lucide-react';
 import { TreatmentPlan, UserAccount } from '../../types/hospital';
 
@@ -14,6 +14,8 @@ interface PatientQuickInfoModalProps {
   onClose: () => void;
   patient: UserAccount | any | null;
   treatmentPlan?: TreatmentPlan | null;
+  dayNumber?: number | null;
+  onDeleteAppointmentDate?: () => void;
   onNavigateToCalendar: (patient: UserAccount | any) => void;
 }
 
@@ -22,6 +24,8 @@ export const PatientQuickInfoModal: React.FC<PatientQuickInfoModalProps> = ({
   onClose,
   patient,
   treatmentPlan,
+  dayNumber,
+  onDeleteAppointmentDate,
   onNavigateToCalendar,
 }) => {
   if (!isOpen || !patient) return null;
@@ -147,14 +151,29 @@ export const PatientQuickInfoModal: React.FC<PatientQuickInfoModalProps> = ({
         </div>
 
         {/* Footer Actions matching Image 1 */}
-        <div className="px-6 pb-6 pt-1 flex items-center justify-center gap-3">
+        <div className="px-6 pb-6 pt-1 flex flex-wrap items-center justify-center gap-2.5">
           <button
             type="button"
             onClick={onClose}
-            className="px-6 py-2.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-xs transition cursor-pointer active:scale-95"
+            className="px-5 py-2.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-xs transition cursor-pointer active:scale-95"
           >
             ปิด
           </button>
+
+          {onDeleteAppointmentDate && (
+            <button
+              type="button"
+              onClick={() => {
+                onDeleteAppointmentDate();
+                onClose();
+              }}
+              className="px-5 py-2.5 rounded-full border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700 font-black text-xs flex items-center gap-1.5 transition cursor-pointer active:scale-95 shadow-2xs"
+              title="ลบวันนัดหมายนี้ออกจากปฏิทิน"
+            >
+              <Trash2 className="w-4 h-4 text-rose-600" />
+              <span>ลบวันนัดนี้ {dayNumber ? `(วันที่ ${dayNumber})` : ''}</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -162,7 +181,7 @@ export const PatientQuickInfoModal: React.FC<PatientQuickInfoModalProps> = ({
               onClose();
               onNavigateToCalendar(patient);
             }}
-            className="px-6 py-2.5 rounded-full bg-gradient-to-r from-[#00B4D8] to-[#0096C7] hover:opacity-95 text-white font-black text-xs shadow-md shadow-cyan-500/25 flex items-center gap-2 transition cursor-pointer active:scale-95"
+            className="px-5 py-2.5 rounded-full bg-gradient-to-r from-[#00B4D8] to-[#0096C7] hover:opacity-95 text-white font-black text-xs shadow-md shadow-cyan-500/25 flex items-center gap-2 transition cursor-pointer active:scale-95"
           >
             <span>ไปหน้าปฏิทิน เพื่อตัดคอร์สใหม่</span>
             <ArrowRight className="w-4 h-4" />
