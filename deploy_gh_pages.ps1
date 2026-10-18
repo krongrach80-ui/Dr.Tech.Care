@@ -8,7 +8,7 @@ Remove-Item -Force $gitIndex
 Remove-Item Env:\GIT_INDEX_FILE
 
 $parent = (git rev-parse origin/gh-pages).Trim()
-$commit = (git commit-tree $tree -p $parent -m "refactor(course-modal): remove course session count presets and rely on direct calendar date selection").Trim()
+$commit = (git commit-tree $tree -p $parent -m "fix(minigame): render question modal via createPortal to fix display issue on edit and create").Trim()
 git update-ref refs/heads/gh-pages $commit
 Write-Host "gh-pages branch successfully updated to commit: $commit"
 git push origin gh-pages
