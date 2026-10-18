@@ -72,7 +72,20 @@ export const App: React.FC = () => {
   // Navigation Flow State initialized from Hash URL
   const initialRoute = parseRouteFromUrl();
   const [currentScreen, setCurrentScreen] = useState<number>(initialRoute.screen);
-  const [currentUserName, setCurrentUserName] = useState<string>('คุณสมชาย ใจดี');
+  const [currentUserName, setCurrentUserName] = useState<string>(() => {
+    const fromStore = usePatientStore.getState().selectedPatient;
+    if (fromStore?.name) return fromStore.name;
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('drtechcare_active_patient');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.name) return parsed.name;
+        }
+      } catch {}
+    }
+    return '';
+  });
   const [activeStretchQueue, setActiveStretchQueue] = useState<StretchExerciseItem[]>([]);
   const [activeCustomHoldTimes, setActiveCustomHoldTimes] = useState<Record<string, number>>({});
 
@@ -118,10 +131,29 @@ export const App: React.FC = () => {
   const { finishSession } = useSessionStore();
   const { therapists, treatmentPlans, users } = useHospitalStore();
 
+  useEffect(() => {
+    if (selectedPatient?.name && selectedPatient.name !== currentUserName) {
+      setCurrentUserName(selectedPatient.name);
+    }
+  }, [selectedPatient, currentUserName]);
+
   const attendingTherapist = React.useMemo(() => {
-    if (!selectedPatient) return therapists[0] || null;
+    const curPatient = selectedPatient || (() => {
+      if (typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('drtechcare_active_patient');
+          if (raw) return JSON.parse(raw);
+        } catch {}
+      }
+      return null;
+    })();
+
+    if (!curPatient) return therapists[0] || null;
     const userEntry = users.find(
-      (u) => u.name === selectedPatient.name || String(u.id) === String(selectedPatient.id)
+      (u) =>
+        (curPatient.name && u.name === curPatient.name) ||
+        (curPatient.patient_code && u.code && u.code.toLowerCase() === curPatient.patient_code.toLowerCase()) ||
+        String(u.id) === String(curPatient.id)
     );
     if (userEntry?.assignedTherapistId) {
       const matched = therapists.find((t) => t.id === userEntry.assignedTherapistId);
@@ -131,10 +163,23 @@ export const App: React.FC = () => {
   }, [selectedPatient, users, therapists]);
 
   const activePlan = React.useMemo(() => {
-    if (!selectedPatient) return treatmentPlans[0] || null;
+    const curPatient = selectedPatient || (() => {
+      if (typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('drtechcare_active_patient');
+          if (raw) return JSON.parse(raw);
+        } catch {}
+      }
+      return null;
+    })();
+
+    if (!curPatient) return treatmentPlans[0] || null;
     return (
       treatmentPlans.find(
-        (p) => p.patientName === selectedPatient.name || String(p.patientId) === String(selectedPatient.id)
+        (p) =>
+          (curPatient.name && p.patientName && (p.patientName.includes(curPatient.name) || curPatient.name.includes(p.patientName))) ||
+          (curPatient.patient_code && p.patientCode && p.patientCode.toLowerCase() === curPatient.patient_code.toLowerCase()) ||
+          String(p.patientId) === String(curPatient.id)
       ) || treatmentPlans[0] || null
     );
   }, [selectedPatient, treatmentPlans]);
@@ -359,6 +404,11 @@ export const App: React.FC = () => {
   const handleLogout = () => {
     selectPatient(null as any);
     setCurrentUserName('');
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem('drtechcare_active_patient');
+      } catch {}
+    }
     handleNavigate(1);
     showToast('ออกจากระบบเรียบร้อยแล้ว');
   };
@@ -569,14 +619,25 @@ export const App: React.FC = () => {
           <PatientHomeScreen
             patient={
               selectedPatient ||
-              ({
-                id: 1,
-                patient_code: 'P-0012',
-                name: currentUserName || 'คุณสมชาย ใจดี',
-                age: 68,
-                gender: 'male',
-                chief_complaint: 'ฟื้นฟูกล้ามเนื้อและข้อไหล่ติด',
-              } as Patient)
+              (() => {
+                if (typeof window !== 'undefined') {
+                  try {
+                    const raw = localStorage.getItem('drtechcare_active_patient');
+                    if (raw) {
+                      const parsed = JSON.parse(raw);
+                      if (parsed && (parsed.name || parsed.patient_code)) return parsed;
+                    }
+                  } catch {}
+                }
+                return {
+                  id: 1,
+                  patient_code: 'P-0012',
+                  name: currentUserName || 'คุณสมชาย ใจดี',
+                  age: 68,
+                  gender: 'male',
+                  chief_complaint: 'ฟื้นฟูกล้ามเนื้อและข้อไหล่ติด',
+                } as Patient;
+              })()
             }
             attendingTherapist={attendingTherapist}
             activePlan={activePlan}

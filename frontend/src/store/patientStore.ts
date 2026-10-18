@@ -4,6 +4,24 @@ import { api } from '../services/api';
 import { supabaseService } from '../services/supabaseService';
 import { faceRegistryService } from '../services/faceRegistryService';
 
+const STORAGE_KEY_ACTIVE_PATIENT = 'drtechcare_active_patient';
+
+const getStoredActivePatient = (): Patient | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_ACTIVE_PATIENT);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && (parsed.name || parsed.patient_code || parsed.id)) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to load active patient from localStorage:', e);
+  }
+  return null;
+};
+
 interface PatientState {
   patients: Patient[];
   selectedPatient: Patient | null;
@@ -20,7 +38,7 @@ interface PatientState {
 
 export const usePatientStore = create<PatientState>((set, get) => ({
   patients: [],
-  selectedPatient: null,
+  selectedPatient: getStoredActivePatient(),
   isLoading: false,
   isFaceAuthOpen: false,
   faceAuthMode: 'login',
@@ -53,10 +71,25 @@ export const usePatientStore = create<PatientState>((set, get) => ({
             created_at: p.created_at,
           }));
 
-          const currentSelected = get().selectedPatient;
-          const updatedSelected = currentSelected
-            ? mapped.find((p) => p.id === currentSelected.id) || currentSelected
-            : null;
+          const currentSelected = get().selectedPatient || getStoredActivePatient();
+          let updatedSelected: Patient | null = currentSelected;
+          if (currentSelected) {
+            const found = mapped.find(
+              (p) =>
+                (currentSelected.id && String(p.id).toLowerCase() === String(currentSelected.id).toLowerCase()) ||
+                (currentSelected.patient_code && p.patient_code && p.patient_code.toLowerCase() === currentSelected.patient_code.toLowerCase()) ||
+                (currentSelected.name && p.name && p.name.trim() === currentSelected.name.trim())
+            );
+            if (found) {
+              updatedSelected = { ...currentSelected, ...found };
+            }
+          }
+
+          if (updatedSelected && typeof window !== 'undefined') {
+            try {
+              localStorage.setItem(STORAGE_KEY_ACTIVE_PATIENT, JSON.stringify(updatedSelected));
+            } catch {}
+          }
 
           set({
             patients: mapped,
@@ -73,10 +106,26 @@ export const usePatientStore = create<PatientState>((set, get) => ({
     // 2. Fallback ไปยัง API / Offline Store
     try {
       const data = await api.getPatients();
-      const currentSelected = get().selectedPatient;
-      const updatedSelected = currentSelected
-        ? data.find((p) => p.id === currentSelected.id) || currentSelected
-        : null;
+      const currentSelected = get().selectedPatient || getStoredActivePatient();
+      let updatedSelected: Patient | null = currentSelected;
+      if (currentSelected) {
+        const found = data.find(
+          (p) =>
+            (currentSelected.id && String(p.id).toLowerCase() === String(currentSelected.id).toLowerCase()) ||
+            (currentSelected.patient_code && p.patient_code && p.patient_code.toLowerCase() === currentSelected.patient_code.toLowerCase()) ||
+            (currentSelected.name && p.name && p.name.trim() === currentSelected.name.trim())
+        );
+        if (found) {
+          updatedSelected = { ...currentSelected, ...found };
+        }
+      }
+
+      if (updatedSelected && typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(STORAGE_KEY_ACTIVE_PATIENT, JSON.stringify(updatedSelected));
+        } catch {}
+      }
+
       set({
         patients: data,
         selectedPatient: updatedSelected,
@@ -92,7 +141,7 @@ export const usePatientStore = create<PatientState>((set, get) => ({
         gender: 'male',
         notes: 'ปวดและขยับข้อไหล่ติดขัด ยกแขนได้ไม่สุด 3 สัปดาห์',
       };
-      const currentSelected = get().selectedPatient;
+      const currentSelected = get().selectedPatient || getStoredActivePatient();
       set({
         patients: [fallbackPatient],
         selectedPatient: currentSelected || null,
@@ -101,7 +150,20 @@ export const usePatientStore = create<PatientState>((set, get) => ({
     }
   },
 
-  selectPatient: (patient) => set({ selectedPatient: patient }),
+  selectPatient: (patient) => {
+    if (typeof window !== 'undefined') {
+      try {
+        if (patient) {
+          localStorage.setItem(STORAGE_KEY_ACTIVE_PATIENT, JSON.stringify(patient));
+        } else {
+          localStorage.removeItem(STORAGE_KEY_ACTIVE_PATIENT);
+        }
+      } catch (e) {
+        console.warn('Failed to persist active patient to localStorage:', e);
+      }
+    }
+    set({ selectedPatient: patient });
+  },
 
   openFaceAuth: (mode = 'login') => set({ isFaceAuthOpen: true, faceAuthMode: mode }),
   closeFaceAuth: () => set({ isFaceAuthOpen: false }),
@@ -158,6 +220,11 @@ export const usePatientStore = create<PatientState>((set, get) => ({
         state.selectedPatient &&
         (String(state.selectedPatient.id).trim().toUpperCase() === idStr ||
           (state.selectedPatient.patient_code && state.selectedPatient.patient_code.trim().toUpperCase() === idStr));
+      if (selectedMatches && typeof window !== 'undefined') {
+        try {
+          localStorage.removeItem(STORAGE_KEY_ACTIVE_PATIENT);
+        } catch {}
+      }
       return {
         patients: filtered,
         selectedPatient: selectedMatches ? null : state.selectedPatient,

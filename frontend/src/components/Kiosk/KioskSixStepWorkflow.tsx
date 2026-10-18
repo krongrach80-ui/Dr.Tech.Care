@@ -615,13 +615,28 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   const [selectedTherapyType, setSelectedTherapyType] = useState<'physio' | 'minigame'>('physio');
 
   // Active Patient & Plan
-  const [activePatient, setActivePatient] = useState<Patient>({
-    id: 12,
-    patient_code: 'P-0012',
-    name: 'นายสมชาย ใจดี',
-    age: 68,
-    gender: 'male',
-    notes: 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
+  const [activePatient, setActivePatient] = useState<Patient>(() => {
+    const fromStore = usePatientStore.getState().selectedPatient;
+    if (fromStore && (fromStore.name || fromStore.patient_code)) {
+      return fromStore;
+    }
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('drtechcare_active_patient');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && (parsed.name || parsed.patient_code)) return parsed;
+        }
+      } catch {}
+    }
+    return {
+      id: 12,
+      patient_code: 'P-0012',
+      name: 'นายสมชาย ใจดี',
+      age: 68,
+      gender: 'male',
+      notes: 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
+    };
   });
   const [activePlan, setActivePlan] = useState<TreatmentPlan | null>(null);
 
