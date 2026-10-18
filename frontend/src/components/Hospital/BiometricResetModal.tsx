@@ -48,11 +48,13 @@ export const BiometricResetModal: React.FC<BiometricResetModalProps> = ({
   const [showFlash, setShowFlash] = useState<boolean>(false);
   const [scanMessage, setScanMessage] = useState<string>('กำลังเปิดกล้อง...');
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [capturedShots, setCapturedShots] = useState<{ id: number; angle: string; thumbnail: string; vector: number[] }[]>([]);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const accumulatedVectorsRef = useRef<number[][]>([]);
+  const capturedShotsRef = useRef<{ id: number; angle: string; thumbnail: string; vector: number[] }[]>([]);
 
   // Current Biometric Status
   const hasBiometric = !!(user?.face_vector || user?.biometricVector);
@@ -66,6 +68,8 @@ export const BiometricResetModal: React.FC<BiometricResetModalProps> = ({
       setIsScanning(false);
       setCapturedCount(0);
       accumulatedVectorsRef.current = [];
+      capturedShotsRef.current = [];
+      setCapturedShots([]);
     }
   }, [isOpen]);
 
@@ -195,6 +199,22 @@ export const BiometricResetModal: React.FC<BiometricResetModalProps> = ({
     const newCount = accumulatedVectorsRef.current.length;
     setCapturedCount(newCount);
 
+    let thumbUrl = '';
+    try {
+      const thumbCanvas = document.createElement('canvas');
+      thumbCanvas.width = 120;
+      thumbCanvas.height = 120;
+      const thumbCtx = thumbCanvas.getContext('2d');
+      if (thumbCtx && videoRef.current) {
+        cameraOrientationService.drawUprightFrame(videoRef.current, thumbCtx, 120, 120);
+        thumbUrl = thumbCanvas.toDataURL('image/jpeg', 0.82);
+      }
+    } catch {}
+
+    const shotObj = { id: newCount, angle, thumbnail: thumbUrl, vector };
+    capturedShotsRef.current.push(shotObj);
+    setCapturedShots([...capturedShotsRef.current]);
+
     if (newCount === 4) {
       voiceAssistant.speakSystem('มุมตรงเรียบร้อยแล้วค่ะ ค่อยๆ หันซ้ายเล็กน้อยค่ะ', { force: true });
     } else if (newCount === 7) {
@@ -235,14 +255,15 @@ export const BiometricResetModal: React.FC<BiometricResetModalProps> = ({
         photoUrl = canvas.toDataURL('image/jpeg', 0.88);
       }
 
-      // Update store
+      // Update store with dossier
       updateUser(user.id, {
         face_vector: normalizedAvg,
         biometricVector: normalizedAvg,
         face_image_url: photoUrl || undefined,
         faceRegisteredAt: new Date().toISOString(),
         faceStatus: 'registered',
-      });
+        faceDossier: capturedShotsRef.current,
+      } as any);
 
       // Update patientFaceStorageService
       if (user.code) {
@@ -403,6 +424,62 @@ export const BiometricResetModal: React.FC<BiometricResetModalProps> = ({
                 </div>
               </div>
 
+              {/* 10-Shot Biometric Dossier Preview */}
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                  <span className="flex items-center gap-1.5">
+                    <Camera className="w-3.5 h-3.5 text-cyan-600" />
+                    <span>ชุดภาพถ่ายชีวมิติ 10 เฟรมช็อต (10-Shot Dossier)</span>
+                  </span>
+                  <span className="text-[11px] font-semibold text-slate-500">
+                    {(user as any).faceDossier?.length
+                      ? `${(user as any).faceDossier.length} / 10 ช็อต`
+                      : hasBiometric
+                      ? '10 / 10 ช็อต (บันทึกเวกเตอร์แล้ว)'
+                      : '0 / 10 ช็อต (ยังไม่สแกน)'}
+                  </span>
+                </div>
+
+                {(user as any).faceDossier && (user as any).faceDossier.length > 0 ? (
+                  <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5">
+                    {(user as any).faceDossier.map((shot: any, idx: number) => (
+                      <div key={idx} className="h-12 rounded-xl border border-emerald-300 bg-white overflow-hidden relative group shadow-2xs">
+                        {shot.thumbnail ? (
+                          <img src={shot.thumbnail} alt={`Shot ${idx + 1}`} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-[10px] font-bold text-slate-400">
+                            #{idx + 1}
+                          </div>
+                        )}
+                        <div className="absolute bottom-0 inset-x-0 bg-emerald-800/80 text-white text-[8px] font-bold text-center py-0.5">
+                          {idx < 4 ? 'ตรง' : idx < 7 ? 'ซ้าย' : 'ขวา'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : hasBiometric ? (
+                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-800 space-y-1">
+                    <p className="font-bold flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>เวกเตอร์เฉลี่ย 10 ช็อต (128-D L2 Normalized) พร้อมใช้งาน</span>
+                    </p>
+                    <p className="text-slate-600">
+                      ระบบได้สกัดเวกเตอร์ชีวมิติจากภาพ 10 ช็อต (ตรง 4, ซ้าย 3, ขวา 3) และบันทึกลงฐานข้อมูลเพื่อใช้ตรวจสอบ Cosine Similarity ณ ตู้ Kiosk เรียบร้อยแล้ว
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 space-y-1">
+                    <p className="font-bold flex items-center gap-1">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                      <span>ยังไม่มีรูป 10 เฟรมช็อตในระบบ (สถานะ: Pending)</span>
+                    </p>
+                    <p className="text-slate-600">
+                      เนื่องจากตอนลงทะเบียนได้เลือก "ข้ามสแกนหน้า" ท่านสามารถกดปุ่ม <strong>"เริ่มสแกนกล้อง 10 ช็อตใหม่"</strong> ด้านล่างนี้เพื่อเปิดกล้องเก็บภาพ 3 มุม (ตรง, ซ้าย, ขวา) ได้ทันที
+                    </p>
+                  </div>
+                )}
+              </div>
+
               {/* Action Buttons */}
               <div className="space-y-2.5 pt-2">
                 <button
@@ -458,22 +535,32 @@ export const BiometricResetModal: React.FC<BiometricResetModalProps> = ({
                 )}
               </div>
 
-              {/* Progress Dots */}
+              {/* Progress Thumbnails / Filmstrip */}
               <div className="grid grid-cols-10 gap-1 text-center font-bold text-[10px]">
-                {Array.from({ length: 10 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className={`py-1 rounded-lg border ${
-                      i < capturedCount
-                        ? 'bg-emerald-500 text-white border-emerald-600'
-                        : i === capturedCount
-                        ? 'bg-cyan-100 text-cyan-800 border-cyan-400 animate-pulse'
-                        : 'bg-slate-100 text-slate-400 border-slate-200'
-                    }`}
-                  >
-                    {i + 1}
-                  </div>
-                ))}
+                {Array.from({ length: 10 }).map((_, i) => {
+                  const shot = capturedShots[i];
+                  return (
+                    <div
+                      key={i}
+                      className={`h-11 rounded-lg border flex flex-col items-center justify-center relative overflow-hidden transition ${
+                        shot
+                          ? 'border-emerald-500 bg-emerald-50'
+                          : i === capturedCount
+                          ? 'bg-cyan-100 text-cyan-800 border-cyan-400 animate-pulse'
+                          : 'bg-slate-100 text-slate-400 border-slate-200'
+                      }`}
+                    >
+                      {shot?.thumbnail ? (
+                        <img src={shot.thumbnail} alt={`Shot ${i + 1}`} className="w-full h-full object-cover" />
+                      ) : (
+                        <span>{i + 1}</span>
+                      )}
+                      <div className="absolute bottom-0 inset-x-0 bg-slate-900/70 text-white text-[7px] font-bold text-center py-0.2">
+                        {i < 4 ? 'ตรง' : i < 7 ? 'ซ้าย' : 'ขวา'}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
               <div className="flex justify-between pt-2 border-t">
