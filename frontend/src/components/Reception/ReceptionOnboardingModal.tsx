@@ -342,6 +342,9 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
         age,
         gender,
         diagnosis,
+        face_image_url: capturedPhoto || undefined,
+        face_vector: embeddingsList?.[0] || undefined,
+        biometricVector: embeddingsList?.[0] || undefined,
       });
 
       // 3. Refresh patient list in patientStore

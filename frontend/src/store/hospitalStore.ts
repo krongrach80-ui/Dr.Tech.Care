@@ -1306,6 +1306,8 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
           therapist_notes: newUser.therapistNotes || '',
           responsible_therapist_id: newUser.assignedTherapistId || null,
           status: newUser.status || 'active',
+          face_vector: (newUser as any).biometricVector || (newUser as any).face_vector,
+          face_image_url: newUser.face_image_url,
         }).then((created) => {
           if (created?.id) {
             set((state) => ({
@@ -1313,6 +1315,14 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
             }));
           }
         }).catch((e) => console.warn('Supabase createPatient in addUser error:', e));
+      } else if (newUser.role === 'therapist') {
+        supabaseService.createTherapist({
+          code: newUser.code,
+          name: newUser.name,
+          phone: newUser.phone,
+          email: newUser.email,
+          status: newUser.status,
+        }).catch((e) => console.warn('Supabase createTherapist in addUser error:', e));
       } else {
         supabaseService.createProfile(newUser).then((created) => {
           if (created?.id) {
@@ -1718,6 +1728,16 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     const newTherapist: PhysicalTherapist = { ...therapistData, id: newId };
     set((state) => ({ therapists: [...state.therapists, newTherapist] }));
     get().addActivityLog('เพิ่มนักกายภาพบำบัด', 'THERAPIST', `เพิ่ม ${newTherapist.name}`);
+
+    if (supabaseService.isConfigured()) {
+      supabaseService.createTherapist(therapistData).then((created) => {
+        if (created?.id) {
+          set((state) => ({
+            therapists: state.therapists.map((t) => (t.id === newId ? { ...t, id: created.id } : t)),
+          }));
+        }
+      }).catch((e) => console.warn('Supabase createTherapist in addTherapist error:', e));
+    }
   },
 
   updateTherapist: (id, data) => {

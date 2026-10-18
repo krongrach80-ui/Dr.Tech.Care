@@ -1787,9 +1787,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         medical_history: medHist,
         therapist_notes: '[PENDING_INFO] บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว',
         status: 'active',
-        face_vector: finalVector128,
-        photo: facePhotoUrl,
-        face_image_url: facePhotoUrl,
       }, { onConflict: 'patient_code' });
 
       await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({

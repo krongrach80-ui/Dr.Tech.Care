@@ -11,7 +11,7 @@
  * - Face Biometric Embeddings (128-D)
  */
 
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, PATIENTS_REALTIME_CHANNEL } from '../lib/supabase';
 import { UserAccount, UserRole, PhysicalTherapist, HospitalExercise, ActivityLog, AiSystemSettings, TemporaryCaseDelegation, MedicalNoteItem } from '../types/hospital';
 import { Patient } from '../types/patient';
 import { Session } from '../types/session';
@@ -426,19 +426,66 @@ export const supabaseService = {
       }
       return (data || []).map((p: any) => {
         let photo = p.photo || p.avatar_url;
-        if (!photo && typeof p.medical_history === 'string' && p.medical_history.includes('FACE_PHOTO:')) {
-          const match = p.medical_history.match(/FACE_PHOTO:(data:image\/[^\s\n]+)/);
-          if (match) photo = match[1];
+        let vector = undefined;
+        if (typeof p.medical_history === 'string') {
+          if (!photo && p.medical_history.includes('FACE_PHOTO:')) {
+            const match = p.medical_history.match(/FACE_PHOTO:([^\s\n]+)/);
+            if (match) photo = match[1];
+          }
+          if (p.medical_history.includes('FACE_EMB:')) {
+            const match = p.medical_history.match(/FACE_EMB:(\[.*?\])/);
+            if (match) {
+              try {
+                vector = JSON.parse(match[1]);
+              } catch {}
+            }
+          }
         }
         return {
           ...p,
           photo,
           avatar_url: photo,
+          face_vector: vector,
         };
       });
     } catch (e) {
       console.error('[SUPABASE] fetchPatients failed:', e);
       return [];
+    }
+  },
+
+  async resolveTherapistProfileId(rawTherapistId: any): Promise<string | null> {
+    if (!isSupabaseConfigured() || !rawTherapistId) return null;
+    const strId = String(rawTherapistId).trim();
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    try {
+      if (uuidRegex.test(strId)) {
+        // 1. Direct check in profiles table
+        const { data: prof } = await supabase.from('profiles').select('id').eq('id', strId).maybeSingle();
+        if (prof?.id) return prof.id;
+
+        // 2. Check in therapists table by id
+        const { data: ther } = await supabase.from('therapists').select('profile_id').eq('id', strId).maybeSingle();
+        if (ther?.profile_id) return ther.profile_id;
+      }
+
+      // 3. Match therapist by code (e.g. T-003, T-007)
+      const { data: byCode } = await supabase.from('therapists').select('profile_id').ilike('code', strId).maybeSingle();
+      if (byCode?.profile_id) return byCode.profile_id;
+
+      // 4. Fallback match for mock/local IDs (1 -> T-003, 2 -> T-007)
+      if (strId === '1') {
+        const { data: t1 } = await supabase.from('therapists').select('profile_id').eq('code', 'T-003').maybeSingle();
+        if (t1?.profile_id) return t1.profile_id;
+      } else if (strId === '2') {
+        const { data: t2 } = await supabase.from('therapists').select('profile_id').eq('code', 'T-007').maybeSingle();
+        if (t2?.profile_id) return t2.profile_id;
+      }
+
+      return null;
+    } catch {
+      return null;
     }
   },
 
@@ -463,32 +510,34 @@ export const supabaseService = {
 
   async createPatient(patientData: any): Promise<any> {
     if (!isSupabaseConfigured()) return null;
-    const pinH = patientData.pin ? String(patientData.pin).trim() : '1234';
+    const pinH = patientData.pin || patientData.pin_hash ? String(patientData.pin || patientData.pin_hash).trim() : '1234';
     const patientCode = patientData.patient_code || patientData.code || `P-${Math.floor(1000 + Math.random() * 9000)}`;
-    const fullName = patientData.name || patientData.full_name || 'ผู้ป่วยใหม่';
-    
-    // ตรวจสอบ UUID ให้ถูกต้อง ถ้าเป็นตัวเลข integer (เช่น 1, 2 จาก local mock) หรือไม่ใช่ UUID ให้แปลงเป็น null ป้องกัน error 22P02
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const respTherapist = typeof patientData.responsible_therapist_id === 'string' && uuidRegex.test(patientData.responsible_therapist_id)
-      ? patientData.responsible_therapist_id
-      : null;
+    const fullName = (patientData.full_name || patientData.name || 'ผู้ป่วยใหม่').trim();
+
+    // Resolve valid UUID for profiles foreign key to avoid 23503 constraint error
+    const respTherapist = await this.resolveTherapistProfileId(patientData.responsible_therapist_id);
 
     let genderStr = patientData.gender || 'ชาย';
     if (genderStr === 'male') genderStr = 'ชาย';
     if (genderStr === 'female') genderStr = 'หญิง';
 
-    let medHistory = patientData.medicalHistory || patientData.patientBackground || '';
-    if (patientData.embeddings) {
-      medHistory = 'FACE_EMB:' + JSON.stringify(patientData.embeddings) + (medHistory ? '\n' + medHistory : '');
+    // Construct medical_history incorporating biometrics embeddings and photo
+    let medHistory = (patientData.medical_history || patientData.medicalHistory || patientData.patientBackground || '').trim();
+    const vector = patientData.embeddings || patientData.face_vector || patientData.biometricVector;
+    if (vector) {
+      const cleanVec = Array.isArray(vector) ? (Array.isArray(vector[0]) ? vector[0] : vector) : vector;
+      const vecStr = typeof cleanVec === 'string' ? cleanVec : JSON.stringify(cleanVec);
+      medHistory = `FACE_EMB:${vecStr}${medHistory ? '\n' + medHistory : ''}`;
     }
-    if (patientData.photo) {
-      medHistory = 'FACE_PHOTO:' + patientData.photo + (medHistory ? '\n' + medHistory : '');
+    const photo = patientData.photo || patientData.face_image_url || patientData.avatar_url;
+    if (photo) {
+      medHistory = `FACE_PHOTO:${photo}${medHistory ? '\n' + medHistory : ''}`;
     }
 
     const isPending = patientData.status === 'pending_info' || String(patientData.notes || '').includes('รอลงข้อมูล') || String(patientData.chiefComplaint || '').includes('PENDING');
     const safeStatus = (patientData.status === 'suspended' || patientData.status === 'discharged') ? patientData.status : 'active';
-    let chiefComplaintText = patientData.chiefComplaint || patientData.chief_complaint || patientData.notes || '';
-    let therapistNotesText = patientData.therapistNotes || patientData.therapist_notes || '';
+    let chiefComplaintText = patientData.chief_complaint || patientData.chiefComplaint || patientData.notes || patientData.diagnosis || 'ตรวจประเมินกายภาพบำบัด';
+    let therapistNotesText = patientData.therapist_notes || patientData.therapistNotes || '';
     if (isPending) {
       if (!chiefComplaintText.includes('[PENDING_INFO]')) {
         chiefComplaintText = `[PENDING_INFO] ${chiefComplaintText || 'รอลงข้อมูลส่วนตัว'}`.trim();
@@ -498,42 +547,50 @@ export const supabaseService = {
       }
     }
 
-    const { data, error } = await supabase.from('patients').upsert([
-      {
-        patient_code: patientCode,
-        full_name: fullName,
-        age: Number(patientData.age) || 60,
-        gender: genderStr,
-        phone: patientData.phone || null,
-        chief_complaint: chiefComplaintText,
-        medical_history: medHistory,
-        treatment_outcome: patientData.treatmentOutcome || '',
-        therapist_notes: therapistNotesText,
-        responsible_therapist_id: respTherapist,
-        status: safeStatus,
-        pin_hash: pinH,
-      },
-    ], { onConflict: 'patient_code' }).select().single();
+    // Only include valid database columns for patients table
+    const patientPayload = {
+      patient_code: patientCode,
+      full_name: fullName,
+      age: Number(patientData.age) || 60,
+      gender: genderStr,
+      phone: patientData.phone ? String(patientData.phone).trim() : null,
+      chief_complaint: chiefComplaintText,
+      medical_history: medHistory || 'ลงทะเบียนผู้ป่วยใหม่ผ่านระบบ Dr.Tech.Care',
+      treatment_outcome: patientData.treatment_outcome || patientData.treatmentOutcome || '',
+      therapist_notes: therapistNotesText,
+      responsible_therapist_id: respTherapist,
+      status: safeStatus,
+      pin_hash: pinH,
+      started_at: patientData.started_at || new Date().toISOString().split('T')[0],
+    };
+
+    const { data, error } = await supabase
+      .from('patients')
+      .upsert([patientPayload], { onConflict: 'patient_code' })
+      .select()
+      .single();
 
     if (error) {
       console.error('[SUPABASE] createPatient error:', error);
       throw error;
     }
 
-    // ซิงค์ข้อมูลลงตาราง profiles ให้ด้วยเพื่อให้ปรากฏในตาราง profiles ของ Supabase
+    // Broadcast new patient event in real-time
     try {
-      const usernameClean = `p_${data.patient_code.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-      await supabase.from('profiles').upsert([
-        {
-          username: usernameClean,
+      await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
+        type: 'broadcast',
+        event: 'new_patient',
+        payload: {
+          patient_code: data.patient_code,
           full_name: data.full_name,
-          role: 'patient',
-          phone: data.phone || null,
-          is_active: true,
+          name: data.full_name,
+          age: data.age,
+          gender: data.gender,
+          status: data.status,
         },
-      ], { onConflict: 'username' });
-    } catch (profErr) {
-      console.warn('Sync patient to profiles warning:', profErr);
+      });
+    } catch (bcErr) {
+      console.warn('Realtime broadcast new_patient warning:', bcErr);
     }
 
     await this.logActivity(
@@ -547,18 +604,31 @@ export const supabaseService = {
   async updatePatient(id: any, updates: any): Promise<any> {
     if (!isSupabaseConfigured()) return null;
     const payload: any = {};
-    if (updates.name) payload.full_name = updates.name;
-    if (updates.age) payload.age = updates.age;
-    if (updates.gender) payload.gender = updates.gender;
-    if (updates.phone !== undefined) payload.phone = updates.phone;
-    if (updates.chiefComplaint !== undefined) payload.chief_complaint = updates.chiefComplaint;
-    if (updates.patientBackground !== undefined) payload.medical_history = updates.patientBackground;
-    if (updates.treatmentOutcome !== undefined) payload.treatment_outcome = updates.treatmentOutcome;
-    if (updates.therapistNotes !== undefined) payload.therapist_notes = updates.therapistNotes;
+    if (updates.name || updates.full_name) payload.full_name = (updates.name || updates.full_name).trim();
+    if (updates.age) payload.age = Number(updates.age);
+    if (updates.gender) {
+      payload.gender = (updates.gender === 'female' || updates.gender === 'หญิง') ? 'หญิง' : 'ชาย';
+    }
+    if (updates.phone !== undefined) payload.phone = updates.phone ? String(updates.phone).trim() : null;
+    if (updates.chiefComplaint !== undefined || updates.chief_complaint !== undefined) {
+      payload.chief_complaint = updates.chiefComplaint || updates.chief_complaint;
+    }
+    if (updates.patientBackground !== undefined || updates.medical_history !== undefined) {
+      payload.medical_history = updates.patientBackground || updates.medical_history;
+    }
+    if (updates.treatmentOutcome !== undefined || updates.treatment_outcome !== undefined) {
+      payload.treatment_outcome = updates.treatmentOutcome || updates.treatment_outcome;
+    }
+    if (updates.therapistNotes !== undefined || updates.therapist_notes !== undefined) {
+      payload.therapist_notes = updates.therapistNotes || updates.therapist_notes;
+    }
     if (updates.status !== undefined) {
       payload.status = (updates.status === 'suspended' || updates.status === 'discharged') ? updates.status : 'active';
     }
     if (updates.pin) payload.pin_hash = await hashPin(updates.pin);
+    if (updates.responsible_therapist_id !== undefined) {
+      payload.responsible_therapist_id = await this.resolveTherapistProfileId(updates.responsible_therapist_id);
+    }
 
     const isUuid = typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
     let query = supabase.from('patients').update(payload);
@@ -615,22 +685,78 @@ export const supabaseService = {
         .order('created_at', { ascending: true });
 
       if (error) throw error;
-      return (data || []).map((t: any) => ({
-        id: t.id,
-        code: t.code,
-        name: t.profiles?.full_name || t.code,
-        specialty: t.specialty,
-        phone: t.phone || t.profiles?.phone || '',
-        email: t.email || t.profiles?.email || '',
-        activePatientsCount: 0,
-        assignedCases: [],
-        bio: t.bio || '',
-        status: t.status as 'active' | 'on_leave' | 'suspended',
-        licenseNumber: t.license_no,
-      }));
+      return (data || []).map((t: any) => {
+        const bioStr = t.bio || '';
+        let therapistName = t.profiles?.full_name || '';
+        let cleanBio = bioStr;
+        if (!therapistName && bioStr.includes('NAME:')) {
+          const match = bioStr.match(/NAME:([^\n]+)/);
+          if (match) {
+            therapistName = match[1].trim();
+            cleanBio = bioStr.replace(/NAME:[^\n]+\n?/, '').trim();
+          }
+        }
+        return {
+          id: t.id,
+          code: t.code,
+          name: therapistName || t.code,
+          specialty: t.specialty,
+          phone: t.phone || t.profiles?.phone || '',
+          email: t.email || t.profiles?.email || '',
+          activePatientsCount: 0,
+          assignedCases: [],
+          bio: cleanBio,
+          status: t.status as 'active' | 'on_leave' | 'suspended',
+          licenseNumber: t.license_no,
+        };
+      });
     } catch (e) {
       console.warn('fetchTherapists failed:', e);
       return [];
+    }
+  },
+
+  async createTherapist(therapistData: any): Promise<any> {
+    if (!isSupabaseConfigured()) return null;
+    try {
+      const code = therapistData.code || `T-${Math.floor(100 + Math.random() * 900)}`;
+      const rawBio = therapistData.bio || 'นักกายภาพบำบัดวิชาชีพ ประจำโรงพยาบาล Dr.Tech.Care';
+      const name = therapistData.name?.trim() || '';
+      const bioWithPrefix = name ? `NAME:${name}\n${rawBio}` : rawBio;
+
+      const { data: existing } = await supabase.from('therapists').select('id').eq('code', code).maybeSingle();
+      if (existing) {
+        const { data, error } = await supabase.from('therapists').update({
+          license_no: therapistData.licenseNumber || therapistData.license_no || `กภ.${Math.floor(10000 + Math.random() * 90000)}`,
+          specialty: therapistData.specialty || 'กายภาพบำบัดระบบกล้ามเนื้อและกระดูก (Orthopedic PT)',
+          bio: bioWithPrefix,
+          phone: therapistData.phone || null,
+          email: therapistData.email || null,
+          status: therapistData.status || 'active',
+        }).eq('id', existing.id).select().single();
+        return data;
+      }
+
+      const { data, error } = await supabase.from('therapists').insert([
+        {
+          code,
+          license_no: therapistData.licenseNumber || therapistData.license_no || `กภ.${Math.floor(10000 + Math.random() * 90000)}`,
+          specialty: therapistData.specialty || 'กายภาพบำบัดระบบกล้ามเนื้อและกระดูก (Orthopedic PT)',
+          bio: bioWithPrefix,
+          phone: therapistData.phone || null,
+          email: therapistData.email || null,
+          status: therapistData.status || 'active',
+        }
+      ]).select().single();
+
+      if (error) {
+        console.warn('[SUPABASE] createTherapist error:', error);
+        return null;
+      }
+      return data;
+    } catch (e) {
+      console.warn('[SUPABASE] createTherapist exception:', e);
+      return null;
     }
   },
 

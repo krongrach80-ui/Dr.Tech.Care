@@ -88,6 +88,7 @@ import { CourseModeSelectionModal } from '../../components/Hospital/CourseModeSe
 import { MiniGameQuestionsManager } from '../../components/Hospital/MiniGameQuestionsManager';
 import { defaultDash, formatThaiDate, formatThaiDateTime } from '../../utils/dashboardUtils';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
+import { supabaseService } from '../../services/supabaseService';
 
 const THAI_MONTH_NAMES = [
   'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
@@ -662,7 +663,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       }
 
       try {
-        await supabase.from('patients').upsert({
+        await supabaseService.createPatient({
           patient_code: code,
           full_name: userData.name.trim(),
           age: Number(userData.age) || 65,
@@ -670,27 +671,36 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
           phone: userData.phone?.trim() || null,
           chief_complaint: userData.chiefComplaint || 'ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder)',
           medical_history: userData.patientBackground || 'ลงทะเบียนผู้ป่วยใหม่ผ่านระบบแอดมิน (10-Snap Biometric)',
-          face_vector: resolvedVector ? JSON.stringify(resolvedVector) : null,
-          face_image_url: userData.face_image_url || null,
-          face_registered: !!resolvedVector,
-          status: 'active',
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'patient_code' });
-
-        await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
-          type: 'broadcast',
-          event: 'new_patient',
-          payload: {
-            patient_code: code,
-            full_name: userData.name.trim(),
-            name: userData.name.trim(),
-            age: Number(userData.age) || 65,
-            gender: userData.gender,
-            status: 'active',
-          },
+          treatment_outcome: userData.treatmentOutcome || '',
+          therapist_notes: userData.therapistNotes || '',
+          responsible_therapist_id: userData.assignedTherapistId || null,
+          status: userData.status || 'active',
+          embeddings: resolvedVector,
+          photo: userData.face_image_url || null,
         });
+
+        // Trigger store re-initialization from Supabase to keep all tables synchronized
+        initializeFromSupabase();
       } catch (sbErr) {
         console.warn('[SUPABASE] handleAddUser sync error:', sbErr);
+      }
+    } else if (userData.role === 'therapist') {
+      if (therapistExtra) {
+        try {
+          await supabaseService.createTherapist({
+            code,
+            name: userData.name.trim(),
+            phone: userData.phone?.trim(),
+            email: userData.email?.trim(),
+            specialty: therapistExtra.specialty,
+            licenseNumber: therapistExtra.licenseNumber,
+            bio: therapistExtra.bio,
+            status: 'active',
+          });
+          initializeFromSupabase();
+        } catch (tErr) {
+          console.warn('[SUPABASE] handleAddUser therapist error:', tErr);
+        }
       }
     } else if (userData.face_vector) {
       // Save face biometrics for therapist/staff as well if enrolled
@@ -4473,6 +4483,19 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               const preservedVector = curDbPatient?.face_vector || (targetUser as any)?.face_vector || (targetUser as any)?.biometricVector;
               const preservedPhoto = curDbPatient?.photo || curDbPatient?.avatar_url || (targetUser as any)?.face_image_url || patientFaceStorageService.getProfileFaceImage(targetCode);
 
+              if (preservedVector && !medHist.includes('FACE_EMB:')) {
+                const vecStr = typeof preservedVector === 'string' ? preservedVector : JSON.stringify(preservedVector);
+                medHist = `FACE_EMB:${vecStr}\n${medHist}`;
+              }
+              if (preservedPhoto && !medHist.includes('FACE_PHOTO:')) {
+                medHist = `FACE_PHOTO:${preservedPhoto}\n${medHist}`;
+              }
+
+              let resolvedTherapistId = null;
+              if (targetUser?.assignedTherapistId) {
+                resolvedTherapistId = await supabaseService.resolveTherapistProfileId(targetUser.assignedTherapistId);
+              }
+
               // 2. Direct Supabase Upsert
               await supabase.from('patients').upsert({
                 patient_code: targetCode,
@@ -4483,11 +4506,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                 chief_complaint: cleanComplaint,
                 medical_history: medHist,
                 therapist_notes: cleanNotes,
+                responsible_therapist_id: resolvedTherapistId,
                 status: 'active',
-                face_vector: preservedVector,
-                photo: preservedPhoto,
-                face_image_url: preservedPhoto,
-                updated_at: new Date().toISOString(),
               }, { onConflict: 'patient_code' });
 
               // 3. Update isolated local dossier in patientFaceStorageService
