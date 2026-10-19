@@ -439,28 +439,28 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-3 sm:p-4 animate-fadeIn">
       <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-emerald-100 overflow-hidden flex flex-col max-h-[92vh]">
         {/* Modal Header */}
-        <div className="px-6 py-4 bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 text-white flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-white/15 flex items-center justify-center backdrop-blur-xs">
-              <Camera className="w-5 h-5 text-white" />
+        <div className="px-4 sm:px-6 py-3.5 sm:py-4 bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 text-white flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-white/15 flex items-center justify-center backdrop-blur-xs flex-shrink-0">
+              <Camera className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
             </div>
-            <div>
-              <h3 className="font-extrabold text-base tracking-tight">สแกนและบันทึกใบหน้าคนไข้</h3>
-              <p className="text-xs text-emerald-100 font-medium">
+            <div className="min-w-0">
+              <h3 className="font-extrabold text-sm sm:text-base tracking-tight truncate">สแกนและบันทึกใบหน้าคนไข้</h3>
+              <p className="text-[11px] sm:text-xs text-emerald-100 font-medium truncate">
                 {patient.name} • <span className="font-mono font-bold">HN: {patient.code}</span>
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-white/20 transition cursor-pointer text-white/80 hover:text-white"
+            className="p-1.5 rounded-full hover:bg-white/20 transition cursor-pointer text-white/80 hover:text-white flex-shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 space-y-4 overflow-y-auto">
+        <div className="p-4 sm:p-6 space-y-4 overflow-y-auto">
           {/* Mode Switcher */}
           <div className="grid grid-cols-2 gap-2 p-1 bg-stone-100 rounded-2xl">
             <button
@@ -470,14 +470,14 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
                 setCapturedVector(null);
                 setCapturedPhoto(null);
               }}
-              className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+              className={`py-2 px-2.5 sm:px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
                 mode === 'camera'
                   ? 'bg-white text-emerald-800 shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <Camera className="w-4 h-4" />
-              <span>ถ่ายผ่านกล้องเว็บแคม (10 ช็อต)</span>
+              <Camera className="w-4 h-4 flex-shrink-0" />
+              <span>ถ่ายผ่านกล้อง (10 ช็อต)</span>
             </button>
             <button
               type="button"

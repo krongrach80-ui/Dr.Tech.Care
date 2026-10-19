@@ -119,31 +119,31 @@ export const TemporaryCaseDelegationModal: React.FC<TemporaryCaseDelegationModal
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-cyan-100 bg-gradient-to-r from-emerald-50 via-white to-sky-50 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white flex items-center justify-center shadow-md shadow-cyan-500/25">
-              <Share2 className="w-5 h-5" />
+        <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-cyan-100 bg-gradient-to-r from-emerald-50 via-white to-sky-50 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-gradient-to-br from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white flex items-center justify-center shadow-md shadow-cyan-500/25 flex-shrink-0">
+              <Share2 className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div>
-              <h3 className="font-extrabold text-base sm:text-lg text-[#0F2F2B]">
+            <div className="min-w-0">
+              <h3 className="font-extrabold text-sm sm:text-base lg:text-lg text-[#0F2F2B] truncate">
                 มอบหมายการดูแลเคสชั่วคราว
               </h3>
-              <p className="text-[11px] text-emerald-800 font-medium">
-                Temporary Case Delegation (ฝากเคสชั่วคราวให้เพื่อนร่วมงาน)
+              <p className="text-[10px] sm:text-[11px] text-emerald-800 font-medium truncate mt-0.5">
+                ฝากเคสชั่วคราวให้นักกายภาพเพื่อนร่วมงาน
               </p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="p-2 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer flex-shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Content Form */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4 text-xs">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 text-xs">
           {/* Info Banner */}
           <div className="p-3.5 rounded-2xl bg-cyan-50/80 border border-cyan-200 text-cyan-950 space-y-1">
             <div className="flex items-center gap-2 font-bold text-xs text-cyan-900">

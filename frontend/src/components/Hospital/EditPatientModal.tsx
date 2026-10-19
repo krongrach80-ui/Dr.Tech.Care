@@ -261,22 +261,22 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-cyan-100 bg-gradient-to-r from-emerald-50 via-white to-sky-50 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl overflow-hidden border-2 border-emerald-400 shadow-md flex-shrink-0 bg-slate-100 flex items-center justify-center">
+        <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-cyan-100 bg-gradient-to-r from-emerald-50 via-white to-sky-50 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl overflow-hidden border-2 border-emerald-400 shadow-md flex-shrink-0 bg-slate-100 flex items-center justify-center">
               {patient.face_image_url ? (
                 <img src={patient.face_image_url} alt={patient.name} className="w-full h-full object-cover" />
               ) : (
-                <User className="w-6 h-6 text-slate-400" />
+                <User className="w-5 h-5 sm:w-6 sm:h-6 text-slate-400" />
               )}
             </div>
 
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-extrabold text-base sm:text-lg text-[#0F2F2B]">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <h3 className="font-extrabold text-sm sm:text-base lg:text-lg text-[#0F2F2B] truncate max-w-[180px] sm:max-w-none">
                   {patient.name}
                 </h3>
-                <span className="px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                   HN: {defaultDash(patient.code)}
                 </span>
                 <span
@@ -286,68 +286,68 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
                       : 'bg-emerald-100 text-emerald-800 border-emerald-300'
                   }`}
                 >
-                  {patient.treatmentStatus === 'discharged' ? 'สิ้นสุดการรักษา' : '🟢 อยู่ระหว่างการรักษา (Active)'}
+                  {patient.treatmentStatus === 'discharged' ? 'สิ้นสุดการรักษา' : '🟢 อยู่ระหว่างรักษา'}
                 </span>
               </div>
-              <p className="text-[11px] text-emerald-800 font-medium">
-                {patient.gender === 'female' ? 'หญิง' : 'ชาย'}, อายุ {defaultDash(patient.age)} ปี • หมอผู้ดูแล: {defaultDash(patient.assignedTherapistName)}
+              <p className="text-[10px] sm:text-[11px] text-emerald-800 font-medium truncate mt-0.5">
+                {patient.gender === 'female' ? 'หญิง' : 'ชาย'}, อายุ {defaultDash(patient.age)} ปี • หมอ: {defaultDash(patient.assignedTherapistName)}
               </p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="p-2 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer flex-shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Tab Navigation */}
-        <div className="grid grid-cols-3 border-b border-cyan-100 text-xs font-bold text-center bg-slate-50/80">
+        {/* Tab Navigation (Responsive scrollable tabs) */}
+        <div className="flex overflow-x-auto no-scrollbar border-b border-cyan-100 text-xs font-bold bg-slate-50/80">
           <button
             type="button"
             onClick={() => setActiveTab('personal')}
-            className={`py-3 px-3 flex items-center justify-center gap-2 transition cursor-pointer ${
+            className={`py-2.5 sm:py-3 px-3 sm:px-4 flex-1 min-w-[130px] flex items-center justify-center gap-1.5 sm:gap-2 transition cursor-pointer whitespace-nowrap ${
               activeTab === 'personal'
                 ? 'bg-white text-emerald-800 border-b-2 border-emerald-600 shadow-2xs font-extrabold'
                 : 'text-slate-600 hover:text-emerald-700'
             }`}
           >
-            <User className="w-4 h-4 text-emerald-600" />
-            <span>1. ข้อมูลส่วนตัว (Personal Info)</span>
+            <User className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 flex-shrink-0" />
+            <span>1. ข้อมูลส่วนตัว</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('history')}
-            className={`py-3 px-3 flex items-center justify-center gap-2 transition cursor-pointer ${
+            className={`py-2.5 sm:py-3 px-3 sm:px-4 flex-1 min-w-[150px] flex items-center justify-center gap-1.5 sm:gap-2 transition cursor-pointer whitespace-nowrap ${
               activeTab === 'history'
                 ? 'bg-white text-emerald-800 border-b-2 border-emerald-600 shadow-2xs font-extrabold'
                 : 'text-slate-600 hover:text-emerald-700'
             }`}
           >
-            <FileText className="w-4 h-4 text-emerald-600" />
-            <span>2. ประวัติ & บันทึก (Treatment & Notes)</span>
+            <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 flex-shrink-0" />
+            <span>2. ประวัติ & บันทึก</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('analytics')}
-            className={`py-3 px-3 flex items-center justify-center gap-2 transition cursor-pointer ${
+            className={`py-2.5 sm:py-3 px-3 sm:px-4 flex-1 min-w-[160px] flex items-center justify-center gap-1.5 sm:gap-2 transition cursor-pointer whitespace-nowrap ${
               activeTab === 'analytics'
                 ? 'bg-white text-emerald-800 border-b-2 border-emerald-600 shadow-2xs font-extrabold'
                 : 'text-slate-600 hover:text-emerald-700'
             }`}
           >
-            <BarChart3 className="w-4 h-4 text-emerald-600" />
-            <span>3. แดชบอร์ดผลการรักษา (Performance Analytics)</span>
+            <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 flex-shrink-0" />
+            <span>3. แดชบอร์ดผลการรักษา</span>
           </button>
         </div>
 
         {/* Tab 1: Personal Info (Editable) */}
         {activeTab === 'personal' && (
-          <form onSubmit={handleSavePersonalInfo} className="flex-1 overflow-y-auto p-6 space-y-4 text-xs">
+          <form onSubmit={handleSavePersonalInfo} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 text-xs">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block font-bold text-slate-700 mb-1">ชื่อ-นามสกุล:</label>
@@ -459,7 +459,7 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
 
         {/* Tab 2: Treatment History & Notes (Editable for Super Admin, Append-Only for PT) */}
         {activeTab === 'history' && (
-          <div className="flex-1 overflow-y-auto p-6 space-y-5 text-xs">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-5 text-xs">
             {/* Admission & Overall Progress Banner */}
             <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 border border-cyan-200 grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -680,11 +680,11 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
 
         {/* Tab 3: Treatment Performance Dashboard (Read-Only Analytics) */}
         {activeTab === 'analytics' && (
-          <div className="flex-1 overflow-y-auto p-6 space-y-5 text-xs">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-5 text-xs">
             {/* Time Range Selector */}
-            <div className="flex items-center justify-between bg-slate-50 p-2.5 rounded-2xl border border-slate-200">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-50 p-2.5 rounded-2xl border border-slate-200">
               <span className="font-bold text-slate-700">ช่วงเวลาแสดงผล:</span>
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
                   onClick={() => setTimeRange('1w')}

@@ -98,21 +98,21 @@ export const PtAssignedPatientsModal: React.FC<PtAssignedPatientsModalProps> = (
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-cyan-100 bg-gradient-to-r from-emerald-50 via-white to-sky-50 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white flex items-center justify-center shadow-md shadow-cyan-500/25">
-              <Users className="w-5 h-5" />
+        <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-cyan-100 bg-gradient-to-r from-emerald-50 via-white to-sky-50 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-gradient-to-br from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white flex items-center justify-center shadow-md shadow-cyan-500/25 flex-shrink-0">
+              <Users className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-extrabold text-base sm:text-lg text-[#0F2F2B]">
-                  เคสคนไข้ในความรับผิดชอบ (Assigned Patients)
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <h3 className="font-extrabold text-sm sm:text-base lg:text-lg text-[#0F2F2B] truncate">
+                  เคสคนไข้ในความรับผิดชอบ
                 </h3>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                <span className="px-2 py-0.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
                   {assignedPatients.length} เคส
                 </span>
               </div>
-              <p className="text-[11px] text-emerald-800 font-medium">
+              <p className="text-[10px] sm:text-[11px] text-emerald-800 font-medium truncate mt-0.5">
                 นักกายภาพ: <strong>{therapist.name}</strong> ({therapist.code}) • {defaultDash(therapist.specialty)}
               </p>
             </div>
@@ -120,14 +120,14 @@ export const PtAssignedPatientsModal: React.FC<PtAssignedPatientsModalProps> = (
 
           <button
             onClick={onClose}
-            className="p-2 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer flex-shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Toolbar */}
-        <div className="px-6 py-3 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-3 text-xs">
+        <div className="px-4 sm:px-6 py-2.5 sm:py-3 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-3 text-xs">
           <div className="relative flex-1 max-w-xs">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
@@ -144,7 +144,7 @@ export const PtAssignedPatientsModal: React.FC<PtAssignedPatientsModalProps> = (
         </div>
 
         {/* Table Content */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-3.5 sm:p-6">
           {filteredPatients.length === 0 ? (
             <div className="py-16 text-center text-slate-400 space-y-2">
               <User className="w-10 h-10 mx-auto text-slate-300" />
@@ -152,15 +152,18 @@ export const PtAssignedPatientsModal: React.FC<PtAssignedPatientsModalProps> = (
               <p className="text-xs">สามารถกำหนดคนไข้ให้กภ. ท่านนี้ได้จากหน้าลงทะเบียนคนไข้ หรือโอนย้ายเคสเข้ามา</p>
             </div>
           ) : (
-            <div className="bg-white rounded-2xl border border-emerald-100 overflow-hidden shadow-2xs">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="bg-white rounded-2xl border border-emerald-100 overflow-x-auto shadow-2xs">
+              <div className="text-[11px] text-slate-400 sm:hidden flex items-center gap-1 p-2 bg-slate-50 border-b border-emerald-50">
+                <span>👉 เลื่อนตารางแนวนอนเพื่อดูข้อมูลทั้งหมด</span>
+              </div>
+              <table className="min-w-[680px] w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="bg-emerald-50/80 border-b border-emerald-100 text-slate-700 font-bold">
-                    <th className="py-2.5 px-4">คนไข้ / รหัส HN</th>
-                    <th className="py-2.5 px-4">อาการ / การวินิจฉัย</th>
-                    <th className="py-2.5 px-4">เริ่มรักษา</th>
-                    <th className="py-2.5 px-4">ใช้งานล่าสุด</th>
-                    <th className="py-2.5 px-4 text-right">การจัดการ</th>
+                  <tr className="bg-emerald-50/80 border-b border-emerald-100 text-slate-700 font-bold whitespace-nowrap">
+                    <th className="py-2.5 px-4 min-w-[150px]">คนไข้ / รหัส HN</th>
+                    <th className="py-2.5 px-4 min-w-[160px]">อาการ / การวินิจฉัย</th>
+                    <th className="py-2.5 px-4 min-w-[100px]">เริ่มรักษา</th>
+                    <th className="py-2.5 px-4 min-w-[100px]">ใช้งานล่าสุด</th>
+                    <th className="py-2.5 px-4 text-right min-w-[140px]">การจัดการ</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">

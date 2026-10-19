@@ -566,8 +566,26 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   const [isReceptionOpen, setIsReceptionOpen] = useState<boolean>(false);
   const [isNetworkSyncModalOpen, setIsNetworkSyncModalOpen] = useState<boolean>(false);
 
-  // Responsive Collapsible Sidebar state (optimizes screen space on portrait/vertical kiosks)
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  // Responsive Collapsible Sidebar state (optimizes screen space on portrait/vertical kiosks and phones)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 1024;
+    }
+    return false;
+  });
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1024) {
+        setIsSidebarCollapsed(true);
+      }
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
 
   // =========================================================================
   // 1. STATE FOR USER MANAGEMENT (Tab 1: users)
@@ -1997,40 +2015,62 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex bg-gradient-to-br from-[#E6FBF2] via-[#FFFFFF] to-[#E0F2FE] text-[#0F2F2B] font-sans overflow-hidden animate-fadeIn select-none">
+      {/* Mobile/Tablet Portrait Drawer Backdrop */}
+      {isMobileSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 lg:hidden animate-fadeIn"
+          onClick={() => setIsMobileSidebarOpen(false)}
+        />
+      )}
+
       {/* ==================================================================== */}
       {/* 1. LEFT SIDEBAR (Green-to-Blue Deep Medical Gradient Theme)           */}
       {/* ==================================================================== */}
       <aside
-        className={`${
-          isSidebarCollapsed ? 'w-16 sm:w-18 p-2.5 items-center' : 'w-56 sm:w-60 p-3.5 sm:p-4'
-        } bg-gradient-to-b from-[#064E3B] via-[#0E3A45] to-[#0A2540] text-white flex flex-col justify-between flex-shrink-0 shadow-2xl border-r border-teal-800/40 transition-all duration-200 z-30 select-none`}
+        className={`fixed lg:static inset-y-0 left-0 z-50 flex flex-col justify-between flex-shrink-0 shadow-2xl transition-all duration-300 select-none bg-gradient-to-b from-[#064E3B] via-[#0E3A45] to-[#0A2540] text-white border-r border-teal-800/40 ${
+          isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+        } ${
+          isSidebarCollapsed
+            ? 'w-64 sm:w-72 lg:w-16 xl:w-18 p-3.5 sm:p-4 lg:p-2.5 lg:items-center'
+            : 'w-64 sm:w-72 lg:w-56 xl:w-60 p-3.5 sm:p-4'
+        }`}
       >
         <div className="w-full">
           {/* Brand Logo & Collapse Toggle */}
-          <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center flex-col gap-2' : 'justify-between'} py-1.5 mb-3 border-b border-teal-700/50`}>
+          <div className={`flex items-center ${isSidebarCollapsed ? 'justify-between lg:justify-center lg:flex-col lg:gap-2' : 'justify-between'} py-1.5 mb-3 border-b border-teal-700/50`}>
             <div className="flex items-center gap-2 min-w-0">
               <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#10B981] to-[#06B6D4] text-white flex items-center justify-center shadow-md shadow-emerald-500/25 flex-shrink-0">
                 <HeartPulse className="w-4 h-4 text-white" />
               </div>
-              {!isSidebarCollapsed && (
-                <div className="min-w-0">
-                  <div className="font-extrabold text-sm tracking-tight leading-tight text-white truncate">
-                    Dr.Tech.Care
-                  </div>
-                  <div className="text-[10px] text-cyan-200/90 font-medium truncate">
-                    {currentRole === 'admin' ? 'แอดมิน (Admin)' : 'นักกายภาพ (PT)'}
-                  </div>
+              <div className={`min-w-0 ${isSidebarCollapsed ? 'lg:hidden' : 'block'}`}>
+                <div className="font-extrabold text-sm tracking-tight leading-tight text-white truncate">
+                  Dr.Tech.Care
                 </div>
-              )}
+                <div className="text-[10px] text-cyan-200/90 font-medium truncate">
+                  {currentRole === 'admin' ? 'แอดมิน (Admin)' : 'นักกายภาพ (PT)'}
+                </div>
+              </div>
             </div>
 
-            <button
-              onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-              className="p-1 rounded-lg text-cyan-200 hover:text-white hover:bg-white/10 transition cursor-pointer flex-shrink-0"
-              title={isSidebarCollapsed ? 'ขยายเมนู' : 'ย่อเมนูเพื่อเพิ่มพื้นที่'}
-            >
-              {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-            </button>
+            <div className="flex items-center gap-1">
+              {/* Close button for mobile/portrait drawer */}
+              <button
+                onClick={() => setIsMobileSidebarOpen(false)}
+                className="lg:hidden p-1.5 rounded-lg text-cyan-200 hover:text-white hover:bg-white/10 transition cursor-pointer"
+                title="ปิดเมนู"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              {/* Desktop collapse toggle */}
+              <button
+                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                className="hidden lg:block p-1 rounded-lg text-cyan-200 hover:text-white hover:bg-white/10 transition cursor-pointer flex-shrink-0"
+                title={isSidebarCollapsed ? 'ขยายเมนู' : 'ย่อเมนูเพื่อเพิ่มพื้นที่'}
+              >
+                {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
 
           {/* Navigation Menu */}
@@ -2041,10 +2081,13 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               return (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id)}
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    setIsMobileSidebarOpen(false);
+                  }}
                   title={item.label}
                   className={`w-full flex items-center ${
-                    isSidebarCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2'
+                    isSidebarCollapsed ? 'justify-start lg:justify-center p-2.5 lg:p-2.5' : 'gap-2.5 px-3 py-2'
                   } rounded-xl font-semibold text-xs transition-all text-left cursor-pointer ${
                     isActive
                       ? 'bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white font-black shadow-lg shadow-cyan-500/30 border border-white/20'
@@ -2052,10 +2095,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   }`}
                 >
                   <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-white' : 'text-cyan-300'}`} />
-                  {!isSidebarCollapsed && <span className="flex-1 truncate">{item.label}</span>}
-                  {!isSidebarCollapsed && item.id === 'schedules' && (
+                  <span className={`flex-1 truncate ${isSidebarCollapsed ? 'lg:hidden' : 'block'}`}>{item.label}</span>
+                  {item.id === 'schedules' && (
                     <span
-                      className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${
+                      className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${isSidebarCollapsed ? 'lg:hidden' : 'block'} ${
                         isActive ? 'bg-white/25 text-white' : 'bg-cyan-500/30 text-cyan-100'
                       }`}
                     >
@@ -2070,33 +2113,37 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
         {/* Bottom Sidebar Info & Logout */}
         <div className="pt-3 border-t border-teal-700/50 space-y-1.5 w-full">
-          {!isSidebarCollapsed && (
-            <div className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-[#064E3B]/70 to-[#0A2540]/70 border border-cyan-500/30 text-[10px] text-cyan-200/90 shadow-2xs">
-              <div className="truncate">ฐานข้อมูล: <span className={isSupabaseConnected ? "text-[#4AE387] font-bold" : "text-amber-400 font-bold"}>{isSupabaseConnected ? "Cloud 🟢" : "Local 🟡"}</span></div>
-              <div className="text-[10px] text-cyan-300/80 truncate">ผู้ใช้: {currentUser?.name?.split(' ')[0] || currentUser?.username}</div>
-            </div>
-          )}
+          <div className={`px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-[#064E3B]/70 to-[#0A2540]/70 border border-cyan-500/30 text-[10px] text-cyan-200/90 shadow-2xs ${isSidebarCollapsed ? 'lg:hidden' : 'block'}`}>
+            <div className="truncate">ฐานข้อมูล: <span className={isSupabaseConnected ? "text-[#4AE387] font-bold" : "text-amber-400 font-bold"}>{isSupabaseConnected ? "Cloud 🟢" : "Local 🟡"}</span></div>
+            <div className="text-[10px] text-cyan-300/80 truncate">ผู้ใช้: {currentUser?.name?.split(' ')[0] || currentUser?.username}</div>
+          </div>
 
           <button
-            onClick={handleStaffLogout}
+            onClick={() => {
+              setIsMobileSidebarOpen(false);
+              handleStaffLogout();
+            }}
             title="ออกจากระบบบุคลากร"
             className={`w-full flex items-center ${
-              isSidebarCollapsed ? 'justify-center p-2' : 'gap-2 px-3 py-2'
+              isSidebarCollapsed ? 'justify-start lg:justify-center p-2.5 lg:p-2' : 'gap-2 px-3 py-2'
             } rounded-xl bg-rose-950/40 border border-rose-800/50 text-rose-200 text-xs font-semibold hover:bg-rose-900/60 hover:text-white transition active:scale-95 cursor-pointer`}
           >
             <LogOut className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
-            {!isSidebarCollapsed && <span>ออกจากระบบ</span>}
+            <span className={`${isSidebarCollapsed ? 'lg:hidden' : 'block'}`}>ออกจากระบบ</span>
           </button>
 
           <button
-            onClick={onClose}
+            onClick={() => {
+              setIsMobileSidebarOpen(false);
+              onClose();
+            }}
             title="กลับหน้าหลักตู้คนไข้"
             className={`w-full flex items-center ${
-              isSidebarCollapsed ? 'justify-center p-2' : 'gap-2 px-3 py-1.5'
+              isSidebarCollapsed ? 'justify-start lg:justify-center p-2.5 lg:p-2' : 'gap-2 px-3 py-1.5'
             } rounded-xl border border-cyan-700/60 text-cyan-200/90 text-[11px] font-medium hover:bg-white/10 hover:text-white transition active:scale-95 cursor-pointer`}
           >
             <ArrowLeft className="w-3.5 h-3.5 flex-shrink-0" />
-            {!isSidebarCollapsed && <span>กลับหน้าตู้ Kiosk</span>}
+            <span className={`${isSidebarCollapsed ? 'lg:hidden' : 'block'}`}>กลับหน้าตู้ Kiosk</span>
           </button>
         </div>
       </aside>
@@ -2106,19 +2153,25 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       {/* ==================================================================== */}
       <main className="flex-1 flex flex-col h-full overflow-hidden bg-gradient-to-br from-[#E6FBF2] via-[#FFFFFF] to-[#E0F2FE]">
         {/* Top Header Bar */}
-        <header className="h-16 px-3.5 sm:px-6 border-b border-cyan-100/80 bg-gradient-to-r from-white/95 via-[#F0FDF4]/90 to-[#F0F9FF]/95 backdrop-blur-md flex items-center justify-between flex-shrink-0 gap-2">
-          {/* Header Title with Mobile Collapse Toggle */}
-          <div className="flex items-center gap-2.5 min-w-0">
+        <header className="h-16 px-3 sm:px-6 border-b border-cyan-100/80 bg-gradient-to-r from-white/95 via-[#F0FDF4]/90 to-[#F0F9FF]/95 backdrop-blur-md flex items-center justify-between flex-shrink-0 gap-2">
+          {/* Header Title with Mobile & Desktop Collapse Toggle */}
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
             <button
-              onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-              className="p-1.5 rounded-xl bg-gradient-to-r from-emerald-50 to-sky-50 text-emerald-800 hover:text-cyan-800 border border-cyan-200 transition cursor-pointer flex-shrink-0 shadow-2xs"
+              onClick={() => {
+                if (window.innerWidth < 1024) {
+                  setIsMobileSidebarOpen(!isMobileSidebarOpen);
+                } else {
+                  setIsSidebarCollapsed(!isSidebarCollapsed);
+                }
+              }}
+              className="p-1.5 sm:p-2 rounded-xl bg-gradient-to-r from-emerald-50 to-sky-50 text-emerald-800 hover:text-cyan-800 border border-cyan-200 transition cursor-pointer flex-shrink-0 shadow-2xs active:scale-95"
               title={isSidebarCollapsed ? 'ขยายเมนู' : 'ย่อเมนู'}
             >
-              <Menu className="w-4 h-4" />
+              <Menu className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
             </button>
             <div className="min-w-0">
-              <h1 className="text-sm sm:text-base lg:text-lg font-extrabold text-[#0F2F2B] tracking-tight truncate flex items-center gap-1.5">
-                <span>
+              <h1 className="text-xs sm:text-base lg:text-lg font-extrabold text-[#0F2F2B] tracking-tight truncate flex items-center gap-1.5">
+                <span className="truncate">
                   {activeTab === 'users' && 'จัดการผู้ใช้งาน'}
                   {activeTab === 'patients' && 'ข้อมูลคนไข้'}
                   {activeTab === 'schedules' && 'ตารางฝึกกายภาพ'}
@@ -2137,31 +2190,33 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   {activeTab === 'settings' && '(Settings)'}
                 </span>
               </h1>
-              <div className="w-10 sm:w-16 h-1 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] mt-0.5 shadow-xs" />
+              <div className="w-8 sm:w-16 h-1 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] mt-0.5 shadow-xs" />
             </div>
           </div>
 
           {/* Right Header Controls */}
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
             {/* Supabase Connection Status Indicator */}
-            <div className={`hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${isSupabaseConnected ? 'bg-gradient-to-r from-emerald-50 to-sky-50 text-emerald-800 border-cyan-300' : 'bg-amber-50 text-amber-800 border-amber-300'}`}>
+            <div className={`hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${isSupabaseConnected ? 'bg-gradient-to-r from-emerald-50 to-sky-50 text-emerald-800 border-cyan-300' : 'bg-amber-50 text-amber-800 border-amber-300'}`}>
               <span className={`w-2 h-2 rounded-full ${isSupabaseConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
-              <span>{isSupabaseConnected ? 'Supabase 🟢' : 'Offline 🟡'}</span>
+              <span className="hidden xl:inline">{isSupabaseConnected ? 'Supabase 🟢' : 'Offline 🟡'}</span>
             </div>
 
             {/* Quick Reception Action button */}
             <button
               onClick={() => setIsReceptionOpen(true)}
-              className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-[#10B981] via-[#0284C7] to-[#2563EB] text-white text-xs font-bold shadow-md shadow-cyan-500/20 hover:opacity-95 transition cursor-pointer"
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-full bg-gradient-to-r from-[#10B981] via-[#0284C7] to-[#2563EB] text-white text-xs font-bold shadow-md shadow-cyan-500/20 hover:opacity-95 transition cursor-pointer"
+              title="ต้อนรับและลงทะเบียนคนไข้ใหม่"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>+ ต้อนรับ & สแกนหน้า</span>
+              <span className="hidden md:inline">+ ต้อนรับ & สแกนหน้า</span>
+              <span className="md:hidden">+ ต้อนรับ</span>
             </button>
 
             {/* Central DB Sync Status Badge */}
             <button
               onClick={() => setIsNetworkSyncModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold transition cursor-pointer shadow-2xs"
+              className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold transition cursor-pointer shadow-2xs"
               title="ตั้งค่าเชื่อมต่อเซิร์ฟเวอร์กลาง & ซิงค์ข้อมูลข้ามเครื่อง (Multi-Device Sync)"
             >
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -2170,15 +2225,15 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             </button>
 
             {/* User Profile Badge (Real user + role) */}
-            <div className="flex items-center gap-2 pl-2 border-l border-cyan-200">
+            <div className="flex items-center gap-1.5 sm:gap-2 pl-1.5 sm:pl-2 border-l border-cyan-200">
               <div
-                className={`w-8 h-8 rounded-full font-extrabold flex items-center justify-center text-xs shadow-md flex-shrink-0 ${
+                className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full font-extrabold flex items-center justify-center text-xs shadow-md flex-shrink-0 ${
                   currentRole === 'admin' ? 'bg-[#0A2540] text-amber-300' : 'bg-gradient-to-br from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white'
                 }`}
               >
                 {currentUser?.name?.charAt(0) || (currentRole === 'admin' ? 'ผ' : 'ธ')}
               </div>
-              <div className="hidden sm:block text-left max-w-[110px] lg:max-w-[160px]">
+              <div className="hidden lg:block text-left max-w-[110px] xl:max-w-[160px]">
                 <div className="text-xs font-bold text-[#0F2F2B] leading-tight truncate">
                   {currentUser?.name || (currentRole === 'admin' ? 'นพ. วรชัย' : 'กภ. ธนากร')}
                 </div>
@@ -2191,7 +2246,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             {/* Logout Button */}
             <button
               onClick={handleStaffLogout}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition cursor-pointer"
+              className="flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition cursor-pointer"
               title="ออกจากระบบบุคลากร"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -2369,8 +2424,11 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
               {/* Table of Users */}
               <div className="bg-white rounded-2xl border border-cyan-100 shadow-xs overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs sm:text-sm border-collapse">
+                <div className="overflow-x-auto -mx-1 sm:mx-0">
+                  <div className="text-[11px] text-slate-400 sm:hidden flex items-center gap-1 p-2 bg-slate-50 border-b border-cyan-50">
+                    <span>👉 เลื่อนตารางไปทางขวาเพื่อดูข้อมูลทั้งหมด</span>
+                  </div>
+                  <table className="min-w-[840px] w-full text-left text-xs sm:text-sm border-collapse">
                     <thead>
                       <tr className="border-b border-cyan-100 text-slate-700 text-[11px] font-bold uppercase tracking-wider bg-gradient-to-r from-emerald-50/80 via-white to-sky-50/80">
                         <th className="py-2.5 px-3 sm:px-4 sticky left-0 bg-gradient-to-r from-emerald-50 to-white z-20 shadow-xs border-r border-cyan-100 min-w-[170px] sm:min-w-[210px]">
@@ -2708,7 +2766,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     </div>
                   )}
 
-                  <div className="w-64 relative">
+                  <div className="w-full sm:w-64 relative">
                     <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
@@ -2750,14 +2808,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   filteredPatients.map((patient) => (
                     <div
                       key={patient.id}
-                      className={`bg-white rounded-3xl p-6 border shadow-sm space-y-4 transition ${
+                      className={`bg-white rounded-3xl p-4 sm:p-6 border shadow-sm space-y-4 transition ${
                         patient.status === 'pending_info'
                           ? 'border-2 border-amber-400 bg-amber-50/25 ring-2 ring-amber-300/40 shadow-md'
                           : 'border border-emerald-100 hover:border-emerald-300'
                       }`}
                     >
                       {/* Patient Main Bar */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-50 pb-3">
+                      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 border-b border-emerald-50 pb-3">
                         <div className="flex items-center gap-3">
                           {(() => {
                             const faceImg = patient.face_image_url || patientFaceStorageService.getProfileFaceImage(patient.code);
@@ -2765,10 +2823,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                               <img
                                 src={faceImg}
                                 alt={patient.name}
-                                className="w-12 h-12 rounded-2xl object-cover shadow-md border-2 border-emerald-300"
+                                className="w-12 h-12 rounded-2xl object-cover shadow-md border-2 border-emerald-300 flex-shrink-0"
                               />
                             ) : (
-                              <div className={`w-12 h-12 rounded-2xl text-white font-black text-lg flex items-center justify-center shadow-md ${
+                              <div className={`w-12 h-12 rounded-2xl text-white font-black text-lg flex items-center justify-center shadow-md flex-shrink-0 ${
                                 patient.status === 'pending_info'
                                   ? 'bg-gradient-to-br from-amber-500 to-amber-700'
                                   : 'bg-gradient-to-br from-[#10B981] to-[#059669]'
@@ -2777,9 +2835,9 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                               </div>
                             );
                           })()}
-                          <div>
+                          <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-extrabold text-base text-[#0F2F2B]">{patient.name}</span>
+                              <span className="font-extrabold text-base text-[#0F2F2B] truncate">{patient.name}</span>
                               <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 font-mono text-xs font-bold text-emerald-800">
                                 {patient.code}
                               </span>
@@ -2814,19 +2872,19 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                 );
                               })()}
                             </div>
-                            <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-3">
+                            <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-2 sm:gap-3 flex-wrap">
                               <span>โทร: <strong className="text-slate-700">{patient.phone || 'ยังไม่ได้ระบุ'}</strong></span>
-                              <span>•</span>
+                              <span className="hidden sm:inline">•</span>
                               <span>วันที่เริ่มเข้าระบบ: <strong className="text-emerald-800">{patient.created_at || '2026-02-01'}</strong></span>
                             </div>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2 pt-1 xl:pt-0">
                           {/* Face Enrollment Button */}
                           <button
                             onClick={() => setEnrollingFacePatient(patient)}
-                            className="px-3.5 py-2 rounded-full border border-teal-300 bg-teal-50 hover:bg-teal-100 text-teal-800 text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-2xs active:scale-95"
+                            className="flex-1 sm:flex-none justify-center px-3.5 py-2 rounded-full border border-teal-300 bg-teal-50 hover:bg-teal-100 text-teal-800 text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-2xs active:scale-95"
                             title="สแกนใบหน้าคนไข้ 10 ช็อต หรืออัปโหลดรูป เพื่อให้ตู้ Kiosk จดจำใบหน้าได้ทันที"
                           >
                             <Camera className="w-3.5 h-3.5 text-teal-600" />
@@ -2835,7 +2893,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                           {patient.status === 'pending_info' ? (
                             <button
                               onClick={() => setPatientDetailModal({ ...patient })}
-                              className="px-4 py-2 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-extrabold text-xs shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                              className="flex-1 sm:flex-none justify-center px-4 py-2 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-extrabold text-xs shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
                               title="กรอกข้อมูลคนไข้และซิงค์กลับตู้ Kiosk ทันที"
                             >
                               <Pencil className="w-3.5 h-3.5 text-white" />
@@ -2844,7 +2902,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                           ) : (
                             <button
                               onClick={() => setPatientDetailModal({ ...patient })}
-                              className={`px-4 py-2 rounded-full border text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                              className={`flex-1 sm:flex-none justify-center px-4 py-2 rounded-full border text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
                                 canEditUser(patient)
                                   ? 'border-emerald-200 text-emerald-800 hover:bg-emerald-50'
                                   : 'border-slate-200 text-slate-600 hover:bg-slate-50'
@@ -2882,7 +2940,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                 showToast(`เลือกคนไข้ ${patient.name} เข้าสู่ระบบเรียบร้อย`);
                                 onClose();
                               }}
-                              className="px-4 py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-bold hover:opacity-95 transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-cyan-500/25 active:scale-95"
+                              className="flex-1 sm:flex-none justify-center px-4 py-2 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs font-bold hover:opacity-95 transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-cyan-500/25 active:scale-95"
                             >
                               <Play className="w-3.5 h-3.5" />
                               <span>เข้าทำกายภาพที่ตู้</span>
@@ -2892,14 +2950,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       </div>
 
                       {/* Clinical Grid Details */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2.5 sm:gap-3 text-xs">
                         {/* 1. ประวัติการซักประวัติ */}
                         <div className="p-3.5 rounded-2xl bg-emerald-50/50 border border-emerald-100 space-y-1">
                           <div className="font-bold text-emerald-900 flex items-center gap-1.5">
                             <FileText className="w-3.5 h-3.5 text-emerald-600" />
                             <span>ประวัติการซักประวัติ (Chief Complaint)</span>
                           </div>
-                          <p className="text-slate-600 leading-relaxed text-[11px]">
+                          <p className="text-slate-600 leading-relaxed text-[11px] break-words">
                             {patient.chiefComplaint || patient.diagnosis || 'มีอาการปวดตึงข้อไหล่และกล้ามเนื้อเรื้อรัง'}
                           </p>
                         </div>
@@ -2913,7 +2971,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                           <div className="text-[11px] text-slate-700">
                             <strong>แพทย์/กภ.:</strong> {patient.assignedTherapistName || 'กภ. ธนากร วงศ์สวัสดิ์'}
                           </div>
-                          <div className="text-[11px] text-slate-600">
+                          <div className="text-[11px] text-slate-600 break-words">
                             <strong>ประวัติคนไข้:</strong> {(patient.patientBackground || '')
                               .replace(/\[PENDING_INFO\]/g, '')
                               .replace(/FACE_EMB:\[.*?\]/gs, '')
@@ -2929,7 +2987,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                             <Activity className="w-3.5 h-3.5 text-emerald-600" />
                             <span>ผลการรักษา (Outcome / ROM)</span>
                           </div>
-                          <p className="text-slate-600 leading-relaxed text-[11px]">
+                          <p className="text-slate-600 leading-relaxed text-[11px] break-words">
                             {patient.treatmentOutcome || 'ROM องศาเพิ่มขึ้น 12°, อาการปวดลดลง ความสม่ำเสมอ 92%'}
                           </p>
                         </div>
@@ -2940,7 +2998,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                             <Sparkles className="w-3.5 h-3.5 text-amber-600" />
                             <span>โน้ตคำแนะนำจากนักกายภาพ</span>
                           </div>
-                          <p className="text-slate-700 leading-relaxed text-[11px]">
+                          <p className="text-slate-700 leading-relaxed text-[11px] break-words">
                             {(patient.therapistNotes || '')
                               .replace(/\[PENDING_INFO\]/g, '')
                               .replace(/บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว/g, '')
@@ -3179,70 +3237,65 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               </div>
 
               {/* Stats Cards */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5">
-                <div className="bg-white rounded-2xl p-3 sm:p-3.5 border border-emerald-100 shadow-2xs flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
-                    <CalendarDays className="w-5 h-5" />
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3.5">
+                <div className="bg-white rounded-2xl p-2.5 sm:p-3.5 border border-emerald-100 shadow-2xs flex items-center gap-2.5 sm:gap-3">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
+                    <CalendarDays className="w-4 h-4 sm:w-5 sm:h-5" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-xl sm:text-2xl font-black text-[#0F2F2B] leading-none">
+                    <div className="text-lg sm:text-2xl font-black text-[#0F2F2B] leading-none">
                       {treatmentPlans.length}
                     </div>
-                    <div className="text-[11px] text-slate-500 font-semibold mt-1 truncate">ตารางนัดหมายทั้งหมด</div>
+                    <div className="text-[10px] sm:text-[11px] text-slate-500 font-semibold mt-1 truncate">ตารางนัดหมายทั้งหมด</div>
                   </div>
                 </div>
 
-                <div className="bg-white rounded-2xl p-3 sm:p-3.5 border border-emerald-100 shadow-2xs flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
-                    <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                <div className="bg-white rounded-2xl p-2.5 sm:p-3.5 border border-emerald-100 shadow-2xs flex items-center gap-2.5 sm:gap-3">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
+                    <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-xl sm:text-2xl font-black text-[#0F2F2B] leading-none">
+                    <div className="text-lg sm:text-2xl font-black text-[#0F2F2B] leading-none">
                       {treatmentPlans.filter((p) => p.status === 'active').length}
                     </div>
-                    <div className="text-[11px] text-slate-500 font-semibold mt-1 truncate">กำลังรักษา (Active)</div>
+                    <div className="text-[10px] sm:text-[11px] text-slate-500 font-semibold mt-1 truncate">กำลังรักษา (Active)</div>
                   </div>
                 </div>
 
-                <div className="bg-white rounded-2xl p-3 sm:p-3.5 border border-emerald-100 shadow-2xs flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center flex-shrink-0">
-                    <Clock className="w-5 h-5 text-amber-600" />
+                <div className="bg-white rounded-2xl p-2.5 sm:p-3.5 border border-emerald-100 shadow-2xs flex items-center gap-2.5 sm:gap-3">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center flex-shrink-0">
+                    <Clock className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-xl sm:text-2xl font-black text-[#0F2F2B] leading-none">
+                    <div className="text-lg sm:text-2xl font-black text-[#0F2F2B] leading-none">
                       {treatmentPlans.filter((p) => p.status === 'paused').length}
                     </div>
-                    <div className="text-[11px] text-slate-500 font-semibold mt-1 truncate">พักชั่วคราว (Paused)</div>
+                    <div className="text-[10px] sm:text-[11px] text-slate-500 font-semibold mt-1 truncate">พักชั่วคราว (Paused)</div>
                   </div>
                 </div>
 
-                <div className="bg-white rounded-2xl p-3 sm:p-3.5 border border-emerald-100 shadow-2xs flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
-                    <Activity className="w-5 h-5 text-blue-600" />
+                <div className="bg-white rounded-2xl p-2.5 sm:p-3.5 border border-emerald-100 shadow-2xs flex items-center gap-2.5 sm:gap-3">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+                    <Activity className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-xl sm:text-2xl font-black text-[#0F2F2B] leading-none">
+                    <div className="text-lg sm:text-2xl font-black text-[#0F2F2B] leading-none">
                       {treatmentPlans.filter((p) => p.status === 'completed').length}
                     </div>
-                    <div className="text-[11px] text-slate-500 font-semibold mt-1 truncate">สำเร็จแล้ว (Completed)</div>
+                    <div className="text-[10px] sm:text-[11px] text-slate-500 font-semibold mt-1 truncate">สำเร็จแล้ว (Completed)</div>
                   </div>
                 </div>
               </div>
 
-
-
-
-
-
-                            {/* ================================================================== */}
+              {/* ================================================================== */}
               {/* INTERACTIVE CALENDAR VIEW (รองรับทั้งรายบุคคล และ ปฏิทินคนไข้รวม)       */}
               {/* ================================================================== */}
-              <div className="space-y-6 animate-fadeIn text-left">
+              <div className="space-y-4 sm:space-y-6 animate-fadeIn text-left">
                   {/* Calendar Card Container matching Image 2 */}
-                  <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm p-6 sm:p-8 space-y-6">
+                  <div className="bg-white rounded-2xl sm:rounded-[32px] border border-slate-100 shadow-sm p-3.5 sm:p-6 lg:p-8 space-y-4 sm:space-y-6">
                     {/* Header: Month Navigator + Status Legends */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-100">
-                      <div className="flex items-center gap-3">
+                    <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                      <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
                         <button
                           type="button"
                           onClick={() => {
@@ -3253,13 +3306,13 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                               setScheduleSelectedMonth(scheduleSelectedMonth - 1);
                             }
                           }}
-                          className="w-9 h-9 rounded-full border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-600 transition cursor-pointer"
+                          className="w-8 h-8 sm:w-9 sm:h-9 rounded-full border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-600 transition cursor-pointer"
                           title="เดือนก่อนหน้า"
                         >
-                          <ChevronLeft className="w-5 h-5" />
+                          <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
                         </button>
 
-                        <h2 className="text-xl sm:text-2xl font-black text-[#0F2F2B] tracking-tight">
+                        <h2 className="text-lg sm:text-2xl font-black text-[#0F2F2B] tracking-tight">
                           {THAI_MONTH_NAMES[scheduleSelectedMonth]} {scheduleSelectedYear + 543}
                         </h2>
 
@@ -3273,10 +3326,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                               setScheduleSelectedMonth(scheduleSelectedMonth + 1);
                             }
                           }}
-                          className="w-9 h-9 rounded-full border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-600 transition cursor-pointer"
+                          className="w-8 h-8 sm:w-9 sm:h-9 rounded-full border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-600 transition cursor-pointer"
                           title="เดือนถัดไป"
                         >
-                          <ChevronRight className="w-5 h-5" />
+                          <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
                         </button>
 
                         <button
@@ -3286,7 +3339,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                             setScheduleSelectedYear(2026);
                             setSelectedCalendarDay(14);
                           }}
-                          className="px-3.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-black border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer"
+                          className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-black border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer"
                         >
                           วันนี้
                         </button>
@@ -3317,70 +3370,70 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                           <button
                             type="button"
                             onClick={(e) => handleDeleteDayAppointments(selectedCalendarDay, e)}
-                            className="px-3.5 py-1 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-black border border-rose-300 transition flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95"
+                            className="px-3 py-1 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-black border border-rose-300 transition flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95"
                             title={`ลบวันนัดหมายวันที่ ${selectedCalendarDay} ${THAI_MONTH_NAMES[scheduleSelectedMonth]}`}
                           >
                             <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-                            <span>ลบวันนัด (วันที่ {selectedCalendarDay})</span>
+                            <span>ลบวันนัด ({selectedCalendarDay})</span>
                           </button>
                         )}
                       </div>
 
                       {/* Status Legends matching Image 2 */}
-                      <div className="flex items-center gap-4 flex-wrap">
+                      <div className="flex items-center gap-2.5 sm:gap-4 flex-wrap text-[11px] sm:text-xs">
                         <div className="flex items-center gap-1.5">
-                          <span className="w-2.5 h-2.5 rounded-full bg-[#10B981]" />
-                          <span className="text-xs font-bold text-slate-600">กำลังรักษา</span>
+                          <span className="w-2 sm:w-2.5 h-2 sm:h-2.5 rounded-full bg-[#10B981]" />
+                          <span className="font-bold text-slate-600">กำลังรักษา</span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B]" />
-                          <span className="text-xs font-bold text-slate-600">พักการฝึก</span>
+                          <span className="w-2 sm:w-2.5 h-2 sm:h-2.5 rounded-full bg-[#F59E0B]" />
+                          <span className="font-bold text-slate-600">พักการฝึก</span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <span className="w-2.5 h-2.5 rounded-full bg-[#3B82F6]" />
-                          <span className="text-xs font-bold text-slate-600">สำเร็จครบโปรแกรม</span>
+                          <span className="w-2 sm:w-2.5 h-2 sm:h-2.5 rounded-full bg-[#3B82F6]" />
+                          <span className="font-bold text-slate-600">สำเร็จครบโปรแกรม</span>
                         </div>
                       </div>
                     </div>
 
                     {/* Weekday Columns Header (7 Columns) with colored dots matching Image 2 */}
-                    <div className="grid grid-cols-7 gap-2.5 sm:gap-3 text-center">
-                      <div className="flex items-center justify-center gap-1.5 text-xs font-black text-slate-700 py-1">
-                        <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    <div className="grid grid-cols-7 gap-1 sm:gap-2.5 text-center">
+                      <div className="flex items-center justify-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-black text-slate-700 py-1">
+                        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-amber-500" />
                         <span>จ.</span>
                       </div>
-                      <div className="flex items-center justify-center gap-1.5 text-xs font-black text-slate-700 py-1">
-                        <span className="w-2 h-2 rounded-full bg-pink-500" />
+                      <div className="flex items-center justify-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-black text-slate-700 py-1">
+                        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-pink-500" />
                         <span>อ.</span>
                       </div>
-                      <div className="flex items-center justify-center gap-1.5 text-xs font-black text-slate-700 py-1">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      <div className="flex items-center justify-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-black text-slate-700 py-1">
+                        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500" />
                         <span>พ.</span>
                       </div>
-                      <div className="flex items-center justify-center gap-1.5 text-xs font-black text-slate-700 py-1">
-                        <span className="w-2 h-2 rounded-full bg-orange-500" />
+                      <div className="flex items-center justify-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-black text-slate-700 py-1">
+                        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-orange-500" />
                         <span>พฤ.</span>
                       </div>
-                      <div className="flex items-center justify-center gap-1.5 text-xs font-black text-slate-700 py-1">
-                        <span className="w-2 h-2 rounded-full bg-blue-500" />
+                      <div className="flex items-center justify-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-black text-slate-700 py-1">
+                        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-blue-500" />
                         <span>ศ.</span>
                       </div>
-                      <div className="flex items-center justify-center gap-1.5 text-xs font-black text-slate-700 py-1">
-                        <span className="w-2 h-2 rounded-full bg-purple-500" />
+                      <div className="flex items-center justify-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-black text-slate-700 py-1">
+                        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-purple-500" />
                         <span>ส.</span>
                       </div>
-                      <div className="flex items-center justify-center gap-1.5 text-xs font-black text-slate-700 py-1">
-                        <span className="w-2 h-2 rounded-full bg-rose-500" />
+                      <div className="flex items-center justify-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-black text-slate-700 py-1">
+                        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-rose-500" />
                         <span>อา.</span>
                       </div>
                     </div>
 
                     {/* 35 Calendar Cells (October 2569 / 2026) */}
-                    <div className="grid grid-cols-7 gap-2.5 sm:gap-3">
+                    <div className="grid grid-cols-7 gap-1 sm:gap-2.5">
                       {/* Leading 3 empty cells for Mon, Tue, Wed before Thu Oct 1 */}
-                      <div className="bg-slate-50/40 rounded-2xl min-h-[92px] border border-transparent" />
-                      <div className="bg-slate-50/40 rounded-2xl min-h-[92px] border border-transparent" />
-                      <div className="bg-slate-50/40 rounded-2xl min-h-[92px] border border-transparent" />
+                      <div className="bg-slate-50/40 rounded-xl sm:rounded-2xl min-h-[58px] sm:min-h-[82px] lg:min-h-[92px] border border-transparent" />
+                      <div className="bg-slate-50/40 rounded-xl sm:rounded-2xl min-h-[58px] sm:min-h-[82px] lg:min-h-[92px] border border-transparent" />
+                      <div className="bg-slate-50/40 rounded-xl sm:rounded-2xl min-h-[58px] sm:min-h-[82px] lg:min-h-[92px] border border-transparent" />
 
                       {/* Days 1 to 31 */}
                       {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => {
@@ -3426,7 +3479,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                           <div
                             key={day}
                             onClick={() => setSelectedCalendarDay(day)}
-                            className={`rounded-2xl min-h-[92px] p-2.5 flex flex-col justify-between transition cursor-pointer select-none relative ${
+                            className={`rounded-xl sm:rounded-2xl min-h-[58px] sm:min-h-[82px] lg:min-h-[92px] p-1 sm:p-2.5 flex flex-col justify-between transition cursor-pointer select-none relative ${
                               isSelected
                                 ? 'border-2 border-[#00A8E8] bg-white shadow-md shadow-cyan-100/80 ring-2 ring-cyan-200/50'
                                 : isToday
@@ -3437,7 +3490,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                             {/* Day Header Row */}
                             <div className="flex items-center justify-between">
                               <span
-                                className={`text-sm font-extrabold ${
+                                className={`text-xs sm:text-sm font-extrabold ${
                                   isSelected
                                     ? 'text-cyan-700 font-black'
                                     : isToday
@@ -3449,14 +3502,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                               </span>
 
                               {isToday && (
-                                <span className="px-2 py-0.5 rounded-full bg-[#10B981] text-white text-[10px] font-extrabold shadow-2xs">
+                                <span className="px-1 sm:px-2 py-0.2 sm:py-0.5 rounded-full bg-[#10B981] text-white text-[9px] sm:text-[10px] font-extrabold shadow-2xs">
                                   วันนี้
                                 </span>
                               )}
                             </div>
 
                             {/* Middle: Appointment Pills or Action Button */}
-                            <div className="space-y-1 my-1">
+                            <div className="space-y-0.5 sm:space-y-1 my-0.5 sm:my-1">
                               {displayedAppointments.map((apt, aIdx) => (
                                 <div
                                   key={aIdx}
@@ -3479,7 +3532,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                       setIsQuickInfoModalOpen(true);
                                     }
                                   }}
-                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold truncate transition cursor-pointer hover:opacity-90 flex items-center justify-between gap-1 group/pill ${
+                                  className={`px-1 sm:px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-bold truncate transition cursor-pointer hover:opacity-90 flex items-center justify-between gap-0.5 sm:gap-1 group/pill ${
                                     apt.type === 'dual'
                                       ? 'bg-gradient-to-r from-emerald-100 via-teal-50 to-purple-100 text-[#064E3B] border border-emerald-300 shadow-2xs font-extrabold'
                                       : apt.type === 'green'
@@ -3494,7 +3547,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                   <button
                                     type="button"
                                     onClick={(e) => handleDeleteAppointment(day, aIdx, e)}
-                                    className="p-0.5 rounded-full hover:bg-rose-200 text-slate-400 hover:text-rose-600 transition flex items-center justify-center flex-shrink-0 cursor-pointer ml-1"
+                                    className="p-0.5 rounded-full hover:bg-rose-200 text-slate-400 hover:text-rose-600 transition flex items-center justify-center flex-shrink-0 cursor-pointer ml-0.5 sm:ml-1"
                                     title={`ลบนัดหมาย ${apt.time} ${apt.name}`}
                                   >
                                     <X className="w-2.5 h-2.5 stroke-[3]" />
@@ -3504,7 +3557,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
                               {/* Selected Day Action Button matching Image 2 (+ ตัดคอร์สที่นี่) */}
                               {isSelected && (
-                                <div className="space-y-1 mt-1">
+                                <div className="space-y-0.5 sm:space-y-1 mt-0.5 sm:mt-1">
                                   <button
                                     type="button"
                                     onClick={(e) => {
@@ -3514,7 +3567,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                       setSelectedDateForCourse(`${scheduleSelectedYear}-${mStr}-${dStr}`);
                                       setIsCourseModeModalOpen(true);
                                     }}
-                                    className="w-full py-1.5 px-2 bg-[#009FD9] hover:bg-[#0089BD] text-white rounded-full text-[11px] font-black shadow-xs hover:shadow transition flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                                    className="w-full py-1 sm:py-1.5 px-1 sm:px-2 bg-[#009FD9] hover:bg-[#0089BD] text-white rounded-full text-[9px] sm:text-[11px] font-black shadow-xs hover:shadow transition flex items-center justify-center gap-0.5 sm:gap-1 active:scale-95 cursor-pointer"
                                     title="คลิกเพื่อเลือกรูปแบบการฝึกและตัดคอร์ส"
                                   >
                                     <span>+ ตัดคอร์สที่นี่</span>
@@ -3523,10 +3576,10 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                     <button
                                       type="button"
                                       onClick={(e) => handleDeleteDayAppointments(day, e)}
-                                      className="w-full py-1 px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-full text-[10px] font-black shadow-2xs hover:shadow transition flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                                      className="w-full py-0.5 sm:py-1 px-1 sm:px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-full text-[9px] sm:text-[10px] font-black shadow-2xs hover:shadow transition flex items-center justify-center gap-0.5 sm:gap-1 active:scale-95 cursor-pointer"
                                       title={`ลบวันนัดหมายวันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]}`}
                                     >
-                                      <Trash2 className="w-3 h-3 text-rose-600" />
+                                      <Trash2 className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-rose-600" />
                                       <span>ลบวันนัด</span>
                                     </button>
                                   )}
@@ -3541,7 +3594,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       })}
 
                       {/* Trailing 1 empty cell to complete 35 cells grid */}
-                      <div className="bg-slate-50/40 rounded-2xl min-h-[92px] border border-transparent" />
+                      <div className="bg-slate-50/40 rounded-xl sm:rounded-2xl min-h-[58px] sm:min-h-[82px] lg:min-h-[92px] border border-transparent" />
                     </div>
                   </div>
                 </div>
@@ -3754,16 +3807,19 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       </p>
                     </div>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs border-collapse">
+                    <div className="overflow-x-auto -mx-1 sm:mx-0">
+                      <div className="text-[11px] text-slate-400 sm:hidden flex items-center gap-1 mb-1.5 px-3">
+                        <span>👉 เลื่อนตารางแนวนอนเพื่อดูข้อมูลทั้งหมด</span>
+                      </div>
+                      <table className="min-w-[760px] w-full text-left text-xs border-collapse">
                         <thead>
                           <tr className="border-b border-emerald-100 bg-emerald-50/70 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
-                            <th className="py-3 px-4">คนไข้ (HN / ชื่อ)</th>
-                            <th className="py-3 px-4">อายุ / เพศ</th>
-                            <th className="py-3 px-4">วันที่รับเข้า (Admission)</th>
-                            <th className="py-3 px-4">อาการเริ่มต้น / การวินิจฉัย</th>
-                            <th className="py-3 px-4">สถานะ</th>
-                            <th className="py-3 px-4 text-right">ทางลัดการทำงาน</th>
+                            <th className="py-3 px-4 whitespace-nowrap min-w-[150px]">คนไข้ (HN / ชื่อ)</th>
+                            <th className="py-3 px-4 whitespace-nowrap min-w-[110px]">อายุ / เพศ</th>
+                            <th className="py-3 px-4 whitespace-nowrap min-w-[125px]">วันที่รับเข้า (Admission)</th>
+                            <th className="py-3 px-4 whitespace-nowrap min-w-[160px]">อาการเริ่มต้น / การวินิจฉัย</th>
+                            <th className="py-3 px-4 whitespace-nowrap min-w-[90px]">สถานะ</th>
+                            <th className="py-3 px-4 text-right whitespace-nowrap min-w-[200px]">ทางลัดการทำงาน</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-emerald-50">
@@ -3991,14 +4047,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                 </div>
 
                 {/* Therapist Cards Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4 sm:gap-5">
                   {filteredTherapists.map((therapist) => {
                     const canEdit = canEditTherapist(therapist);
 
                     return (
                       <div
                         key={therapist.id}
-                        className="bg-white rounded-3xl p-6 border border-emerald-100 shadow-sm space-y-4 transition"
+                        className="bg-white rounded-3xl p-4 sm:p-6 border border-emerald-100 shadow-sm space-y-4 transition"
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
@@ -4122,17 +4178,20 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                       ขณะนี้ไม่มีประวัติการฝากเคสชั่วคราวในระบบ
                     </div>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs border-collapse">
+                    <div className="overflow-x-auto -mx-1 sm:mx-0">
+                      <div className="text-[11px] text-slate-400 sm:hidden flex items-center gap-1 mb-1.5 px-1">
+                        <span>👉 เลื่อนตารางแนวนอนเพื่อดูข้อมูลทั้งหมด</span>
+                      </div>
+                      <table className="min-w-[760px] sm:min-w-[820px] w-full text-left text-xs border-collapse">
                         <thead>
                           <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
-                            <th className="py-2.5 px-3">คนไข้ (HN / ชื่อ)</th>
-                            <th className="py-2.5 px-3">นักกายภาพผู้รับผิดชอบหลัก</th>
-                            <th className="py-2.5 px-3">นักกายภาพที่รับฝากดูแลแทน</th>
-                            <th className="py-2.5 px-3">ช่วงวันที่ฝากเคส</th>
-                            <th className="py-2.5 px-3">เหตุผล / บันทึกทางคลินิก</th>
-                            <th className="py-2.5 px-3">สถานะ</th>
-                            <th className="py-2.5 px-3 text-right">อำนาจผู้บริหาร</th>
+                            <th className="py-2.5 px-3 whitespace-nowrap min-w-[130px]">คนไข้ (HN / ชื่อ)</th>
+                            <th className="py-2.5 px-3 whitespace-nowrap min-w-[150px]">นักกายภาพผู้รับผิดชอบหลัก</th>
+                            <th className="py-2.5 px-3 whitespace-nowrap min-w-[160px]">นักกายภาพที่รับฝากดูแลแทน</th>
+                            <th className="py-2.5 px-3 whitespace-nowrap min-w-[125px]">ช่วงวันที่ฝากเคส</th>
+                            <th className="py-2.5 px-3 whitespace-nowrap min-w-[170px]">เหตุผล / บันทึกทางคลินิก</th>
+                            <th className="py-2.5 px-3 whitespace-nowrap min-w-[95px]">สถานะ</th>
+                            <th className="py-2.5 px-3 text-right whitespace-nowrap min-w-[120px]">อำนาจผู้บริหาร</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -4253,12 +4312,12 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   />
                 </div>
 
-                <div className="flex items-center gap-1.5 text-xs">
+                <div className="flex items-center gap-1.5 text-xs overflow-x-auto no-scrollbar py-1 max-w-full">
                   {['all', 'AUTH', 'PATIENT', 'THERAPIST', 'TREATMENT', 'SYSTEM', 'AI'].map((cat) => (
                     <button
                       key={cat}
                       onClick={() => setLogCategoryFilter(cat)}
-                      className={`px-3 py-1 rounded-full font-bold transition cursor-pointer ${
+                      className={`px-3 py-1 rounded-full font-bold transition cursor-pointer whitespace-nowrap flex-shrink-0 ${
                         logCategoryFilter === cat
                           ? 'bg-[#10B981] text-white shadow-sm'
                           : 'bg-white border border-emerald-200 text-slate-600 hover:text-emerald-800'
@@ -4272,8 +4331,11 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
               {/* Activity Log Table */}
               <div className="bg-white rounded-2xl border border-emerald-100 shadow-xs overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
+                <div className="overflow-x-auto -mx-1 sm:mx-0">
+                  <div className="text-[11px] text-slate-400 sm:hidden flex items-center gap-1 p-2 bg-slate-50 border-b border-emerald-100">
+                    <span>👉 เลื่อนตารางไปทางขวาเพื่อดูข้อมูลทั้งหมด</span>
+                  </div>
+                  <table className="min-w-[780px] w-full text-left text-xs border-collapse">
                     <thead>
                       <tr className="border-b border-emerald-100 text-slate-600 text-[11px] font-bold uppercase tracking-wider bg-emerald-50/70">
                         <th className="py-2.5 px-3 sm:px-4 whitespace-nowrap">Timestamp</th>

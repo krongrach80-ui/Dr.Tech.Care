@@ -273,3 +273,18 @@
   }
 }
 
+/* Smooth Touch & Horizontal Scroll Optimizations for Mobile & Kiosk */
+.overflow-x-auto, .overflow-y-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Hide scrollbar for clean pill tabs while keeping touch scrollable */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+
