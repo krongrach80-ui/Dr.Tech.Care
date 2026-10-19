@@ -23,5 +23,8 @@
     "physical-therapy"
   ],
   "author": "Strong Care Engineering Team",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "pg": "^8.23.1"
+  }
 }
