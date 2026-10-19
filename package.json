@@ -9,6 +9,9 @@
     "build": "cd frontend && npm run build",
     "test": "cd frontend && npm test",
     "test:sync": "node scripts/testMultiDeviceSync.mjs",
+    "bundle:migrations": "node scripts/bundle-migrations.mjs",
+    "run:sql": "node scripts/run-sql.mjs",
+    "test:http-rls": "node scripts/http-rls-proof.mjs",
     "deploy:gh-pages": "powershell -ExecutionPolicy Bypass -File ./deploy_gh_pages.ps1"
   },
   "keywords": [

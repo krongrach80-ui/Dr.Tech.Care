@@ -130,5 +130,7 @@ BEGIN
       '5 17 * * *',
       'SELECT public.auto_reschedule_missed_appointments();'
     );
+  ELSE
+    RAISE WARNING 'Extension pg_cron is not enabled. Skipping cron.schedule for auto-reschedule-daily. Ensure pg_cron is enabled in Supabase extensions for automated nightly rollover.';
   END IF;
 END $$;

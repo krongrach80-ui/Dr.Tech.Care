@@ -9,6 +9,11 @@
 --   2. Modal difficulty ('beginner', 'intermediate', 'advanced') maps to routine_items.difficulty (per-prescription).
 --      exercises.difficulty ('easy', 'medium', 'hard') is library-level catalog metadata only.
 --   3. Modal targetJoint maps to exercises.target_joint.
+--
+-- Extension Schema Requirement (F12):
+--   SECURITY DEFINER functions using pgvector, pgcrypto, or uuid-ossp must include
+--   the extension's installation schema in search_path (e.g. public, extensions, pg_temp)
+--   or schema-qualify operators/types to guarantee reliable execution on any Supabase project.
 -- ============================================================================
 
 -- 1. Enable Required Extensions
@@ -321,6 +326,18 @@ BEGIN
     ALTER TABLE public.medical_notes ALTER COLUMN note DROP NOT NULL;
     ALTER TABLE public.medical_notes ALTER COLUMN author_role DROP NOT NULL;
     ALTER TABLE public.medical_notes ALTER COLUMN formatted_date DROP NOT NULL;
+  END IF;
+
+  -- F1: Unconditionally ensure legacy compatibility columns exist on fresh databases too
+  ALTER TABLE public.medical_notes ADD COLUMN IF NOT EXISTS note text; -- legacy compatibility
+  ALTER TABLE public.medical_notes ADD COLUMN IF NOT EXISTS author_role text; -- legacy compatibility
+  ALTER TABLE public.medical_notes ADD COLUMN IF NOT EXISTS formatted_date text; -- legacy compatibility
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'medical_notes_author_role_check'
+  ) THEN
+    ALTER TABLE public.medical_notes ADD CONSTRAINT medical_notes_author_role_check
+      CHECK (author_role IS NULL OR author_role IN ('admin', 'therapist'));
   END IF;
 END $$;
 
@@ -668,7 +685,7 @@ BEGIN
       -- Handle conflict if another row currently holds target_code (MG-0x)
       SELECT id INTO v_conflicting_id
       FROM public.exercises
-      WHERE code = v_mg_games.target_code AND slug != v_mg_games.slug
+      WHERE code = v_mg_games.target_code AND slug IS DISTINCT FROM v_mg_games.slug
       LIMIT 1;
 
       IF v_conflicting_id IS NOT NULL THEN

@@ -3,7 +3,7 @@
 -- Includes: Core Schema, Extensions, Helpers, Strict RLS,
 --           Triggers, Storage Buckets, Autoreschedule Cron,
 --           and Reference Data (Settings & Clinical Mini-Games).
--- Generated: 2026-10-19T02:53:12.031Z
+-- Generated: 2026-10-19T04:22:10.501Z
 -- ========================================================
 
 
@@ -19,6 +19,11 @@
 --   2. Modal difficulty ('beginner', 'intermediate', 'advanced') maps to routine_items.difficulty (per-prescription).
 --      exercises.difficulty ('easy', 'medium', 'hard') is library-level catalog metadata only.
 --   3. Modal targetJoint maps to exercises.target_joint.
+--
+-- Extension Schema Requirement (F12):
+--   SECURITY DEFINER functions using pgvector, pgcrypto, or uuid-ossp must include
+--   the extension's installation schema in search_path (e.g. public, extensions, pg_temp)
+--   or schema-qualify operators/types to guarantee reliable execution on any Supabase project.
 -- ============================================================================
 
 -- 1. Enable Required Extensions
@@ -331,6 +336,18 @@ BEGIN
     ALTER TABLE public.medical_notes ALTER COLUMN note DROP NOT NULL;
     ALTER TABLE public.medical_notes ALTER COLUMN author_role DROP NOT NULL;
     ALTER TABLE public.medical_notes ALTER COLUMN formatted_date DROP NOT NULL;
+  END IF;
+
+  -- F1: Unconditionally ensure legacy compatibility columns exist on fresh databases too
+  ALTER TABLE public.medical_notes ADD COLUMN IF NOT EXISTS note text; -- legacy compatibility
+  ALTER TABLE public.medical_notes ADD COLUMN IF NOT EXISTS author_role text; -- legacy compatibility
+  ALTER TABLE public.medical_notes ADD COLUMN IF NOT EXISTS formatted_date text; -- legacy compatibility
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'medical_notes_author_role_check'
+  ) THEN
+    ALTER TABLE public.medical_notes ADD CONSTRAINT medical_notes_author_role_check
+      CHECK (author_role IS NULL OR author_role IN ('admin', 'therapist'));
   END IF;
 END $$;
 
@@ -678,7 +695,7 @@ BEGIN
       -- Handle conflict if another row currently holds target_code (MG-0x)
       SELECT id INTO v_conflicting_id
       FROM public.exercises
-      WHERE code = v_mg_games.target_code AND slug != v_mg_games.slug
+      WHERE code = v_mg_games.target_code AND slug IS DISTINCT FROM v_mg_games.slug
       LIMIT 1;
 
       IF v_conflicting_id IS NOT NULL THEN
@@ -829,6 +846,7 @@ END $$;
 -- DR.TECH.CARE: Phase 1 - Migration 2: Security Helpers, Triggers & Strict RLS
 -- Enforces server-side permissions, immutable logs/notes, and locks down anon.
 -- ALL functions use: SET search_path = public, pg_temp
+-- Functions using pgvector/pgcrypto extensions also include 'extensions' in search_path (F12)
 -- ALL open policies (USING true / WITH CHECK true) are permanently eliminated.
 -- ============================================================================
 
@@ -840,19 +858,33 @@ END $$;
 -- RESTRICTED: Never trusts anon or authenticated PostgREST clients.
 -- Explicitly checks service_role JWT claim OR direct superuser/admin DB roles (postgres, supabase_admin)
 -- when no untrusted client session role (anon, authenticated) has been set.
+-- Uses NULLIF(current_setting(...), '') so that set_config(..., '', true) does not cause sticky empty-string bugs.
 CREATE OR REPLACE FUNCTION public.is_trusted_context()
 RETURNS boolean
 LANGUAGE sql
 STABLE
 AS $$
   SELECT 
-    -- 1. Explicit service_role token/caller
-    (auth.role() = 'service_role' OR current_setting('request.jwt.claim.role', true) = 'service_role')
+    -- 1. Explicit service_role token/caller:
+    -- Checks auth.role(), legacy request.jwt.claim.role GUC, or modern PostgREST request.jwt.claims JSON
+    (
+      auth.role() = 'service_role'
+      OR NULLIF(current_setting('request.jwt.claim.role', true), '') = 'service_role'
+      OR (
+        NULLIF(current_setting('request.jwt.claims', true), '') IS NOT NULL 
+        AND (current_setting('request.jwt.claims', true)::jsonb ->> 'role') = 'service_role'
+      )
+    )
     -- 2. Direct database administrative connections (psql, migrations, pg_cron, SQL editor)
+    -- Must NOT have an active client session with anon or authenticated role
     OR (
       session_user IN ('postgres', 'supabase_admin')
       AND (auth.role() IS NULL OR auth.role() = '' OR auth.role() = 'service_role')
-      AND current_setting('request.jwt.claim.role', true) IS NULL
+      AND NULLIF(current_setting('request.jwt.claim.role', true), '') IS NULL
+      AND (
+        NULLIF(current_setting('request.jwt.claims', true), '') IS NULL
+        OR (current_setting('request.jwt.claims', true)::jsonb ->> 'role') IS NULL
+      )
       AND COALESCE(NULLIF(current_setting('role', true), 'none'), session_user) NOT IN ('anon', 'authenticated')
     );
 $$;
@@ -1006,6 +1038,69 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION public.can_write_schedule(uuid) FROM public, anon;
 GRANT EXECUTE ON FUNCTION public.can_write_schedule(uuid) TO authenticated, service_role;
+
+-- Helper: Determine if caller has patient write rights (Admin, Assigned PT, or Active Covering PT)
+-- Directly mirrors UI canWrite capability.
+CREATE OR REPLACE FUNCTION public.can_write_patient(target_patient_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  v_actor_id uuid;
+  v_actor_role text;
+  v_assigned_pt uuid;
+  v_has_active_coverage boolean;
+  v_today date;
+BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN true;
+  END IF;
+
+  v_actor_id := auth.uid();
+  IF v_actor_id IS NULL THEN
+    RETURN false;
+  END IF;
+
+  v_actor_role := public.current_app_role();
+
+  -- 1. Admin has universal patient write rights
+  IF v_actor_role = 'admin' THEN
+    RETURN true;
+  END IF;
+
+  -- 2. Therapist checks
+  IF v_actor_role = 'therapist' THEN
+    SELECT assigned_therapist_id INTO v_assigned_pt
+    FROM public.patients
+    WHERE id = target_patient_id;
+
+    IF v_assigned_pt = v_actor_id THEN
+      RETURN true;
+    END IF;
+
+    -- Check if active covering therapist for today (Asia/Bangkok)
+    v_today := (now() AT TIME ZONE 'Asia/Bangkok')::date;
+    SELECT EXISTS (
+      SELECT 1 FROM public.temporary_coverages
+      WHERE patient_id = target_patient_id
+        AND cover_therapist_id = v_actor_id
+        AND start_date <= v_today
+        AND end_date >= v_today
+        AND status = 'active'
+        AND revoked_at IS NULL
+    ) INTO v_has_active_coverage;
+
+    RETURN v_has_active_coverage;
+  END IF;
+
+  RETURN false;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.can_write_patient(uuid) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.can_write_patient(uuid) TO authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.can_edit_exercise(target_exercise_id uuid)
 RETURNS boolean
@@ -1170,6 +1265,123 @@ CREATE TRIGGER trg_prevent_patient_hard_delete
 BEFORE DELETE ON public.patients
 FOR EACH ROW EXECUTE FUNCTION public.trg_prevent_patient_hard_delete();
 
+-- Guard: Patient Registration Assignment Guard (Non-admin therapist must assign to themselves)
+CREATE OR REPLACE FUNCTION public.trg_guard_patient_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions, pg_temp
+AS $$
+BEGIN
+  IF public.is_trusted_context() OR public.is_admin() THEN
+    RETURN NEW;
+  END IF;
+
+  -- Non-admin therapist registering a patient must assign the patient to their own UID
+  IF NEW.assigned_therapist_id IS NULL THEN
+    NEW.assigned_therapist_id := auth.uid();
+  ELSIF NEW.assigned_therapist_id != auth.uid() THEN
+    RAISE EXCEPTION 'Therapists may only assign newly registered patients to themselves.'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_guard_patient_insert() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_guard_patient_insert() TO authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_guard_patient_insert ON public.patients;
+CREATE TRIGGER trg_guard_patient_insert
+BEFORE INSERT ON public.patients
+FOR EACH ROW EXECUTE FUNCTION public.trg_guard_patient_insert();
+
+-- F10: Patient Deletion / Erasure Procedure (PDPA Compliance)
+-- Anonymizes direct identifiers and removes biometric face templates.
+-- Leaves immutable clinical medical notes intact for statutory medical records retention.
+CREATE OR REPLACE FUNCTION public.admin_anonymize_patient(p_patient_id uuid, p_reason text DEFAULT 'PDPA erasure request')
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  v_patient public.patients%ROWTYPE;
+  v_caller_id uuid := auth.uid();
+  v_caller_name text := 'Admin';
+BEGIN
+  -- 1. Authorization: strictly admin or service_role
+  IF NOT (public.is_trusted_context() OR public.is_admin()) THEN
+    RAISE EXCEPTION 'Only an administrator can anonymize patient records.'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- 2. Find target patient
+  SELECT * INTO v_patient
+  FROM public.patients
+  WHERE id = p_patient_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Patient with ID % not found.', p_patient_id
+      USING ERRCODE = 'P0002';
+  END IF;
+
+  IF v_caller_id IS NOT NULL THEN
+    SELECT full_name INTO v_caller_name FROM public.profiles WHERE id = v_caller_id;
+  END IF;
+
+  -- 3. Delete biometric templates
+  DELETE FROM public.face_templates WHERE patient_id = p_patient_id;
+
+  -- 4. Overwrite direct identifiers and free-text fields in patients table
+  UPDATE public.patients
+  SET full_name = '[ANONYMIZED PATIENT]',
+      phone = '000-000-0000',
+      avatar_url = NULL,
+      pin_hash = NULL,
+      face_vector = NULL,
+      face_registered = false,
+      face_enrolled_at = NULL,
+      chief_complaint = '[ANONYMIZED CLINICAL RECORD]',
+      medical_history = '[ANONYMIZED]',
+      treatment_outcome = '[ANONYMIZED]',
+      therapist_notes = '[ANONYMIZED]',
+      treatment_status = 'discharged',
+      status = 'discharged',
+      updated_at = now()
+  WHERE id = p_patient_id;
+
+  -- 5. Revoke any active temporary coverages
+  UPDATE public.temporary_coverages
+  SET status = 'revoked',
+      revoked_by = v_caller_id,
+      revoked_at = now()
+  WHERE patient_id = p_patient_id AND status = 'active';
+
+  -- 6. Write immutable audit log entry
+  INSERT INTO public.audit_logs (actor_id, actor_name, role, category, action, detail, status)
+  VALUES (
+    v_caller_id,
+    COALESCE(v_caller_name, 'System Admin'),
+    CASE WHEN public.is_admin() THEN 'admin' ELSE 'system' END,
+    'SECURITY',
+    'PATIENT_ANONYMIZED',
+    format('Patient %s (HN: %s) anonymized. Reason: %s', p_patient_id, v_patient.hn, COALESCE(p_reason, 'Not specified')),
+    'success'
+  );
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'patient_id', p_patient_id,
+    'anonymized_at', now()
+  );
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.admin_anonymize_patient(uuid, text) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.admin_anonymize_patient(uuid, text) TO authenticated, service_role;
+
 -- Guard: Pose Exercise Guard in Routine Items
 CREATE OR REPLACE FUNCTION public.trg_check_pose_exercise_guard()
 RETURNS trigger
@@ -1323,7 +1535,7 @@ CREATE OR REPLACE FUNCTION public.trg_guard_temporary_coverages()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_assigned_pt uuid;
@@ -1334,68 +1546,97 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- 1. Enforce patient.assigned_therapist_id = owner_therapist_id
-  SELECT assigned_therapist_id INTO v_assigned_pt
-  FROM public.patients
-  WHERE id = NEW.patient_id;
-
-  IF v_assigned_pt IS DISTINCT FROM NEW.owner_therapist_id THEN
-    RAISE EXCEPTION 'Coverage owner must be the patient''s current assigned therapist.'
-      USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 2. Owner must be auth.uid() unless admin
-  IF NOT public.is_admin() AND NEW.owner_therapist_id != auth.uid() THEN
-    RAISE EXCEPTION 'Therapists can only delegate cases from their own caseload.'
-      USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 3. Cover must be an active therapist
-  SELECT EXISTS (
-    SELECT 1 FROM public.profiles 
-    WHERE id = NEW.cover_therapist_id 
-      AND role = 'therapist' 
-      AND is_active = true 
-      AND deleted_at IS NULL
-  ) INTO v_cover_is_active;
-
-  IF NOT v_cover_is_active THEN
-    RAISE EXCEPTION 'Covering therapist must be an active therapist.'
-      USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 4. No self-delegation
-  IF NEW.owner_therapist_id = NEW.cover_therapist_id THEN
-    RAISE EXCEPTION 'Covering therapist cannot be the owner therapist.'
-      USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 5. Date order check
-  IF NEW.end_date < NEW.start_date THEN
-    RAISE EXCEPTION 'Coverage end date cannot be earlier than start date.'
-      USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 6. No overlapping active coverage for the same patient
-  SELECT EXISTS (
-    SELECT 1 FROM public.temporary_coverages
-    WHERE patient_id = NEW.patient_id
-      AND id != COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid)
-      AND status = 'active'
-      AND revoked_at IS NULL
-      AND start_date <= NEW.end_date
-      AND end_date >= NEW.start_date
-  ) INTO v_overlap;
-
-  IF v_overlap THEN
-    RAISE EXCEPTION 'An active temporary coverage already exists for this patient in the selected date range.'
-      USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 7. On INSERT enforce status = 'active'
   IF TG_OP = 'INSERT' THEN
+    -- 1. Enforce patient.assigned_therapist_id = owner_therapist_id
+    SELECT assigned_therapist_id INTO v_assigned_pt
+    FROM public.patients
+    WHERE id = NEW.patient_id;
+
+    IF v_assigned_pt IS DISTINCT FROM NEW.owner_therapist_id THEN
+      RAISE EXCEPTION 'Coverage owner must be the patient''s current assigned therapist.'
+        USING ERRCODE = 'P0001';
+    END IF;
+
+    -- 2. Owner must be auth.uid() unless admin
+    IF NOT public.is_admin() AND NEW.owner_therapist_id != auth.uid() THEN
+      RAISE EXCEPTION 'Therapists can only delegate cases from their own caseload.'
+        USING ERRCODE = 'P0001';
+    END IF;
+
+    -- 3. Cover must be an active therapist
+    SELECT EXISTS (
+      SELECT 1 FROM public.profiles 
+      WHERE id = NEW.cover_therapist_id 
+        AND role = 'therapist' 
+        AND is_active = true 
+        AND deleted_at IS NULL
+    ) INTO v_cover_is_active;
+
+    IF NOT v_cover_is_active THEN
+      RAISE EXCEPTION 'Covering therapist must be an active therapist.'
+        USING ERRCODE = 'P0001';
+    END IF;
+
+    -- 4. No self-delegation
+    IF NEW.owner_therapist_id = NEW.cover_therapist_id THEN
+      RAISE EXCEPTION 'Covering therapist cannot be the owner therapist.'
+        USING ERRCODE = 'P0001';
+    END IF;
+
+    -- 5. Date order check
+    IF NEW.end_date < NEW.start_date THEN
+      RAISE EXCEPTION 'Coverage end date cannot be earlier than start date.'
+        USING ERRCODE = 'P0001';
+    END IF;
+
+    -- 6. No overlapping active coverage for the same patient
+    SELECT EXISTS (
+      SELECT 1 FROM public.temporary_coverages
+      WHERE patient_id = NEW.patient_id
+        AND id != COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid)
+        AND status = 'active'
+        AND revoked_at IS NULL
+        AND start_date <= NEW.end_date
+        AND end_date >= NEW.start_date
+    ) INTO v_overlap;
+
+    IF v_overlap THEN
+      RAISE EXCEPTION 'An active temporary coverage already exists for this patient in the selected date range.'
+        USING ERRCODE = 'P0001';
+    END IF;
+
     NEW.status := 'active';
     NEW.created_by := COALESCE(auth.uid(), NEW.created_by);
+    RETURN NEW;
+  END IF;
+
+  IF TG_OP = 'UPDATE' THEN
+    -- F9: Who may revoke: admin, the owner, and the cover therapist (decline)
+    IF NOT (public.is_admin() OR auth.uid() = OLD.owner_therapist_id OR auth.uid() = OLD.cover_therapist_id) THEN
+      RAISE EXCEPTION 'Unauthorized to modify temporary coverage.'
+        USING ERRCODE = '42501';
+    END IF;
+
+    -- Non-trusted callers may change ONLY status -> 'revoked' (never 'expired')
+    IF NEW.status != 'revoked' OR OLD.status != 'active' THEN
+      RAISE EXCEPTION 'Non-trusted callers may only change active coverage status to revoked.'
+        USING ERRCODE = 'P0001';
+    END IF;
+
+    -- All other columns must remain unchanged
+    IF NEW.patient_id IS DISTINCT FROM OLD.patient_id OR
+       NEW.owner_therapist_id IS DISTINCT FROM OLD.owner_therapist_id OR
+       NEW.cover_therapist_id IS DISTINCT FROM OLD.cover_therapist_id OR
+       NEW.start_date IS DISTINCT FROM OLD.start_date OR
+       NEW.end_date IS DISTINCT FROM OLD.end_date THEN
+      RAISE EXCEPTION 'Coverage parameters (patient, therapists, dates) cannot be altered on update.'
+        USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Automatically stamp revocation metadata
+    NEW.revoked_by := auth.uid();
+    NEW.revoked_at := now();
+    RETURN NEW;
   END IF;
 
   RETURN NEW;
@@ -1511,13 +1752,16 @@ WITH CHECK (public.is_admin());
 
 CREATE POLICY "patients_pt_insert" ON public.patients
 FOR INSERT TO authenticated
-WITH CHECK (public.current_app_role() = 'therapist');
+WITH CHECK (
+  public.current_app_role() = 'therapist'
+  AND (assigned_therapist_id = auth.uid() OR public.is_admin())
+);
 
--- Therapists can update clinical columns. Sensitive columns are guarded by trigger.
+-- Therapists can update clinical columns for assigned or covered patients (can_write_patient).
 CREATE POLICY "patients_pt_update" ON public.patients
 FOR UPDATE TO authenticated
-USING (public.current_app_role() = 'therapist')
-WITH CHECK (public.current_app_role() = 'therapist');
+USING (public.can_write_patient(id))
+WITH CHECK (public.can_write_patient(id));
 
 -- THERAPISTS
 ALTER TABLE public.therapists ENABLE ROW LEVEL SECURITY;
@@ -1621,9 +1865,9 @@ CREATE POLICY "session_logs_read" ON public.session_logs
 FOR SELECT TO authenticated
 USING (public.current_app_role() IN ('admin', 'therapist'));
 
-CREATE POLICY "session_logs_insert" ON public.session_logs
-FOR INSERT TO authenticated
-WITH CHECK (public.current_app_role() IN ('admin', 'therapist'));
+-- F8: Kiosk session results are written exclusively by Edge Functions using service_role.
+-- Staff-assisted sessions (if required in future) go through a dedicated RPC verifying can_write_patient.
+-- ZERO client-facing INSERT/UPDATE/DELETE policies on session_logs.
 
 -- MEDICAL NOTES (Any therapist can read all & append to any patient with forced author stamping)
 ALTER TABLE public.medical_notes ENABLE ROW LEVEL SECURITY;
@@ -1657,14 +1901,15 @@ WITH CHECK (
   AND end_date >= start_date
 );
 
-CREATE POLICY "temp_cov_owner_revoke" ON public.temporary_coverages
+-- F9: Admin, owner therapist, or covering therapist may revoke active coverage.
+CREATE POLICY "temp_cov_revoke" ON public.temporary_coverages
 FOR UPDATE TO authenticated
 USING (
-  public.current_app_role() = 'therapist'
-  AND (owner_therapist_id = auth.uid() OR cover_therapist_id = auth.uid())
+  public.is_admin()
+  OR (public.current_app_role() = 'therapist' AND (owner_therapist_id = auth.uid() OR cover_therapist_id = auth.uid()))
 )
 WITH CHECK (
-  status IN ('revoked', 'expired')
+  status = 'revoked'
 );
 
 -- FACE TEMPLATES (Biometric embeddings: ZERO client-facing policies)
@@ -1717,6 +1962,7 @@ WITH CHECK (public.is_admin());
 -- ============================================================================
 -- 5. COLUMN-LEVEL PERMISSIONS ON PATIENTS (Locking down pin_hash & face_vector)
 -- ============================================================================
+-- F6: SELECT column visibility (pin_hash and face_vector are strictly excluded)
 REVOKE SELECT ON public.patients FROM authenticated;
 GRANT SELECT (
   id, profile_id, patient_code, hn, full_name, age, gender, phone, avatar_url,
@@ -1724,6 +1970,23 @@ GRANT SELECT (
   treatment_status, progress_pct, chief_complaint, medical_history,
   treatment_outcome, therapist_notes, responsible_therapist_id, started_at,
   status, face_registered, face_enrolled_at, created_at, updated_at
+) ON public.patients TO authenticated;
+
+-- F5a: Explicit allowlist for INSERT and UPDATE on patients
+-- pin_hash, face_vector, face_registered, face_enrolled_at, progress_pct, hn, patient_code are service_role/trigger only!
+REVOKE INSERT, UPDATE ON public.patients FROM authenticated;
+GRANT INSERT (
+  full_name, age, gender, phone,
+  chief_complaint, medical_history, treatment_outcome, therapist_notes,
+  underlying_diseases, drug_allergies, treatment_status,
+  admission_date, started_at, avatar_url, assigned_therapist_id, responsible_therapist_id, status
+) ON public.patients TO authenticated;
+
+GRANT UPDATE (
+  full_name, age, gender, phone,
+  chief_complaint, medical_history, treatment_outcome, therapist_notes,
+  underlying_diseases, drug_allergies, treatment_status,
+  admission_date, started_at, avatar_url, assigned_therapist_id, responsible_therapist_id, status
 ) ON public.patients TO authenticated;
 
 -- ============================================================================
@@ -1744,6 +2007,16 @@ END $$;
 -- Preserve schema usage for anon
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 
+-- F8: Revoke mutation privileges on session_logs from authenticated (kiosk writes via service_role Edge Functions)
+REVOKE INSERT, UPDATE, DELETE ON public.session_logs FROM authenticated;
+
+-- F7: Revoke dangerous table privileges on all public tables from anon and authenticated
+REVOKE TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+
+-- F7: Revoke mutation privileges on append-only medical notes and immutable audit logs
+REVOKE UPDATE, DELETE ON public.medical_notes FROM authenticated;
+REVOKE INSERT, UPDATE, DELETE ON public.audit_logs FROM authenticated;
+
 -- Revoke all table and sequence access from anon
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
@@ -1752,11 +2025,13 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres') THEN
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE TRUNCATE, REFERENCES, TRIGGER ON TABLES FROM anon, authenticated';
     EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon';
     EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon';
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_admin') THEN
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE TRUNCATE, REFERENCES, TRIGGER ON TABLES FROM anon, authenticated';
     EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM anon';
     EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon';
   END IF;
@@ -2083,6 +2358,8 @@ BEGIN
       '5 17 * * *',
       'SELECT public.auto_reschedule_missed_appointments();'
     );
+  ELSE
+    RAISE WARNING 'Extension pg_cron is not enabled. Skipping cron.schedule for auto-reschedule-daily. Ensure pg_cron is enabled in Supabase extensions for automated nightly rollover.';
   END IF;
 END $$;
 

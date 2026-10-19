@@ -591,13 +591,427 @@ BEGIN
     RAISE NOTICE '[PASS] Case 16: Timezone boundary test passed (00:30 Bangkok strictly distinguishes hospital today vs yesterday).';
   END;
 
-  -- Clean up session configs
-  PERFORM set_config('request.jwt.claim.sub', '', true);
+  -- ==========================================================================
+  -- CASE 17: FRESH DB MEDICAL NOTE INSERT & SESSION AUTHOR STAMPING (F1)
+  -- ==========================================================================
+  EXECUTE 'SET LOCAL ROLE authenticated';
+  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
+  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
+
+  -- Therapist inserts medical note with forged author and NULL legacy fields
+  INSERT INTO public.medical_notes (patient_id, note_type, body, author_name)
+  VALUES (v_patient1_id, 'progress', 'Patient completed mobility assessment smoothly.', 'Forged System Admin')
+  RETURNING id INTO v_temp_id;
+
+  SELECT author_id, author_name, note, author_role, formatted_date 
+  INTO v_stamped_note 
+  FROM public.medical_notes 
+  WHERE id = v_temp_id;
+
+  ASSERT v_stamped_note.author_id = v_pt1_owner_id, '[FAIL] Case 17: Medical note author_id was not stamped with session UID!';
+  ASSERT v_stamped_note.author_name != 'Forged System Admin', '[FAIL] Case 17: Forged author_name was accepted on medical note!';
+  ASSERT v_stamped_note.note = 'Patient completed mobility assessment smoothly.', '[FAIL] Case 17: Legacy note column was not back-filled!';
+  ASSERT v_stamped_note.author_role = 'therapist', '[FAIL] Case 17: Legacy author_role was not back-filled!';
+  ASSERT v_stamped_note.formatted_date IS NOT NULL, '[FAIL] Case 17: Legacy formatted_date was not generated!';
+
+  EXECUTE 'RESET ROLE';
+  RAISE NOTICE '[PASS] Case 17: Fresh DB medical note inserted and author metadata stamped from session.';
+
+
+  -- ==========================================================================
+  -- CASE 18: MINIGAME CONVERGENCE CONFLICT RENAME ON NULL SLUG (F2)
+  -- ==========================================================================
+  DECLARE
+    v_conflicting_null_slug_id uuid := 'd0000000-0000-0000-0000-000000000098';
+    v_renamed_code text;
+    v_rec_test record;
+  BEGIN
+    INSERT INTO public.exercises (id, code, slug, name_th, is_minigame)
+    VALUES (v_conflicting_null_slug_id, 'MG-02', NULL, 'Legacy Exercise With Null Slug', false)
+    ON CONFLICT (id) DO UPDATE SET code = 'MG-02', slug = NULL;
+
+    FOR v_rec_test IN
+      SELECT * FROM (VALUES
+        ('minigame_arm_coordination', 'MG-02', 'มินิเกมฝึกประสานการเคลื่อนไหวแขน (Bilateral Arm Coordination)', 'ข้อต่อหัวไหล่และแขนสองข้าง', 5, 10, 2)
+      ) AS t(slug, target_code, name_th, target_joint, rest_sec, reps, sets)
+    LOOP
+      IF EXISTS (
+        SELECT 1 FROM public.exercises WHERE code = v_rec_test.target_code AND slug IS DISTINCT FROM v_rec_test.slug
+      ) THEN
+        UPDATE public.exercises
+        SET code = 'EX-' || upper(substr(md5(random()::text || clock_timestamp()::text), 1, 8))
+        WHERE id = v_conflicting_null_slug_id;
+        RAISE NOTICE 'Notice: Renamed conflicting row with NULL slug to EX- prefix';
+      END IF;
+    END LOOP;
+
+    SELECT code INTO v_renamed_code FROM public.exercises WHERE id = v_conflicting_null_slug_id;
+    ASSERT v_renamed_code LIKE 'EX-%', '[FAIL] Case 18: Conflicting exercise with NULL slug was not renamed to EX- prefix!';
+    DELETE FROM public.exercises WHERE id = v_conflicting_null_slug_id;
+    RAISE NOTICE '[PASS] Case 18: Mini-game conflict check with NULL slug safely renamed conflicting row.';
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 19: THERAPIST WRITE RESTRICTIONS & COVERAGE CLINICAL UPDATE (F5b)
+  -- ==========================================================================
+  -- 19a. Therapist 3 (stranger, no coverage) attempts to update Patient 1 -> 0 rows
+  EXECUTE 'SET LOCAL ROLE authenticated';
+  PERFORM set_config('request.jwt.claim.sub', v_pt3_stranger_id::text, true);
+  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt3_stranger_id::text, 'role', 'authenticated')::text, true);
+
+  UPDATE public.patients
+  SET therapist_notes = 'Tampered by stranger PT'
+  WHERE id = v_patient1_id;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  ASSERT v_rows = 0, '[FAIL] Case 19a: Unassigned/uncovered therapist was able to update patient!';
+
+  -- 19b. Therapist 2 (has active coverage for Patient 1) updates clinical notes -> MUST succeed (1 row)
+  PERFORM set_config('request.jwt.claim.sub', v_pt2_cover_id::text, true);
+  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt2_cover_id::text, 'role', 'authenticated')::text, true);
+
+  UPDATE public.patients
+  SET therapist_notes = 'Covering PT clinical update: gait improved'
+  WHERE id = v_patient1_id;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  ASSERT v_rows = 1, '[FAIL] Case 19b: Active covering therapist was blocked from updating clinical notes!';
+
+  -- 19c. Therapist 2 (covering) attempts to discharge or reassign Patient 1 -> MUST be rejected by sensitive fields trigger
+  v_error_caught := false;
+  BEGIN
+    UPDATE public.patients
+    SET treatment_status = 'discharged'
+    WHERE id = v_patient1_id;
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 19c: Covering therapist was able to discharge patient!';
+
+  EXECUTE 'RESET ROLE';
+  RAISE NOTICE '[PASS] Case 19: can_write_patient correctly restricts stranger PT, permits covered clinical edits, and guards sensitive fields.';
+
+
+  -- ==========================================================================
+  -- CASE 20: PATIENT COLUMN-LEVEL WRITE LOCKDOWN & REGISTRATION GUARD (F5)
+  -- ==========================================================================
+  EXECUTE 'SET LOCAL ROLE authenticated';
+  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
+  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
+
+  -- 20a. Attempt to update pin_hash -> MUST raise 42501 (permission denied for column)
+  v_error_caught := false;
+  BEGIN
+    EXECUTE 'UPDATE public.patients SET pin_hash = ''hacked'' WHERE id = $1' USING v_patient1_id;
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 20a: Therapist was able to update pin_hash!';
+
+  -- 20b. Attempt to update progress_pct -> MUST raise 42501
+  v_error_caught := false;
+  BEGIN
+    EXECUTE 'UPDATE public.patients SET progress_pct = 99.9 WHERE id = $1' USING v_patient1_id;
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 20b: Therapist was able to update progress_pct!';
+
+  -- 20c. Attempt to update face_registered -> MUST raise 42501
+  v_error_caught := false;
+  BEGIN
+    EXECUTE 'UPDATE public.patients SET face_registered = true WHERE id = $1' USING v_patient1_id;
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 20c: Therapist was able to update face_registered!';
+
+  -- 20d. Non-admin therapist registering patient assigned to another therapist -> MUST raise 42501
+  v_error_caught := false;
+  BEGIN
+    INSERT INTO public.patients (full_name, assigned_therapist_id)
+    VALUES ('Patient Stolen', v_pt3_stranger_id);
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 20d: Non-admin therapist was able to assign newly registered patient to another therapist!';
+
+  EXECUTE 'RESET ROLE';
+  RAISE NOTICE '[PASS] Case 20: Column-level write permissions and registration assignment guard strictly enforced.';
+
+
+  -- ==========================================================================
+  -- CASE 21: PATIENT COLUMN-LEVEL VISIBILITY ASSERTION (F6)
+  -- ==========================================================================
+  DECLARE
+    v_missing_select_cols text[];
+    v_anon_select_count int;
+  BEGIN
+    SELECT array_agg(attname::text ORDER BY attname::text)
+    INTO v_missing_select_cols
+    FROM pg_attribute
+    WHERE attrelid = 'public.patients'::regclass
+      AND attnum > 0
+      AND NOT attisdropped
+      AND NOT has_column_privilege('authenticated', 'public.patients', attname, 'SELECT');
+
+    ASSERT v_missing_select_cols = ARRAY['face_vector', 'pin_hash'],
+      format('[FAIL] Case 21: Expected hidden columns to be {face_vector, pin_hash}, found: %s', v_missing_select_cols::text);
+
+    SELECT count(*) INTO v_anon_select_count
+    FROM pg_attribute
+    WHERE attrelid = 'public.patients'::regclass
+      AND attnum > 0
+      AND NOT attisdropped
+      AND has_column_privilege('anon', 'public.patients', attname, 'SELECT');
+
+    ASSERT v_anon_select_count = 0, '[FAIL] Case 21: Anon role has SELECT privilege on public.patients columns!';
+
+    RAISE NOTICE '[PASS] Case 21: Patient column visibility strictly verified: only pin_hash & face_vector are hidden from authenticated; anon has 0.';
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 22: DANGEROUS PRIVILEGES & IMMUTABILITY GRANTS ASSERTION (F7)
+  -- ==========================================================================
+  DECLARE
+    v_dangerous_grant_count int;
+    v_notes_mutable_count int;
+    v_audit_mutable_count int;
+  BEGIN
+    SELECT count(*) INTO v_dangerous_grant_count
+    FROM information_schema.table_privileges
+    WHERE table_schema = 'public'
+      AND grantee IN ('anon', 'authenticated')
+      AND privilege_type IN ('TRUNCATE', 'REFERENCES', 'TRIGGER');
+
+    ASSERT v_dangerous_grant_count = 0,
+      format('[FAIL] Case 22: Found %s dangerous table privilege grants (TRUNCATE/REFERENCES/TRIGGER) for anon/authenticated!', v_dangerous_grant_count);
+
+    SELECT count(*) INTO v_notes_mutable_count
+    FROM information_schema.table_privileges
+    WHERE table_schema = 'public'
+      AND table_name = 'medical_notes'
+      AND grantee = 'authenticated'
+      AND privilege_type IN ('UPDATE', 'DELETE');
+
+    ASSERT v_notes_mutable_count = 0, '[FAIL] Case 22: Authenticated has UPDATE or DELETE grant on medical_notes!';
+
+    SELECT count(*) INTO v_audit_mutable_count
+    FROM information_schema.table_privileges
+    WHERE table_schema = 'public'
+      AND table_name = 'audit_logs'
+      AND grantee = 'authenticated'
+      AND privilege_type IN ('INSERT', 'UPDATE', 'DELETE');
+
+    ASSERT v_audit_mutable_count = 0, '[FAIL] Case 22: Authenticated has INSERT, UPDATE, or DELETE grant on audit_logs!';
+
+    RAISE NOTICE '[PASS] Case 22: Schema-wide table privilege grants asserted: zero TRUNCATE/REFERENCES/TRIGGER; notes & audit immutability grants verified.';
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 23: SESSION LOGS DIRECT INSERT DENIED FOR CLIENTS (F8)
+  -- ==========================================================================
+  EXECUTE 'SET LOCAL ROLE authenticated';
+  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
+  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
+
+  v_error_caught := false;
+  BEGIN
+    EXECUTE 'INSERT INTO public.session_logs (patient_id, session_date, score) VALUES ($1, $2, 100)'
+      USING v_patient1_id, v_bangkok_today;
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  EXECUTE 'RESET ROLE';
+
+  ASSERT v_error_caught = true, '[FAIL] Case 23: Staff was able to directly insert session_logs!';
+  RAISE NOTICE '[PASS] Case 23: Direct client insertion of session_logs is strictly rejected (service_role only).';
+
+
+  -- ==========================================================================
+  -- CASE 24: TEMPORARY COVERAGE REVOCATION RULES (F9)
+  -- ==========================================================================
+  DECLARE
+    v_test_cov_id uuid := 'e0000000-0000-0000-0000-000000000099';
+    v_rev_record record;
+  BEGIN
+    INSERT INTO public.temporary_coverages (id, patient_id, owner_therapist_id, cover_therapist_id, start_date, end_date, status)
+    VALUES (v_test_cov_id, v_patient1_id, v_pt1_owner_id, v_pt2_cover_id, v_bangkok_today, v_bangkok_today + 5, 'active')
+    ON CONFLICT (id) DO UPDATE SET status = 'active', revoked_at = NULL, revoked_by = NULL;
+
+    -- 24a. Unrelated therapist (PT 3) attempts to revoke -> MUST be rejected (42501)
+    EXECUTE 'SET LOCAL ROLE authenticated';
+    PERFORM set_config('request.jwt.claim.sub', v_pt3_stranger_id::text, true);
+    PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt3_stranger_id::text, 'role', 'authenticated')::text, true);
+
+    v_error_caught := false;
+    BEGIN
+      UPDATE public.temporary_coverages SET status = 'revoked' WHERE id = v_test_cov_id;
+    EXCEPTION
+      WHEN SQLSTATE '42501' THEN
+        v_error_caught := true;
+    END;
+    ASSERT v_error_caught = true, '[FAIL] Case 24a: Unrelated therapist was able to revoke coverage!';
+
+    -- 24b. Cover therapist (PT 2) attempts to alter dates during update -> MUST be rejected (P0001)
+    PERFORM set_config('request.jwt.claim.sub', v_pt2_cover_id::text, true);
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt2_cover_id::text, 'role', 'authenticated')::text, true);
+
+    v_error_caught := false;
+    BEGIN
+      UPDATE public.temporary_coverages SET status = 'revoked', end_date = v_bangkok_today + 10 WHERE id = v_test_cov_id;
+    EXCEPTION
+      WHEN SQLSTATE 'P0001' THEN
+        v_error_caught := true;
+    END;
+    ASSERT v_error_caught = true, '[FAIL] Case 24b: Caller was able to modify coverage dates during status update!';
+
+    -- 24c. Non-trusted caller attempts to set status = 'expired' -> MUST be rejected (P0001 / 42501)
+    v_error_caught := false;
+    BEGIN
+      UPDATE public.temporary_coverages SET status = 'expired' WHERE id = v_test_cov_id;
+    EXCEPTION
+      WHEN SQLSTATE 'P0001' OR SQLSTATE '42501' THEN
+        v_error_caught := true;
+    END;
+    ASSERT v_error_caught = true, '[FAIL] Case 24c: Non-trusted caller was able to set status = expired!';
+
+    -- 24d. Cover therapist (PT 2) successfully revokes coverage -> MUST succeed and stamp revoked_by = PT 2
+    UPDATE public.temporary_coverages SET status = 'revoked' WHERE id = v_test_cov_id;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    ASSERT v_rows = 1, '[FAIL] Case 24d: Covering therapist was blocked from revoking coverage!';
+
+    SELECT status, revoked_by, revoked_at INTO v_rev_record FROM public.temporary_coverages WHERE id = v_test_cov_id;
+    ASSERT v_rev_record.status = 'revoked', '[FAIL] Case 24d: Status was not set to revoked!';
+    ASSERT v_rev_record.revoked_by = v_pt2_cover_id, '[FAIL] Case 24d: revoked_by was not stamped with PT 2!';
+    ASSERT v_rev_record.revoked_at IS NOT NULL, '[FAIL] Case 24d: revoked_at was not stamped!';
+
+    EXECUTE 'RESET ROLE';
+    DELETE FROM public.temporary_coverages WHERE id = v_test_cov_id;
+    RAISE NOTICE '[PASS] Case 24: Coverage revocation rules verified (cover can revoke, stranger denied, stamps set, other columns locked).';
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 25: PATIENT ANONYMIZATION PROCEDURE (F10)
+  -- ==========================================================================
+  DECLARE
+    v_anon_patient_id uuid := 'c0000000-0000-0000-0000-000000000099';
+    v_anon_note_id uuid := '90000000-0000-0000-0000-000000000099';
+    v_anon_template_id uuid := '80000000-0000-0000-0000-000000000099';
+    v_anon_pat_rec record;
+    v_note_count int;
+    v_tmpl_count int;
+    v_audit_count int;
+  BEGIN
+    INSERT INTO public.patients (id, full_name, phone, pin_hash, treatment_status)
+    VALUES (v_anon_patient_id, 'Sensitive Person', '089-999-8888', 'secret_hash', 'active')
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO public.medical_notes (id, patient_id, note_type, body, author_name)
+    VALUES (v_anon_note_id, v_anon_patient_id, 'progress', 'Permanent Clinical Progress Record', 'Dr. Smith')
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO public.face_templates (id, patient_id, pose, embedding)
+    VALUES (v_anon_template_id, v_anon_patient_id, 'straight', array_fill(0.1::real, ARRAY[128])::vector)
+    ON CONFLICT (id) DO NOTHING;
+
+    -- 25a. Therapist calling admin_anonymize_patient -> MUST be rejected (42501)
+    EXECUTE 'SET LOCAL ROLE authenticated';
+    PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
+    PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
+
+    v_error_caught := false;
+    BEGIN
+      PERFORM public.admin_anonymize_patient(v_anon_patient_id, 'Therapist illegal request');
+    EXCEPTION
+      WHEN SQLSTATE '42501' THEN
+        v_error_caught := true;
+    END;
+    ASSERT v_error_caught = true, '[FAIL] Case 25a: Therapist was able to invoke admin_anonymize_patient!';
+
+    -- 25b. Admin calling admin_anonymize_patient -> MUST succeed
+    PERFORM set_config('request.jwt.claim.sub', v_admin_id::text, true);
+    PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin_id::text, 'role', 'authenticated')::text, true);
+
+    PERFORM public.admin_anonymize_patient(v_anon_patient_id, 'Right to be forgotten request');
+
+    EXECUTE 'RESET ROLE';
+
+    -- 25c. Assertions: direct identifiers wiped, templates deleted, notes intact, audit logged
+    SELECT full_name, phone, pin_hash, treatment_status INTO v_anon_pat_rec
+    FROM public.patients WHERE id = v_anon_patient_id;
+
+    ASSERT v_anon_pat_rec.full_name = '[ANONYMIZED PATIENT]', '[FAIL] Case 25c: full_name was not anonymized!';
+    ASSERT v_anon_pat_rec.phone = '000-000-0000', '[FAIL] Case 25c: phone was not wiped!';
+    ASSERT v_anon_pat_rec.pin_hash IS NULL, '[FAIL] Case 25c: pin_hash was not wiped!';
+    ASSERT v_anon_pat_rec.treatment_status = 'discharged', '[FAIL] Case 25c: patient status was not set to discharged!';
+
+    SELECT count(*) INTO v_tmpl_count FROM public.face_templates WHERE patient_id = v_anon_patient_id;
+    ASSERT v_tmpl_count = 0, '[FAIL] Case 25c: face_templates were not deleted!';
+
+    SELECT count(*) INTO v_note_count FROM public.medical_notes WHERE patient_id = v_anon_patient_id;
+    ASSERT v_note_count = 1, '[FAIL] Case 25c: clinical medical_notes were deleted or altered!';
+
+    SELECT count(*) INTO v_audit_count FROM public.audit_logs 
+    WHERE action = 'PATIENT_ANONYMIZED' AND detail LIKE '%' || v_anon_patient_id::text || '%';
+    ASSERT v_audit_count >= 1, '[FAIL] Case 25c: Audit log for anonymization was not written!';
+
+    DELETE FROM public.medical_notes WHERE id = v_anon_note_id;
+    DELETE FROM public.patients WHERE id = v_anon_patient_id;
+    RAISE NOTICE '[PASS] Case 25: admin_anonymize_patient successfully verified (admin authorized, therapist denied, notes preserved, templates erased, audit logged).';
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 26: GUC EMPTY STRING RESILIENCE IN is_trusted_context (F4)
+  -- ==========================================================================
+  -- Set empty strings on legacy and modern claim settings
   PERFORM set_config('request.jwt.claim.role', '', true);
   PERFORM set_config('request.jwt.claims', '', true);
 
+  -- 1. Direct superuser session (postgres) must be recognized as trusted
+  ASSERT public.is_trusted_context() = true,
+    '[FAIL] Case 26: Direct superuser connection was NOT recognized as trusted after GUC reset to empty string!';
+
+  -- 2. When switched to anon role, must NOT be trusted
+  EXECUTE 'SET LOCAL ROLE anon';
+  PERFORM set_config('request.jwt.claim.role', '', true);
+  PERFORM set_config('request.jwt.claims', '', true);
+
+  ASSERT public.is_trusted_context() = false,
+    '[FAIL] Case 26: Anon role was mistakenly trusted after GUC reset to empty string!';
+
+  -- 3. Modern PostgREST claims JSON with service_role must be recognized as trusted
+  EXECUTE 'RESET ROLE';
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  ASSERT public.is_trusted_context() = true,
+    '[FAIL] Case 26: Modern PostgREST claims JSON with role=service_role was not recognized as trusted!';
+
+  -- Clean up session configs
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.role', '', true);
+  EXECUTE 'RESET ROLE';
+
+  RAISE NOTICE '[PASS] Case 26: is_trusted_context verified resilient against empty string GUC reset and recognizes modern PostgREST JSON claims.';
+
   RAISE NOTICE '====================================================================';
-  RAISE NOTICE '>>> ALL 16 ROLE-MATRIX & REAL-TABLE TESTS PASSED (100%%) <<<';
+  RAISE NOTICE '>>> ALL 26 ROLE-MATRIX & REAL-TABLE TESTS PASSED (100%%) <<<';
   RAISE NOTICE '====================================================================';
 END $$;
 

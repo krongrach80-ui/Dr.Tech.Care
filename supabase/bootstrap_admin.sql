@@ -63,6 +63,16 @@ Replace '<REPLACE_WITH_AUTH_UID_FROM_STEP_3>' with the UUID from Step 3 and run:
 */
 
 -- 4.1 PRE-FLIGHT CHECK: Prevent silent overwrite if username 'admin' belongs to another ID
+-- READ-ONLY INSPECTION QUERY:
+-- Run this query to inspect any conflicting legacy profile:
+--   SELECT id, username, full_name, email, is_active FROM public.profiles WHERE username = 'admin';
+--
+-- OPERATOR RESOLUTION (Run manually ONLY if a conflicting legacy profile exists):
+-- Never hard-delete the conflicting profile to preserve clinical FK history. Rename and deactivate:
+--   UPDATE public.profiles 
+--   SET username = 'legacy_admin_old', 
+--       is_active = false 
+--   WHERE username = 'admin' AND id != '<REPLACE_WITH_AUTH_UID_FROM_STEP_3>'::uuid;
 DO $$
 DECLARE
   v_conflict_id uuid;
@@ -73,7 +83,7 @@ BEGIN
   WHERE username = 'admin' AND id != v_target_id;
 
   IF FOUND THEN
-    RAISE EXCEPTION 'A profile with username "admin" already exists with a different ID (%). Please reconcile or deactivate the conflicting profile first.', v_conflict_id;
+    RAISE EXCEPTION 'A profile with username "admin" already exists with a different ID (%). Please review the conflicting profile and execute the documented rename procedure (username -> "legacy_admin_old", is_active = false) before retrying.', v_conflict_id;
   END IF;
 END $$;
 
