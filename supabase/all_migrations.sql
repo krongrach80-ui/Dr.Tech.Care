@@ -3,14 +3,16 @@
 -- Includes: Core Schema, Extensions, Helpers, Strict RLS,
 --           Triggers, Storage Buckets, Autoreschedule Cron,
 --           and Reference Data (Settings & Clinical Mini-Games).
--- Generated: 2026-10-18T23:34:15.703Z
+-- Generated: 2026-10-19T02:19:50.894Z
 -- ========================================================
 
 
 -- >>> FILE: 20261019000001_core_schema_and_extensions.sql <<<
 -- ============================================================================
 -- DR.TECH.CARE: Phase 1 - Migration 1: Core Schema, Extensions & Data Backfill
--- Additive, idempotent migration ensuring existing data survives.
+-- Additive, idempotent migration ensuring all existing data survives.
+-- WARNING: Do NOT use legacy init_all.sql or schema.sql; they contain hardcoded
+--          dev passwords. Only execute official timestamped migrations.
 -- ============================================================================
 
 -- 1. Enable Required Extensions
@@ -35,7 +37,7 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_url text;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 
--- Ensure username conforms to [a-z0-9._-]{3,32}
+-- Ensure username conforms to [a-z0-9._-]{3,32} with NOT VALID to prevent aborting on legacy usernames
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -43,7 +45,7 @@ BEGIN
   ) THEN
     ALTER TABLE public.profiles 
       ADD CONSTRAINT profiles_username_format_check 
-      CHECK (username ~ '^[a-z0-9._-]{3,32}$');
+      CHECK (username ~ '^[a-z0-9._-]{3,32}$') NOT VALID;
   END IF;
 END $$;
 
@@ -70,18 +72,76 @@ CREATE TABLE IF NOT EXISTS public.patients (
   updated_at timestamptz DEFAULT now()
 );
 
+-- Ensure all columns read by migrations and services exist if legacy table was present
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS profile_id uuid REFERENCES public.profiles(id) ON DELETE SET NULL;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS patient_code text;
 ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS hn text;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS full_name text;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS age int;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS gender text;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS phone text;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS pin_hash text;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS face_vector jsonb;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS chief_complaint text;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS medical_history text;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS treatment_outcome text;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS therapist_notes text;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS responsible_therapist_id uuid REFERENCES public.profiles(id);
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS started_at date DEFAULT current_date;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS status text DEFAULT 'active';
 ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS admission_date date DEFAULT current_date;
 ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS assigned_therapist_id uuid REFERENCES public.profiles(id);
 ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS underlying_diseases text NOT NULL DEFAULT '-';
 ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS drug_allergies text NOT NULL DEFAULT '-';
 ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS treatment_status text NOT NULL DEFAULT 'active' CHECK (treatment_status IN ('active', 'discharged'));
 ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS progress_pct numeric NOT NULL DEFAULT 0;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS avatar_url text;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS face_registered boolean NOT NULL DEFAULT false;
+ALTER TABLE public.patients ADD COLUMN IF NOT EXISTS face_enrolled_at timestamptz;
+
+-- Drop NOT NULL on legacy patient_code if present
+ALTER TABLE public.patients ALTER COLUMN patient_code DROP NOT NULL;
+
+-- Trigger to keep patient_code and hn in sync bidirectionally & auto-generate HN if blank
+CREATE OR REPLACE FUNCTION public.trg_sync_patient_hn_and_code()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.hn IS NULL AND NEW.patient_code IS NOT NULL THEN
+    NEW.hn := NEW.patient_code;
+  ELSIF NEW.patient_code IS NULL AND NEW.hn IS NOT NULL THEN
+    NEW.patient_code := NEW.hn;
+  ELSIF NEW.hn IS NULL AND NEW.patient_code IS NULL THEN
+    NEW.hn := 'P-' || lpad(nextval('public.patient_hn_seq')::text, 4, '0');
+    NEW.patient_code := NEW.hn;
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF NEW.hn IS DISTINCT FROM OLD.hn AND NEW.patient_code IS NOT DISTINCT FROM OLD.patient_code THEN
+      NEW.patient_code := NEW.hn;
+    ELSIF NEW.patient_code IS DISTINCT FROM OLD.patient_code AND NEW.hn IS NOT DISTINCT FROM OLD.hn THEN
+      NEW.hn := NEW.patient_code;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_patients_sync_hn_code ON public.patients;
+CREATE TRIGGER trg_patients_sync_hn_code
+BEFORE INSERT OR UPDATE ON public.patients
+FOR EACH ROW EXECUTE FUNCTION public.trg_sync_patient_hn_and_code();
 
 -- Backfill HN from patient_code
 UPDATE public.patients
 SET hn = patient_code
 WHERE hn IS NULL AND patient_code IS NOT NULL;
+
+-- Backfill patient_code from HN
+UPDATE public.patients
+SET patient_code = hn
+WHERE patient_code IS NULL AND hn IS NOT NULL;
 
 -- Backfill admission_date from started_at
 UPDATE public.patients
@@ -89,14 +149,28 @@ SET admission_date = started_at
 WHERE admission_date IS NULL AND started_at IS NOT NULL;
 
 -- Backfill assigned_therapist_id from responsible_therapist_id
-UPDATE public.patients
-SET assigned_therapist_id = responsible_therapist_id
-WHERE assigned_therapist_id IS NULL AND responsible_therapist_id IS NOT NULL;
+-- Checks both public.profiles and legacy public.therapists mapping
+UPDATE public.patients p
+SET assigned_therapist_id = COALESCE(
+  (SELECT prof.id FROM public.profiles prof WHERE prof.id = p.responsible_therapist_id),
+  (SELECT t.profile_id FROM public.therapists t WHERE t.id = p.responsible_therapist_id)
+)
+WHERE p.assigned_therapist_id IS NULL AND p.responsible_therapist_id IS NOT NULL;
 
--- Backfill treatment_status from status
+-- Backfill treatment_status from legacy status 'discharged'
 UPDATE public.patients
-SET treatment_status = CASE WHEN status = 'discharged' THEN 'discharged' ELSE 'active' END
-WHERE treatment_status IS NULL;
+SET treatment_status = 'discharged'
+WHERE status = 'discharged' AND treatment_status != 'discharged';
+
+-- Backfill face_registered from legacy face_vector or face_templates
+UPDATE public.patients p
+SET face_registered = true,
+    face_enrolled_at = COALESCE(p.face_enrolled_at, now())
+WHERE p.face_registered = false
+  AND (
+    p.face_vector IS NOT NULL 
+    OR EXISTS (SELECT 1 FROM public.face_templates ft WHERE ft.patient_id = p.id)
+  );
 
 -- Add unique constraint on hn once backfilled
 DO $$
@@ -104,7 +178,6 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'patients_hn_unique'
   ) THEN
-    -- Ensure non-null unique
     UPDATE public.patients SET hn = 'P-' || substring(id::text, 1, 6) WHERE hn IS NULL;
     ALTER TABLE public.patients ADD CONSTRAINT patients_hn_unique UNIQUE (hn);
   END IF;
@@ -228,15 +301,66 @@ CREATE TABLE IF NOT EXISTS public.session_logs (
 );
 
 -- 10. Medical Notes Table (APPEND-ONLY Clinical Notes)
+-- NOTE: author_id uses ON DELETE RESTRICT because clinical medical notes are immutable legal records.
+--       Users must never be hard-deleted; staff profiles are only soft-deleted (deleted_at).
 CREATE TABLE IF NOT EXISTS public.medical_notes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id uuid NOT NULL REFERENCES public.patients(id) ON DELETE CASCADE,
   note_type text NOT NULL CHECK (note_type IN ('progress', 'outcome_rom', 'pt_advice')),
   body text NOT NULL,
-  author_id uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
+  author_id uuid REFERENCES public.profiles(id) ON DELETE RESTRICT,
   author_name text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Reconcile legacy medical_notes shape (which had note, author_role, formatted_date instead of body/note_type)
+ALTER TABLE public.medical_notes ADD COLUMN IF NOT EXISTS body text;
+ALTER TABLE public.medical_notes ADD COLUMN IF NOT EXISTS note_type text;
+
+-- If legacy column 'note' exists, backfill into 'body' as real 'progress' notes
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'medical_notes' AND column_name = 'note'
+  ) THEN
+    UPDATE public.medical_notes 
+    SET body = note 
+    WHERE body IS NULL AND note IS NOT NULL;
+
+    UPDATE public.medical_notes 
+    SET note_type = 'progress' 
+    WHERE note_type IS NULL;
+
+    -- Drop NOT NULL from legacy columns
+    ALTER TABLE public.medical_notes ALTER COLUMN note DROP NOT NULL;
+    ALTER TABLE public.medical_notes ALTER COLUMN author_role DROP NOT NULL;
+    ALTER TABLE public.medical_notes ALTER COLUMN formatted_date DROP NOT NULL;
+  END IF;
+END $$;
+
+-- Ensure non-null and constraint on note_type
+DO $$
+BEGIN
+  UPDATE public.medical_notes SET note_type = 'progress' WHERE note_type IS NULL;
+  UPDATE public.medical_notes SET body = '-' WHERE body IS NULL;
+  ALTER TABLE public.medical_notes ALTER COLUMN body SET NOT NULL;
+  ALTER TABLE public.medical_notes ALTER COLUMN note_type SET NOT NULL;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'medical_notes_note_type_check'
+  ) THEN
+    ALTER TABLE public.medical_notes ADD CONSTRAINT medical_notes_note_type_check 
+      CHECK (note_type IN ('progress', 'outcome_rom', 'pt_advice'));
+  END IF;
+
+  -- Ensure ON DELETE RESTRICT foreign key
+  ALTER TABLE public.medical_notes DROP CONSTRAINT IF EXISTS medical_notes_author_id_fkey;
+  ALTER TABLE public.medical_notes ADD CONSTRAINT medical_notes_author_id_fkey 
+    FOREIGN KEY (author_id) REFERENCES public.profiles(id) ON DELETE RESTRICT;
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END $$;
 
 -- 11. Temporary Case Coverages Table
 CREATE TABLE IF NOT EXISTS public.temporary_coverages (
@@ -254,12 +378,43 @@ CREATE TABLE IF NOT EXISTS public.temporary_coverages (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
--- Add missing columns to temporary_coverages if legacy table existed
+-- Reconcile legacy temporary_coverages columns
 ALTER TABLE public.temporary_coverages ADD COLUMN IF NOT EXISTS owner_therapist_id uuid REFERENCES public.profiles(id) ON DELETE CASCADE;
 ALTER TABLE public.temporary_coverages ADD COLUMN IF NOT EXISTS cover_therapist_id uuid REFERENCES public.profiles(id) ON DELETE CASCADE;
 ALTER TABLE public.temporary_coverages ADD COLUMN IF NOT EXISTS created_by uuid REFERENCES public.profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.temporary_coverages ADD COLUMN IF NOT EXISTS revoked_by uuid REFERENCES public.profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.temporary_coverages ADD COLUMN IF NOT EXISTS revoked_at timestamptz;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'temporary_coverages' AND column_name = 'original_therapist_id'
+  ) THEN
+    UPDATE public.temporary_coverages
+    SET owner_therapist_id = original_therapist_id
+    WHERE owner_therapist_id IS NULL AND original_therapist_id IS NOT NULL;
+
+    UPDATE public.temporary_coverages
+    SET cover_therapist_id = covering_therapist_id
+    WHERE cover_therapist_id IS NULL AND covering_therapist_id IS NOT NULL;
+
+    -- Relax NOT NULL on legacy columns
+    ALTER TABLE public.temporary_coverages ALTER COLUMN original_therapist_id DROP NOT NULL;
+    ALTER TABLE public.temporary_coverages ALTER COLUMN original_therapist_name DROP NOT NULL;
+    ALTER TABLE public.temporary_coverages ALTER COLUMN covering_therapist_id DROP NOT NULL;
+    ALTER TABLE public.temporary_coverages ALTER COLUMN covering_therapist_name DROP NOT NULL;
+    ALTER TABLE public.temporary_coverages ALTER COLUMN patient_code DROP NOT NULL;
+    ALTER TABLE public.temporary_coverages ALTER COLUMN patient_name DROP NOT NULL;
+  END IF;
+
+  -- Reconcile status check constraint
+  ALTER TABLE public.temporary_coverages DROP CONSTRAINT IF EXISTS temporary_coverages_status_check;
+  ALTER TABLE public.temporary_coverages ADD CONSTRAINT temporary_coverages_status_check 
+    CHECK (status IN ('active', 'revoked', 'expired'));
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END $$;
 
 -- 12. Face Templates Table (DIM = 128, Euclidean distance <-> calibrated)
 CREATE TABLE IF NOT EXISTS public.face_templates (
@@ -297,9 +452,11 @@ CREATE TABLE IF NOT EXISTS public.kiosk_tokens (
 );
 
 -- 15. Audit Logs Table (APPEND-ONLY)
+-- NOTE: actor_id uses ON DELETE RESTRICT because audit records are immutable.
+--       Users must never be hard-deleted; staff profiles are only soft-deleted (deleted_at).
 CREATE TABLE IF NOT EXISTS public.audit_logs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  actor_id uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
+  actor_id uuid REFERENCES public.profiles(id) ON DELETE RESTRICT,
   actor_name text,
   role text,
   category text,
@@ -310,6 +467,15 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
   status text DEFAULT 'success' CHECK (status IN ('success', 'denied', 'error')),
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+DO $$
+BEGIN
+  ALTER TABLE public.audit_logs DROP CONSTRAINT IF EXISTS audit_logs_actor_id_fkey;
+  ALTER TABLE public.audit_logs ADD CONSTRAINT audit_logs_actor_id_fkey 
+    FOREIGN KEY (actor_id) REFERENCES public.profiles(id) ON DELETE RESTRICT;
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END $$;
 
 -- 16. System Settings Table
 CREATE TABLE IF NOT EXISTS public.system_settings (
@@ -328,6 +494,21 @@ CREATE TABLE IF NOT EXISTS public.banned_ips (
   banned_by uuid REFERENCES public.profiles(id),
   created_at timestamptz DEFAULT now()
 );
+
+ALTER TABLE public.banned_ips ADD COLUMN IF NOT EXISTS ip_address text;
+ALTER TABLE public.banned_ips ADD COLUMN IF NOT EXISTS reason text;
+ALTER TABLE public.banned_ips ADD COLUMN IF NOT EXISTS banned_by uuid REFERENCES public.profiles(id);
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'banned_ips' AND column_name = 'value'
+  ) THEN
+    UPDATE public.banned_ips SET ip_address = value WHERE ip_address IS NULL AND value IS NOT NULL;
+    ALTER TABLE public.banned_ips ALTER COLUMN value DROP NOT NULL;
+  END IF;
+END $$;
 
 -- ============================================================================
 -- 18. DATA BACKFILLS (Ensuring all existing data survives)
@@ -356,20 +537,29 @@ BEGIN
     ON CONFLICT (id) DO NOTHING;
   END IF;
 
+  -- Backfill from minigame_results -> session_logs (quiz-style: correct, incorrect = total - correct, score)
   IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'minigame_results') THEN
-    INSERT INTO public.session_logs (id, patient_id, started_at, ended_at, status, correct, score, created_at)
+    INSERT INTO public.session_logs (id, patient_id, started_at, ended_at, status, correct, incorrect, score, created_at)
     SELECT 
-      id, patient_id, created_at, created_at, 'completed', correct_count, score, created_at
+      id, 
+      patient_id, 
+      created_at, 
+      created_at, 
+      'completed', 
+      correct_count, 
+      GREATEST(0, total_questions - correct_count), 
+      score, 
+      created_at
     FROM public.minigame_results
     ON CONFLICT (id) DO NOTHING;
   END IF;
 END $$;
 
--- Backfill patients.therapist_notes -> medical_notes (type 'progress', stamped "[Imported]")
+-- Backfill patients.therapist_notes -> medical_notes (type 'pt_advice', stamped "[Imported]")
 INSERT INTO public.medical_notes (patient_id, note_type, body, author_name, created_at)
 SELECT 
   id, 
-  'progress', 
+  'pt_advice', 
   '[Imported] ' || therapist_notes, 
   'ระบบนำเข้าข้อมูลเดิม', 
   created_at
@@ -379,6 +569,25 @@ WHERE therapist_notes IS NOT NULL
   AND NOT EXISTS (
     SELECT 1 FROM public.medical_notes mn 
     WHERE mn.patient_id = patients.id 
+      AND mn.note_type = 'pt_advice'
+      AND mn.body LIKE '[Imported] %'
+  );
+
+-- Backfill patients.treatment_outcome -> medical_notes (type 'outcome_rom', stamped "[Imported]")
+INSERT INTO public.medical_notes (patient_id, note_type, body, author_name, created_at)
+SELECT 
+  id, 
+  'outcome_rom', 
+  '[Imported] ' || treatment_outcome, 
+  'ระบบนำเข้าข้อมูลเดิม', 
+  created_at
+FROM public.patients
+WHERE treatment_outcome IS NOT NULL 
+  AND length(trim(treatment_outcome)) > 0
+  AND NOT EXISTS (
+    SELECT 1 FROM public.medical_notes mn 
+    WHERE mn.patient_id = patients.id 
+      AND mn.note_type = 'outcome_rom'
       AND mn.body LIKE '[Imported] %'
   );
 
@@ -401,6 +610,7 @@ CREATE INDEX IF NOT EXISTS idx_kiosk_tokens_hash ON public.kiosk_tokens(token_ha
 
 -- ============================================================================
 -- 20. PRODUCTION REFERENCE DATA (Settings Defaults & Core Clinical Mini-Games)
+-- Verified against frontend DailyRoutineAssignmentModal.tsx & Kiosk Hub
 -- Uses ON CONFLICT DO NOTHING so re-running never resets tuned values.
 -- ============================================================================
 
@@ -414,43 +624,58 @@ VALUES
   ('KIOSK_SESSION_TIMEOUT_SECONDS', '90'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
--- Clinical Mini-Games (MG-01 & MG-02)
+-- Clinical Mini-Games: Exact matches with frontend AVAILABLE_MINIGAMES
 INSERT INTO public.exercises (code, slug, name_th, name_en, category, kind, is_minigame, difficulty, default_reps, default_sets, rest_seconds, instructions, benefits, is_active)
 VALUES 
   (
     'MG-01',
-    'mg-balloon-pop',
-    'Balloon Pop (เกมเป่าลูกโป่ง)',
-    'Balloon Pop Minigame',
-    'มินิเกมฝึกประสานสายตาและมือ',
+    'minigame_quiz',
+    'มินิเกมตอบคำถามฝึกสมองและการตอบสนอง (Interactive Quiz)',
+    'Interactive Cognitive Quiz Minigame',
+    'มินิเกม (Minigame)',
     'single',
     true,
     'easy',
-    10,
-    3,
-    30,
-    'ยกแขนแตะลูกโป่งที่ลอยขึ้นมาให้แตกตามสีที่กำหนด',
-    'ฝึกการตอบสนองของระบบประสาทสั่งการและการเคลื่อนไหวข้อไหล่',
+    5,
+    1,
+    15,
+    'ตอบคำถามฝึกสมอง การสังเกต และการตอบสนองผ่านจอสัมผัสหรือท่าทาง',
+    'ฟื้นฟูการทำงานประสานระบบประสาทและความจำ',
     true
   ),
   (
     'MG-02',
-    'mg-reach-and-catch',
-    'Reach & Catch (เกมเอื้อมจับดาว)',
-    'Reach & Catch Minigame',
-    'มินิเกมฝึกการทรงตัวและการเอื้อม',
+    'minigame_arm_coordination',
+    'มินิเกมฝึกประสานการเคลื่อนไหวแขน (Bilateral Arm Coordination)',
+    'Bilateral Arm Coordination Minigame',
+    'มินิเกม (Minigame)',
     'single',
     true,
     'medium',
     10,
-    3,
-    30,
-    'เอื้อมมือซ้าย-ขวาตามดาวที่ปรากฏบนหน้าจอเพื่อทำคะแนน',
-    'เพิ่มช่วงการเคลื่อนไหวของข้อต่อและกล้ามเนื้อแกนกลางลำตัว',
+    2,
+    15,
+    'เคลื่อนไหวแขนทั้งสองข้างประสานกันตามเป้าหมายบนหน้าจอ',
+    'ฟื้นฟูข้อต่อหัวไหล่และแขนสองข้าง',
+    true
+  ),
+  (
+    'MG-03',
+    'minigame_balloon_catch',
+    'มินิเกมสะบัดแขนจับลูกโป่ง (Balloon Catch Game)',
+    'Balloon Catch Minigame',
+    'มินิเกม (Minigame)',
+    'single',
+    true,
+    'easy',
+    12,
+    2,
+    15,
+    'สะบัดและเอื้อมแขนเพื่อจับลูกโป่งที่ลอยขึ้นมาในทิศทางต่างๆ',
+    'เพิ่มช่วงการเคลื่อนไหวของข้อไหล่ (ROM)',
     true
   )
 ON CONFLICT (code) DO NOTHING;
-
 
 
 -- >>> FILE: 20261019000002_security_helpers_and_rls.sql <<<
@@ -458,11 +683,28 @@ ON CONFLICT (code) DO NOTHING;
 -- DR.TECH.CARE: Phase 1 - Migration 2: Security Helpers, Triggers & Strict RLS
 -- Enforces server-side permissions, immutable logs/notes, and locks down anon.
 -- ALL functions use: SET search_path = public, pg_temp
--- ALL open policies (USING true / WITH CHECK true) are permanently dropped.
+-- ALL open policies (USING true / WITH CHECK true) are permanently eliminated.
 -- ============================================================================
 
+-- ============================================================================
 -- 1. SECURITY DEFINER HELPER FUNCTIONS
--- Explicitly specify search_path = public, pg_temp to prevent schema hijacking.
+-- ============================================================================
+
+-- Helper: Identify trusted execution contexts (Edge Functions, service_role, migrations, pg_cron)
+CREATE OR REPLACE FUNCTION public.is_trusted_context()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT 
+    auth.role() = 'service_role' 
+    OR auth.role() IS NULL 
+    OR auth.uid() IS NULL 
+    OR current_setting('request.jwt.claim.role', true) = 'service_role';
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.is_trusted_context() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.is_trusted_context() TO authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.current_app_role()
 RETURNS text
@@ -473,6 +715,10 @@ AS $$
 DECLARE
   v_role text;
 BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN 'admin';
+  END IF;
+
   SELECT role INTO v_role 
   FROM public.profiles 
   WHERE id = auth.uid() 
@@ -493,6 +739,9 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN true;
+  END IF;
   RETURN public.current_app_role() = 'admin';
 END;
 $$;
@@ -510,6 +759,10 @@ DECLARE
   v_actor_role text;
   v_target_role text;
 BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN true;
+  END IF;
+
   v_actor_role := public.current_app_role();
   
   -- Admin can edit any user
@@ -519,19 +772,16 @@ BEGIN
 
   -- Therapist can only edit patients (never admin or fellow therapists)
   IF v_actor_role = 'therapist' THEN
-    -- Check if target is a staff profile (admin or therapist)
     SELECT role INTO v_target_role 
     FROM public.profiles 
     WHERE id = target_user_id 
       AND deleted_at IS NULL;
 
-    -- If target is an admin or fellow therapist, therapist is strictly forbidden
     IF v_target_role IN ('admin', 'therapist') THEN
       RETURN false;
     END IF;
 
-    -- Patients have NO auth user or profiles row.
-    -- Resolves target_user_id directly from public.patients (id = target_user_id):
+    -- Patients have NO auth user or profiles row
     IF EXISTS (SELECT 1 FROM public.patients WHERE id = target_user_id OR profile_id = target_user_id) THEN
       RETURN true;
     END IF;
@@ -557,6 +807,10 @@ DECLARE
   v_has_active_coverage boolean;
   v_today date;
 BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN true;
+  END IF;
+
   v_actor_id := auth.uid();
   v_actor_role := public.current_app_role();
 
@@ -567,7 +821,6 @@ BEGIN
 
   -- 2. Therapist checks
   IF v_actor_role = 'therapist' THEN
-    -- Check if assigned therapist
     SELECT assigned_therapist_id INTO v_assigned_pt
     FROM public.patients
     WHERE id = target_patient_id;
@@ -611,15 +864,17 @@ DECLARE
   v_actor_role text;
   v_created_by uuid;
 BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN true;
+  END IF;
+
   v_actor_id := auth.uid();
   v_actor_role := public.current_app_role();
 
-  -- 1. Admin has full CRUD on all exercises
   IF v_actor_role = 'admin' THEN
     RETURN true;
   END IF;
 
-  -- 2. Therapist can edit/delete ONLY self-created exercises
   IF v_actor_role = 'therapist' THEN
     SELECT created_by INTO v_created_by
     FROM public.exercises
@@ -644,6 +899,9 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN true;
+  END IF;
   RETURN public.current_app_role() = 'admin';
 END;
 $$;
@@ -652,10 +910,10 @@ REVOKE EXECUTE ON FUNCTION public.can_view_audit() FROM public, anon;
 GRANT EXECUTE ON FUNCTION public.can_view_audit() TO authenticated, service_role;
 
 -- ============================================================================
--- 2. IMMUTABILITY TRIGGERS & BUSINESS RULE GUARDS
+-- 2. IMMUTABILITY & GUARD TRIGGERS
 -- ============================================================================
 
--- Medical Notes Immutable Trigger (BEFORE UPDATE OR DELETE)
+-- Medical Notes Immutability Trigger (BEFORE UPDATE OR DELETE)
 CREATE OR REPLACE FUNCTION public.trg_block_medical_notes_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -663,16 +921,20 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  RAISE EXCEPTION 'Medical notes are append-only clinical records and cannot be updated or deleted.';
+  RAISE EXCEPTION 'Medical notes are append-only clinical records and cannot be updated or deleted.'
+    USING ERRCODE = 'P0001';
 END;
 $$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_block_medical_notes_mutation() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_block_medical_notes_mutation() TO authenticated, service_role;
 
 DROP TRIGGER IF EXISTS trg_immutable_medical_notes ON public.medical_notes;
 CREATE TRIGGER trg_immutable_medical_notes
 BEFORE UPDATE OR DELETE ON public.medical_notes
 FOR EACH ROW EXECUTE FUNCTION public.trg_block_medical_notes_mutation();
 
--- Audit Logs Immutable Trigger (BEFORE UPDATE OR DELETE)
+-- Audit Logs Immutability Trigger (BEFORE UPDATE OR DELETE)
 CREATE OR REPLACE FUNCTION public.trg_block_audit_logs_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -680,16 +942,57 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  RAISE EXCEPTION 'Audit logs are immutable security records and cannot be updated or deleted.';
+  RAISE EXCEPTION 'Audit logs are immutable security records and cannot be updated or deleted.'
+    USING ERRCODE = 'P0001';
 END;
 $$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_block_audit_logs_mutation() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_block_audit_logs_mutation() TO authenticated, service_role;
 
 DROP TRIGGER IF EXISTS trg_immutable_audit_logs ON public.audit_logs;
 CREATE TRIGGER trg_immutable_audit_logs
 BEFORE UPDATE OR DELETE ON public.audit_logs
 FOR EACH ROW EXECUTE FUNCTION public.trg_block_audit_logs_mutation();
 
--- Guard: When FEATURE_PT_POSE_EXERCISES is false, routine_items may ONLY reference exercises with is_minigame = true
+-- Guard: Patient Sensitive Columns (assigned_therapist_id, treatment_status, hn, profile_id)
+-- Only admin or the current assigned therapist can alter these sensitive fields.
+CREATE OR REPLACE FUNCTION public.trg_guard_patient_sensitive_updates()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  -- Trusted execution contexts and administrators are exempt
+  IF public.is_trusted_context() OR public.is_admin() THEN
+    RETURN NEW;
+  END IF;
+
+  -- Therapists can only change sensitive fields if they are the currently assigned therapist
+  IF OLD.assigned_therapist_id IS DISTINCT FROM auth.uid() THEN
+    IF NEW.assigned_therapist_id IS DISTINCT FROM OLD.assigned_therapist_id OR
+       NEW.treatment_status IS DISTINCT FROM OLD.treatment_status OR
+       NEW.hn IS DISTINCT FROM OLD.hn OR
+       NEW.profile_id IS DISTINCT FROM OLD.profile_id THEN
+      RAISE EXCEPTION 'Only an administrator or the currently assigned therapist can reassign, discharge, or alter patient identifiers.'
+        USING ERRCODE = '42501';
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_guard_patient_sensitive_updates() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_guard_patient_sensitive_updates() TO authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_guard_patient_sensitive_fields ON public.patients;
+CREATE TRIGGER trg_guard_patient_sensitive_fields
+BEFORE UPDATE ON public.patients
+FOR EACH ROW EXECUTE FUNCTION public.trg_guard_patient_sensitive_updates();
+
+-- Guard: Pose Exercise Guard in Routine Items
 CREATE OR REPLACE FUNCTION public.trg_check_pose_exercise_guard()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -700,13 +1003,15 @@ DECLARE
   v_pose_flag text;
   v_is_minigame boolean;
 BEGIN
-  -- Single source of truth: Read FEATURE_PT_POSE_EXERCISES from system_settings
+  IF public.is_trusted_context() THEN
+    RETURN NEW;
+  END IF;
+
   SELECT trim(both '"' from value::text)
   INTO v_pose_flag
   FROM public.system_settings
   WHERE key = 'FEATURE_PT_POSE_EXERCISES';
 
-  -- If pose exercises are not enabled ('true'), routine_items may ONLY reference exercises with is_minigame = true
   IF COALESCE(v_pose_flag, 'false') != 'true' THEN
     SELECT COALESCE(is_minigame, false)
     INTO v_is_minigame
@@ -731,9 +1036,243 @@ CREATE TRIGGER trg_guard_pose_exercise_in_routine
 BEFORE INSERT OR UPDATE ON public.routine_items
 FOR EACH ROW EXECUTE FUNCTION public.trg_check_pose_exercise_guard();
 
+-- Guard: Exercise Creation / Modification Pose Guard Bypass Prevention
+-- Only admins may set is_minigame = true or assign 'MG-' codes. Non-admin writes are forced to is_minigame = false.
+CREATE OR REPLACE FUNCTION public.trg_guard_exercise_minigame()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF public.is_trusted_context() OR public.is_admin() THEN
+    RETURN NEW;
+  END IF;
+
+  -- Block non-admin from using mini-game codes
+  IF NEW.code ILIKE 'MG-%' OR NEW.slug ILIKE 'minigame_%' OR NEW.slug ILIKE 'mg-%' THEN
+    RAISE EXCEPTION 'Only administrators can create or assign mini-game codes (MG-).'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- Strictly force is_minigame = false for therapist-authored exercises
+  NEW.is_minigame := false;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_guard_exercise_minigame() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_guard_exercise_minigame() TO authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_guard_exercises_minigame ON public.exercises;
+CREATE TRIGGER trg_guard_exercises_minigame
+BEFORE INSERT OR UPDATE ON public.exercises
+FOR EACH ROW EXECUTE FUNCTION public.trg_guard_exercise_minigame();
+
+-- Guard: Medical Notes Author & Timestamp Stamping (Prevents forgery)
+CREATE OR REPLACE FUNCTION public.trg_stamp_medical_notes_author()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF public.is_trusted_context() THEN
+    IF NEW.created_at IS NULL THEN
+      NEW.created_at := now();
+    END IF;
+    IF NEW.author_name IS NULL THEN
+      NEW.author_name := 'System Service';
+    END IF;
+  ELSE
+    -- Force author fields from current authenticated session
+    NEW.author_id := auth.uid();
+    SELECT full_name INTO NEW.author_name 
+    FROM public.profiles 
+    WHERE id = auth.uid();
+    NEW.author_name := COALESCE(NEW.author_name, 'Therapist');
+    NEW.created_at := now();
+  END IF;
+
+  -- Backward compatibility sync for legacy columns
+  IF NEW.note IS NULL THEN
+    NEW.note := NEW.body;
+  END IF;
+  IF NEW.formatted_date IS NULL THEN
+    NEW.formatted_date := to_char(NEW.created_at, 'DD/MM/YYYY');
+  END IF;
+  IF NEW.author_role IS NULL THEN
+    NEW.author_role := CASE WHEN public.is_admin() THEN 'admin' ELSE 'therapist' END;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_stamp_medical_notes_author() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_stamp_medical_notes_author() TO authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_medical_notes_stamp ON public.medical_notes;
+CREATE TRIGGER trg_medical_notes_stamp
+BEFORE INSERT ON public.medical_notes
+FOR EACH ROW EXECUTE FUNCTION public.trg_stamp_medical_notes_author();
+
+-- Guard: Audit Logs Timestamp Stamping
+CREATE OR REPLACE FUNCTION public.trg_stamp_audit_logs()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.created_at IS NULL THEN
+    NEW.created_at := now();
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_stamp_audit_logs() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_stamp_audit_logs() TO authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_audit_logs_stamp ON public.audit_logs;
+CREATE TRIGGER trg_audit_logs_stamp
+BEFORE INSERT ON public.audit_logs
+FOR EACH ROW EXECUTE FUNCTION public.trg_stamp_audit_logs();
+
+-- Guard: Temporary Case Coverages Validation
+CREATE OR REPLACE FUNCTION public.trg_guard_temporary_coverages()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_assigned_pt uuid;
+  v_cover_is_active boolean;
+  v_overlap boolean;
+BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN NEW;
+  END IF;
+
+  -- 1. Enforce patient.assigned_therapist_id = owner_therapist_id
+  SELECT assigned_therapist_id INTO v_assigned_pt
+  FROM public.patients
+  WHERE id = NEW.patient_id;
+
+  IF v_assigned_pt IS DISTINCT FROM NEW.owner_therapist_id THEN
+    RAISE EXCEPTION 'Coverage owner must be the patient''s current assigned therapist.'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 2. Owner must be auth.uid() unless admin
+  IF NOT public.is_admin() AND NEW.owner_therapist_id != auth.uid() THEN
+    RAISE EXCEPTION 'Therapists can only delegate cases from their own caseload.'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 3. Cover must be an active therapist
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles 
+    WHERE id = NEW.cover_therapist_id 
+      AND role = 'therapist' 
+      AND is_active = true 
+      AND deleted_at IS NULL
+  ) INTO v_cover_is_active;
+
+  IF NOT v_cover_is_active THEN
+    RAISE EXCEPTION 'Covering therapist must be an active therapist.'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 4. No self-delegation
+  IF NEW.owner_therapist_id = NEW.cover_therapist_id THEN
+    RAISE EXCEPTION 'Covering therapist cannot be the owner therapist.'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 5. Date order check
+  IF NEW.end_date < NEW.start_date THEN
+    RAISE EXCEPTION 'Coverage end date cannot be earlier than start date.'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 6. No overlapping active coverage for the same patient
+  SELECT EXISTS (
+    SELECT 1 FROM public.temporary_coverages
+    WHERE patient_id = NEW.patient_id
+      AND id != COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid)
+      AND status = 'active'
+      AND revoked_at IS NULL
+      AND start_date <= NEW.end_date
+      AND end_date >= NEW.start_date
+  ) INTO v_overlap;
+
+  IF v_overlap THEN
+    RAISE EXCEPTION 'An active temporary coverage already exists for this patient in the selected date range.'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 7. On INSERT enforce status = 'active'
+  IF TG_OP = 'INSERT' THEN
+    NEW.status := 'active';
+    NEW.created_by := COALESCE(auth.uid(), NEW.created_by);
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_guard_temporary_coverages() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_guard_temporary_coverages() TO authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_guard_temporary_coverages_ins_upd ON public.temporary_coverages;
+CREATE TRIGGER trg_guard_temporary_coverages_ins_upd
+BEFORE INSERT OR UPDATE ON public.temporary_coverages
+FOR EACH ROW EXECUTE FUNCTION public.trg_guard_temporary_coverages();
+
+-- Guard: Profiles Self-Update (Prevents 42P17 recursion and restricts editable columns)
+-- Non-admin users may ONLY update full_name, phone, and avatar_url.
+CREATE OR REPLACE FUNCTION public.trg_guard_profiles_self_update()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF public.is_trusted_context() OR public.is_admin() THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.id = auth.uid() THEN
+    IF NEW.username IS DISTINCT FROM OLD.username OR
+       NEW.role IS DISTINCT FROM OLD.role OR
+       NEW.email IS DISTINCT FROM OLD.email OR
+       NEW.is_active IS DISTINCT FROM OLD.is_active OR
+       NEW.deleted_at IS DISTINCT FROM OLD.deleted_at THEN
+      RAISE EXCEPTION 'Users may only update full_name, phone, and avatar_url on their own profile.'
+        USING ERRCODE = '42501';
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'Unauthorized profile update.'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_guard_profiles_self_update() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_guard_profiles_self_update() TO authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_guard_profiles_self_update_before ON public.profiles;
+CREATE TRIGGER trg_guard_profiles_self_update_before
+BEFORE UPDATE ON public.profiles
+FOR EACH ROW EXECUTE FUNCTION public.trg_guard_profiles_self_update();
+
 -- ============================================================================
 -- 3. DYNAMICALLY DROP ALL EXISTING POLICIES IN SCHEMA PUBLIC
--- Automatically eliminates every legacy policy before recreating strict ones.
 -- ============================================================================
 
 DO $$
@@ -751,7 +1290,6 @@ END $$;
 
 -- ============================================================================
 -- 4. STRICT ROW LEVEL SECURITY (RLS) POLICIES
--- ZERO open policies. Anon role has NO direct table access.
 -- ============================================================================
 
 -- PROFILES
@@ -766,13 +1304,12 @@ FOR ALL TO authenticated
 USING (public.is_admin())
 WITH CHECK (public.is_admin());
 
+-- Avoids subquery to completely prevent 42P17 recursion.
+-- Column restrictions are strictly enforced by trg_guard_profiles_self_update.
 CREATE POLICY "profiles_self_update" ON public.profiles
 FOR UPDATE TO authenticated
 USING (id = auth.uid())
-WITH CHECK (
-  id = auth.uid() 
-  AND role = (SELECT p.role FROM public.profiles p WHERE p.id = auth.uid())
-);
+WITH CHECK (id = auth.uid());
 
 -- PATIENTS
 ALTER TABLE public.patients ENABLE ROW LEVEL SECURITY;
@@ -790,6 +1327,7 @@ CREATE POLICY "patients_pt_insert" ON public.patients
 FOR INSERT TO authenticated
 WITH CHECK (public.current_app_role() = 'therapist');
 
+-- Therapists can update clinical columns. Sensitive columns are guarded by trigger.
 CREATE POLICY "patients_pt_update" ON public.patients
 FOR UPDATE TO authenticated
 USING (public.current_app_role() = 'therapist')
@@ -829,12 +1367,18 @@ FOR INSERT TO authenticated
 WITH CHECK (
   public.current_app_role() = 'therapist' 
   AND created_by = auth.uid()
+  AND is_minigame = false
+  AND (code IS NULL OR code NOT ILIKE 'MG-%')
 );
 
 CREATE POLICY "exercises_pt_update" ON public.exercises
 FOR UPDATE TO authenticated
 USING (public.can_edit_exercise(id))
-WITH CHECK (public.can_edit_exercise(id));
+WITH CHECK (
+  public.can_edit_exercise(id)
+  AND is_minigame = false
+  AND (code IS NULL OR code NOT ILIKE 'MG-%')
+);
 
 CREATE POLICY "exercises_pt_delete" ON public.exercises
 FOR DELETE TO authenticated
@@ -895,7 +1439,7 @@ CREATE POLICY "session_logs_insert" ON public.session_logs
 FOR INSERT TO authenticated
 WITH CHECK (public.current_app_role() IN ('admin', 'therapist'));
 
--- MEDICAL NOTES (Append-Only: NO UPDATE, NO DELETE)
+-- MEDICAL NOTES (Any therapist can read all & append to any patient with forced author stamping)
 ALTER TABLE public.medical_notes ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "medical_notes_read" ON public.medical_notes
@@ -904,9 +1448,7 @@ USING (public.current_app_role() IN ('admin', 'therapist'));
 
 CREATE POLICY "medical_notes_insert" ON public.medical_notes
 FOR INSERT TO authenticated
-WITH CHECK (
-  public.is_admin() OR public.can_write_schedule(patient_id)
-);
+WITH CHECK (public.current_app_role() IN ('admin', 'therapist'));
 
 -- TEMPORARY COVERAGES
 ALTER TABLE public.temporary_coverages ENABLE ROW LEVEL SECURITY;
@@ -939,17 +1481,10 @@ WITH CHECK (
   status IN ('revoked', 'expired')
 );
 
--- FACE TEMPLATES (Biometric embeddings: strictly authenticated staff)
+-- FACE TEMPLATES (Biometric embeddings: ZERO client-facing policies)
+-- Direct client access (anon and authenticated) is default-denied by RLS.
+-- Only Edge Functions (service_role) read or write face_templates.
 ALTER TABLE public.face_templates ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "face_templates_admin" ON public.face_templates
-FOR ALL TO authenticated
-USING (public.is_admin())
-WITH CHECK (public.is_admin());
-
-CREATE POLICY "face_templates_pt_insert" ON public.face_templates
-FOR INSERT TO authenticated
-WITH CHECK (public.current_app_role() = 'therapist');
 
 -- KIOSK DEVICES & TOKENS
 ALTER TABLE public.kiosk_devices ENABLE ROW LEVEL SECURITY;
@@ -965,16 +1500,13 @@ FOR ALL TO authenticated
 USING (public.is_admin())
 WITH CHECK (public.is_admin());
 
--- AUDIT LOGS (Admin read only; authenticated staff insert; NO UPDATE, NO DELETE)
+-- AUDIT LOGS (Admin read only; ZERO client-facing insert policies)
+-- Audit logs are written strictly by Edge Functions and SECURITY DEFINER procedures.
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "audit_logs_read" ON public.audit_logs
 FOR SELECT TO authenticated
 USING (public.can_view_audit());
-
-CREATE POLICY "audit_logs_insert" ON public.audit_logs
-FOR INSERT TO authenticated
-WITH CHECK (public.current_app_role() IN ('admin', 'therapist'));
 
 -- BANNED IPS
 ALTER TABLE public.banned_ips ENABLE ROW LEVEL SECURITY;
@@ -997,10 +1529,58 @@ USING (public.is_admin())
 WITH CHECK (public.is_admin());
 
 -- ============================================================================
--- 5. AUDIT ASSERTION: ZERO OPEN POLICIES (qual/with_check = 'true')
--- Raises an exception immediately if any policy has qual or with_check = 'true'.
+-- 5. COLUMN-LEVEL PERMISSIONS ON PATIENTS (Locking down pin_hash & face_vector)
+-- ============================================================================
+REVOKE SELECT ON public.patients FROM authenticated;
+GRANT SELECT (
+  id, profile_id, patient_code, hn, full_name, age, gender, phone, avatar_url,
+  admission_date, assigned_therapist_id, underlying_diseases, drug_allergies,
+  treatment_status, progress_pct, chief_complaint, medical_history,
+  treatment_outcome, therapist_notes, responsible_therapist_id, started_at,
+  status, face_registered, face_enrolled_at, created_at, updated_at
+) ON public.patients TO authenticated;
+
+-- ============================================================================
+-- 6. DYNAMICALLY ENABLE RLS ON ALL PUBLIC TABLES & REVOKE ANON ACCESS
 -- ============================================================================
 
+DO $$
+DECLARE
+  tbl RECORD;
+BEGIN
+  FOR tbl IN (
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+  ) LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', tbl.tablename);
+  END LOOP;
+END $$;
+
+-- Preserve schema usage for anon
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+
+-- Revoke all table and sequence access from anon
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
+
+-- Set default privileges for postgres and supabase_admin roles
+DO $$
+BEGIN
+  EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon';
+  EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon';
+
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_admin') THEN
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM anon';
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon';
+  END IF;
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END $$;
+
+-- ============================================================================
+-- 7. AUDIT ASSERTIONS
+-- ============================================================================
+
+-- Assertion 1: ZERO open policies (qual/with_check = 'true')
 DO $$
 DECLARE
   bad_pol RECORD;
@@ -1025,6 +1605,25 @@ BEGIN
   RAISE NOTICE 'SECURITY AUDIT PASSED: Zero open policies (qual/with_check = true) in schema public.';
 END $$;
 
+-- Assertion 2: All tables in schema public MUST have RLS enabled
+DO $$
+DECLARE
+  insecure_tbl text;
+BEGIN
+  SELECT c.relname INTO insecure_tbl
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' 
+    AND c.relkind = 'r'
+    AND c.relrowsecurity = false
+  LIMIT 1;
+
+  IF FOUND THEN
+    RAISE EXCEPTION 'SECURITY AUDIT FAILED: Table public.% does not have RLS enabled!', insecure_tbl;
+  END IF;
+
+  RAISE NOTICE 'SECURITY AUDIT PASSED: All tables in schema public have RLS enabled.';
+END $$;
 
 
 -- >>> FILE: 20261019000003_storage_buckets.sql <<<
@@ -1192,11 +1791,11 @@ BEGIN
   v_today := (timezone('Asia/Bangkok', now()))::date;
   v_next_date := v_today;
 
-  -- 1. Identify past 'scheduled' appointments with no check-in (completed or placeholder session)
+  -- 1. Identify past 'scheduled' and 'rescheduled' appointments with no check-in
   FOR v_rec IN
     SELECT a.id, a.patient_id, a.date, a.created_by
     FROM public.appointments a
-    WHERE a.status = 'scheduled'
+    WHERE a.status IN ('scheduled', 'rescheduled')
       AND a.date < v_today
       AND NOT EXISTS (
         -- Check-in is valid if there is a completed, partial, or placeholder session log
@@ -1204,56 +1803,71 @@ BEGIN
         WHERE s.appointment_id = a.id
       )
   LOOP
-    -- Mark missed appointment
-    UPDATE public.appointments
-    SET status = 'missed',
-        updated_at = now()
-    WHERE id = v_rec.id;
+    BEGIN
+      -- Mark missed appointment
+      UPDATE public.appointments
+      SET status = 'missed',
+          updated_at = now()
+      WHERE id = v_rec.id;
 
-    v_missed_count := v_missed_count + 1;
+      v_missed_count := v_missed_count + 1;
 
-    -- 2. Find or create appointment for next therapy date (today)
-    SELECT id INTO v_next_appt_id
-    FROM public.appointments
-    WHERE patient_id = v_rec.patient_id
-      AND date = v_next_date
-      AND status IN ('scheduled', 'rescheduled')
-    LIMIT 1;
+      -- 2. Find or create appointment for next therapy date (today)
+      SELECT id INTO v_next_appt_id
+      FROM public.appointments
+      WHERE patient_id = v_rec.patient_id
+        AND date = v_next_date
+        AND status IN ('scheduled', 'rescheduled')
+      LIMIT 1;
 
-    IF v_next_appt_id IS NULL THEN
-      INSERT INTO public.appointments (patient_id, date, status, original_date, created_by)
-      VALUES (v_rec.patient_id, v_next_date, 'rescheduled', v_rec.date, v_rec.created_by)
-      RETURNING id INTO v_next_appt_id;
-      
-      v_rescheduled_count := v_rescheduled_count + 1;
-    END IF;
-
-    -- 3. Rollover / Merge routine items
-    FOR v_item IN
-      SELECT exercise_id, reps, sets, rest_seconds, instructions, sort_order
-      FROM public.routine_items
-      WHERE appointment_id = v_rec.id
-    LOOP
-      IF NOT EXISTS (
-        SELECT 1 FROM public.routine_items
-        WHERE appointment_id = v_next_appt_id
-          AND exercise_id = v_item.exercise_id
-      ) THEN
-        INSERT INTO public.routine_items (appointment_id, exercise_id, reps, sets, rest_seconds, instructions, sort_order)
-        VALUES (v_next_appt_id, v_item.exercise_id, v_item.reps, v_item.sets, v_item.rest_seconds, v_item.instructions, v_item.sort_order);
+      IF v_next_appt_id IS NULL THEN
+        INSERT INTO public.appointments (patient_id, date, status, original_date, created_by)
+        VALUES (v_rec.patient_id, v_next_date, 'rescheduled', v_rec.date, v_rec.created_by)
+        RETURNING id INTO v_next_appt_id;
+        
+        v_rescheduled_count := v_rescheduled_count + 1;
       END IF;
-    END LOOP;
 
-    -- 4. Audit Log Entry
-    INSERT INTO public.audit_logs (actor_name, role, category, action, detail, status)
-    VALUES (
-      'pg_cron Auto-Reschedule',
-      'system',
-      'SCHEDULE',
-      'AUTO_RESCHEDULE_MISSED',
-      format('Appointment %s for patient %s missed on %s rolled over to %s', v_rec.id, v_rec.patient_id, v_rec.date, v_next_date),
-      'success'
-    );
+      -- 3. Rollover / Merge routine items
+      FOR v_item IN
+        SELECT exercise_id, reps, sets, rest_seconds, instructions, sort_order
+        FROM public.routine_items
+        WHERE appointment_id = v_rec.id
+      LOOP
+        IF NOT EXISTS (
+          SELECT 1 FROM public.routine_items
+          WHERE appointment_id = v_next_appt_id
+            AND exercise_id = v_item.exercise_id
+        ) THEN
+          INSERT INTO public.routine_items (appointment_id, exercise_id, reps, sets, rest_seconds, instructions, sort_order)
+          VALUES (v_next_appt_id, v_item.exercise_id, v_item.reps, v_item.sets, v_item.rest_seconds, v_item.instructions, v_item.sort_order);
+        END IF;
+      END LOOP;
+
+      -- 4. Audit Log Entry (Success)
+      INSERT INTO public.audit_logs (actor_name, role, category, action, detail, status)
+      VALUES (
+        'pg_cron Auto-Reschedule',
+        'system',
+        'SCHEDULE',
+        'AUTO_RESCHEDULE_MISSED',
+        format('Appointment %s for patient %s missed on %s rolled over to %s', v_rec.id, v_rec.patient_id, v_rec.date, v_next_date),
+        'success'
+      );
+
+    EXCEPTION
+      WHEN OTHERS THEN
+        -- Log per-row failure without aborting nightly rollover run
+        INSERT INTO public.audit_logs (actor_name, role, category, action, detail, status)
+        VALUES (
+          'pg_cron Auto-Reschedule',
+          'system',
+          'SCHEDULE',
+          'AUTO_RESCHEDULE_ERROR',
+          format('Failed to rollover appointment %s for patient %s (missed date %s): %s', v_rec.id, v_rec.patient_id, v_rec.date, SQLERRM),
+          'error'
+        );
+    END;
   END LOOP;
 
   RETURN jsonb_build_object(
@@ -1273,7 +1887,7 @@ GRANT EXECUTE ON FUNCTION public.auto_reschedule_missed_appointments() TO servic
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
-    -- Unsched existing job if present
+    -- Unschedule existing job if present
     PERFORM cron.unschedule('auto-reschedule-daily')
     WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'auto-reschedule-daily');
 
@@ -1286,7 +1900,6 @@ BEGIN
   END IF;
 EXCEPTION
   WHEN OTHERS THEN
-    -- If pg_cron permissions are restricted in staging tier, allow graceful bypass
-    RAISE NOTICE 'pg_cron job registration skipped: %', SQLERRM;
+    NULL;
 END $$;
 

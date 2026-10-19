@@ -2,11 +2,28 @@
 -- DR.TECH.CARE: Phase 1 - Migration 2: Security Helpers, Triggers & Strict RLS
 -- Enforces server-side permissions, immutable logs/notes, and locks down anon.
 -- ALL functions use: SET search_path = public, pg_temp
--- ALL open policies (USING true / WITH CHECK true) are permanently dropped.
+-- ALL open policies (USING true / WITH CHECK true) are permanently eliminated.
 -- ============================================================================
 
+-- ============================================================================
 -- 1. SECURITY DEFINER HELPER FUNCTIONS
--- Explicitly specify search_path = public, pg_temp to prevent schema hijacking.
+-- ============================================================================
+
+-- Helper: Identify trusted execution contexts (Edge Functions, service_role, migrations, pg_cron)
+CREATE OR REPLACE FUNCTION public.is_trusted_context()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT 
+    auth.role() = 'service_role' 
+    OR auth.role() IS NULL 
+    OR auth.uid() IS NULL 
+    OR current_setting('request.jwt.claim.role', true) = 'service_role';
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.is_trusted_context() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.is_trusted_context() TO authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.current_app_role()
 RETURNS text
@@ -17,6 +34,10 @@ AS $$
 DECLARE
   v_role text;
 BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN 'admin';
+  END IF;
+
   SELECT role INTO v_role 
   FROM public.profiles 
   WHERE id = auth.uid() 
@@ -37,6 +58,9 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN true;
+  END IF;
   RETURN public.current_app_role() = 'admin';
 END;
 $$;
@@ -54,6 +78,10 @@ DECLARE
   v_actor_role text;
   v_target_role text;
 BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN true;
+  END IF;
+
   v_actor_role := public.current_app_role();
   
   -- Admin can edit any user
@@ -63,19 +91,16 @@ BEGIN
 
   -- Therapist can only edit patients (never admin or fellow therapists)
   IF v_actor_role = 'therapist' THEN
-    -- Check if target is a staff profile (admin or therapist)
     SELECT role INTO v_target_role 
     FROM public.profiles 
     WHERE id = target_user_id 
       AND deleted_at IS NULL;
 
-    -- If target is an admin or fellow therapist, therapist is strictly forbidden
     IF v_target_role IN ('admin', 'therapist') THEN
       RETURN false;
     END IF;
 
-    -- Patients have NO auth user or profiles row.
-    -- Resolves target_user_id directly from public.patients (id = target_user_id):
+    -- Patients have NO auth user or profiles row
     IF EXISTS (SELECT 1 FROM public.patients WHERE id = target_user_id OR profile_id = target_user_id) THEN
       RETURN true;
     END IF;
@@ -101,6 +126,10 @@ DECLARE
   v_has_active_coverage boolean;
   v_today date;
 BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN true;
+  END IF;
+
   v_actor_id := auth.uid();
   v_actor_role := public.current_app_role();
 
@@ -111,7 +140,6 @@ BEGIN
 
   -- 2. Therapist checks
   IF v_actor_role = 'therapist' THEN
-    -- Check if assigned therapist
     SELECT assigned_therapist_id INTO v_assigned_pt
     FROM public.patients
     WHERE id = target_patient_id;
@@ -155,15 +183,17 @@ DECLARE
   v_actor_role text;
   v_created_by uuid;
 BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN true;
+  END IF;
+
   v_actor_id := auth.uid();
   v_actor_role := public.current_app_role();
 
-  -- 1. Admin has full CRUD on all exercises
   IF v_actor_role = 'admin' THEN
     RETURN true;
   END IF;
 
-  -- 2. Therapist can edit/delete ONLY self-created exercises
   IF v_actor_role = 'therapist' THEN
     SELECT created_by INTO v_created_by
     FROM public.exercises
@@ -188,6 +218,9 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN true;
+  END IF;
   RETURN public.current_app_role() = 'admin';
 END;
 $$;
@@ -196,10 +229,10 @@ REVOKE EXECUTE ON FUNCTION public.can_view_audit() FROM public, anon;
 GRANT EXECUTE ON FUNCTION public.can_view_audit() TO authenticated, service_role;
 
 -- ============================================================================
--- 2. IMMUTABILITY TRIGGERS & BUSINESS RULE GUARDS
+-- 2. IMMUTABILITY & GUARD TRIGGERS
 -- ============================================================================
 
--- Medical Notes Immutable Trigger (BEFORE UPDATE OR DELETE)
+-- Medical Notes Immutability Trigger (BEFORE UPDATE OR DELETE)
 CREATE OR REPLACE FUNCTION public.trg_block_medical_notes_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -207,16 +240,20 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  RAISE EXCEPTION 'Medical notes are append-only clinical records and cannot be updated or deleted.';
+  RAISE EXCEPTION 'Medical notes are append-only clinical records and cannot be updated or deleted.'
+    USING ERRCODE = 'P0001';
 END;
 $$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_block_medical_notes_mutation() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_block_medical_notes_mutation() TO authenticated, service_role;
 
 DROP TRIGGER IF EXISTS trg_immutable_medical_notes ON public.medical_notes;
 CREATE TRIGGER trg_immutable_medical_notes
 BEFORE UPDATE OR DELETE ON public.medical_notes
 FOR EACH ROW EXECUTE FUNCTION public.trg_block_medical_notes_mutation();
 
--- Audit Logs Immutable Trigger (BEFORE UPDATE OR DELETE)
+-- Audit Logs Immutability Trigger (BEFORE UPDATE OR DELETE)
 CREATE OR REPLACE FUNCTION public.trg_block_audit_logs_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -224,16 +261,57 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  RAISE EXCEPTION 'Audit logs are immutable security records and cannot be updated or deleted.';
+  RAISE EXCEPTION 'Audit logs are immutable security records and cannot be updated or deleted.'
+    USING ERRCODE = 'P0001';
 END;
 $$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_block_audit_logs_mutation() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_block_audit_logs_mutation() TO authenticated, service_role;
 
 DROP TRIGGER IF EXISTS trg_immutable_audit_logs ON public.audit_logs;
 CREATE TRIGGER trg_immutable_audit_logs
 BEFORE UPDATE OR DELETE ON public.audit_logs
 FOR EACH ROW EXECUTE FUNCTION public.trg_block_audit_logs_mutation();
 
--- Guard: When FEATURE_PT_POSE_EXERCISES is false, routine_items may ONLY reference exercises with is_minigame = true
+-- Guard: Patient Sensitive Columns (assigned_therapist_id, treatment_status, hn, profile_id)
+-- Only admin or the current assigned therapist can alter these sensitive fields.
+CREATE OR REPLACE FUNCTION public.trg_guard_patient_sensitive_updates()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  -- Trusted execution contexts and administrators are exempt
+  IF public.is_trusted_context() OR public.is_admin() THEN
+    RETURN NEW;
+  END IF;
+
+  -- Therapists can only change sensitive fields if they are the currently assigned therapist
+  IF OLD.assigned_therapist_id IS DISTINCT FROM auth.uid() THEN
+    IF NEW.assigned_therapist_id IS DISTINCT FROM OLD.assigned_therapist_id OR
+       NEW.treatment_status IS DISTINCT FROM OLD.treatment_status OR
+       NEW.hn IS DISTINCT FROM OLD.hn OR
+       NEW.profile_id IS DISTINCT FROM OLD.profile_id THEN
+      RAISE EXCEPTION 'Only an administrator or the currently assigned therapist can reassign, discharge, or alter patient identifiers.'
+        USING ERRCODE = '42501';
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_guard_patient_sensitive_updates() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_guard_patient_sensitive_updates() TO authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_guard_patient_sensitive_fields ON public.patients;
+CREATE TRIGGER trg_guard_patient_sensitive_fields
+BEFORE UPDATE ON public.patients
+FOR EACH ROW EXECUTE FUNCTION public.trg_guard_patient_sensitive_updates();
+
+-- Guard: Pose Exercise Guard in Routine Items
 CREATE OR REPLACE FUNCTION public.trg_check_pose_exercise_guard()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -244,13 +322,15 @@ DECLARE
   v_pose_flag text;
   v_is_minigame boolean;
 BEGIN
-  -- Single source of truth: Read FEATURE_PT_POSE_EXERCISES from system_settings
+  IF public.is_trusted_context() THEN
+    RETURN NEW;
+  END IF;
+
   SELECT trim(both '"' from value::text)
   INTO v_pose_flag
   FROM public.system_settings
   WHERE key = 'FEATURE_PT_POSE_EXERCISES';
 
-  -- If pose exercises are not enabled ('true'), routine_items may ONLY reference exercises with is_minigame = true
   IF COALESCE(v_pose_flag, 'false') != 'true' THEN
     SELECT COALESCE(is_minigame, false)
     INTO v_is_minigame
@@ -275,9 +355,243 @@ CREATE TRIGGER trg_guard_pose_exercise_in_routine
 BEFORE INSERT OR UPDATE ON public.routine_items
 FOR EACH ROW EXECUTE FUNCTION public.trg_check_pose_exercise_guard();
 
+-- Guard: Exercise Creation / Modification Pose Guard Bypass Prevention
+-- Only admins may set is_minigame = true or assign 'MG-' codes. Non-admin writes are forced to is_minigame = false.
+CREATE OR REPLACE FUNCTION public.trg_guard_exercise_minigame()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF public.is_trusted_context() OR public.is_admin() THEN
+    RETURN NEW;
+  END IF;
+
+  -- Block non-admin from using mini-game codes
+  IF NEW.code ILIKE 'MG-%' OR NEW.slug ILIKE 'minigame_%' OR NEW.slug ILIKE 'mg-%' THEN
+    RAISE EXCEPTION 'Only administrators can create or assign mini-game codes (MG-).'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- Strictly force is_minigame = false for therapist-authored exercises
+  NEW.is_minigame := false;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_guard_exercise_minigame() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_guard_exercise_minigame() TO authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_guard_exercises_minigame ON public.exercises;
+CREATE TRIGGER trg_guard_exercises_minigame
+BEFORE INSERT OR UPDATE ON public.exercises
+FOR EACH ROW EXECUTE FUNCTION public.trg_guard_exercise_minigame();
+
+-- Guard: Medical Notes Author & Timestamp Stamping (Prevents forgery)
+CREATE OR REPLACE FUNCTION public.trg_stamp_medical_notes_author()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF public.is_trusted_context() THEN
+    IF NEW.created_at IS NULL THEN
+      NEW.created_at := now();
+    END IF;
+    IF NEW.author_name IS NULL THEN
+      NEW.author_name := 'System Service';
+    END IF;
+  ELSE
+    -- Force author fields from current authenticated session
+    NEW.author_id := auth.uid();
+    SELECT full_name INTO NEW.author_name 
+    FROM public.profiles 
+    WHERE id = auth.uid();
+    NEW.author_name := COALESCE(NEW.author_name, 'Therapist');
+    NEW.created_at := now();
+  END IF;
+
+  -- Backward compatibility sync for legacy columns
+  IF NEW.note IS NULL THEN
+    NEW.note := NEW.body;
+  END IF;
+  IF NEW.formatted_date IS NULL THEN
+    NEW.formatted_date := to_char(NEW.created_at, 'DD/MM/YYYY');
+  END IF;
+  IF NEW.author_role IS NULL THEN
+    NEW.author_role := CASE WHEN public.is_admin() THEN 'admin' ELSE 'therapist' END;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_stamp_medical_notes_author() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_stamp_medical_notes_author() TO authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_medical_notes_stamp ON public.medical_notes;
+CREATE TRIGGER trg_medical_notes_stamp
+BEFORE INSERT ON public.medical_notes
+FOR EACH ROW EXECUTE FUNCTION public.trg_stamp_medical_notes_author();
+
+-- Guard: Audit Logs Timestamp Stamping
+CREATE OR REPLACE FUNCTION public.trg_stamp_audit_logs()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.created_at IS NULL THEN
+    NEW.created_at := now();
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_stamp_audit_logs() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_stamp_audit_logs() TO authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_audit_logs_stamp ON public.audit_logs;
+CREATE TRIGGER trg_audit_logs_stamp
+BEFORE INSERT ON public.audit_logs
+FOR EACH ROW EXECUTE FUNCTION public.trg_stamp_audit_logs();
+
+-- Guard: Temporary Case Coverages Validation
+CREATE OR REPLACE FUNCTION public.trg_guard_temporary_coverages()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_assigned_pt uuid;
+  v_cover_is_active boolean;
+  v_overlap boolean;
+BEGIN
+  IF public.is_trusted_context() THEN
+    RETURN NEW;
+  END IF;
+
+  -- 1. Enforce patient.assigned_therapist_id = owner_therapist_id
+  SELECT assigned_therapist_id INTO v_assigned_pt
+  FROM public.patients
+  WHERE id = NEW.patient_id;
+
+  IF v_assigned_pt IS DISTINCT FROM NEW.owner_therapist_id THEN
+    RAISE EXCEPTION 'Coverage owner must be the patient''s current assigned therapist.'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 2. Owner must be auth.uid() unless admin
+  IF NOT public.is_admin() AND NEW.owner_therapist_id != auth.uid() THEN
+    RAISE EXCEPTION 'Therapists can only delegate cases from their own caseload.'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 3. Cover must be an active therapist
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles 
+    WHERE id = NEW.cover_therapist_id 
+      AND role = 'therapist' 
+      AND is_active = true 
+      AND deleted_at IS NULL
+  ) INTO v_cover_is_active;
+
+  IF NOT v_cover_is_active THEN
+    RAISE EXCEPTION 'Covering therapist must be an active therapist.'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 4. No self-delegation
+  IF NEW.owner_therapist_id = NEW.cover_therapist_id THEN
+    RAISE EXCEPTION 'Covering therapist cannot be the owner therapist.'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 5. Date order check
+  IF NEW.end_date < NEW.start_date THEN
+    RAISE EXCEPTION 'Coverage end date cannot be earlier than start date.'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 6. No overlapping active coverage for the same patient
+  SELECT EXISTS (
+    SELECT 1 FROM public.temporary_coverages
+    WHERE patient_id = NEW.patient_id
+      AND id != COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid)
+      AND status = 'active'
+      AND revoked_at IS NULL
+      AND start_date <= NEW.end_date
+      AND end_date >= NEW.start_date
+  ) INTO v_overlap;
+
+  IF v_overlap THEN
+    RAISE EXCEPTION 'An active temporary coverage already exists for this patient in the selected date range.'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 7. On INSERT enforce status = 'active'
+  IF TG_OP = 'INSERT' THEN
+    NEW.status := 'active';
+    NEW.created_by := COALESCE(auth.uid(), NEW.created_by);
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_guard_temporary_coverages() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_guard_temporary_coverages() TO authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_guard_temporary_coverages_ins_upd ON public.temporary_coverages;
+CREATE TRIGGER trg_guard_temporary_coverages_ins_upd
+BEFORE INSERT OR UPDATE ON public.temporary_coverages
+FOR EACH ROW EXECUTE FUNCTION public.trg_guard_temporary_coverages();
+
+-- Guard: Profiles Self-Update (Prevents 42P17 recursion and restricts editable columns)
+-- Non-admin users may ONLY update full_name, phone, and avatar_url.
+CREATE OR REPLACE FUNCTION public.trg_guard_profiles_self_update()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF public.is_trusted_context() OR public.is_admin() THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.id = auth.uid() THEN
+    IF NEW.username IS DISTINCT FROM OLD.username OR
+       NEW.role IS DISTINCT FROM OLD.role OR
+       NEW.email IS DISTINCT FROM OLD.email OR
+       NEW.is_active IS DISTINCT FROM OLD.is_active OR
+       NEW.deleted_at IS DISTINCT FROM OLD.deleted_at THEN
+      RAISE EXCEPTION 'Users may only update full_name, phone, and avatar_url on their own profile.'
+        USING ERRCODE = '42501';
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'Unauthorized profile update.'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_guard_profiles_self_update() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_guard_profiles_self_update() TO authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_guard_profiles_self_update_before ON public.profiles;
+CREATE TRIGGER trg_guard_profiles_self_update_before
+BEFORE UPDATE ON public.profiles
+FOR EACH ROW EXECUTE FUNCTION public.trg_guard_profiles_self_update();
+
 -- ============================================================================
 -- 3. DYNAMICALLY DROP ALL EXISTING POLICIES IN SCHEMA PUBLIC
--- Automatically eliminates every legacy policy before recreating strict ones.
 -- ============================================================================
 
 DO $$
@@ -295,7 +609,6 @@ END $$;
 
 -- ============================================================================
 -- 4. STRICT ROW LEVEL SECURITY (RLS) POLICIES
--- ZERO open policies. Anon role has NO direct table access.
 -- ============================================================================
 
 -- PROFILES
@@ -310,13 +623,12 @@ FOR ALL TO authenticated
 USING (public.is_admin())
 WITH CHECK (public.is_admin());
 
+-- Avoids subquery to completely prevent 42P17 recursion.
+-- Column restrictions are strictly enforced by trg_guard_profiles_self_update.
 CREATE POLICY "profiles_self_update" ON public.profiles
 FOR UPDATE TO authenticated
 USING (id = auth.uid())
-WITH CHECK (
-  id = auth.uid() 
-  AND role = (SELECT p.role FROM public.profiles p WHERE p.id = auth.uid())
-);
+WITH CHECK (id = auth.uid());
 
 -- PATIENTS
 ALTER TABLE public.patients ENABLE ROW LEVEL SECURITY;
@@ -334,6 +646,7 @@ CREATE POLICY "patients_pt_insert" ON public.patients
 FOR INSERT TO authenticated
 WITH CHECK (public.current_app_role() = 'therapist');
 
+-- Therapists can update clinical columns. Sensitive columns are guarded by trigger.
 CREATE POLICY "patients_pt_update" ON public.patients
 FOR UPDATE TO authenticated
 USING (public.current_app_role() = 'therapist')
@@ -373,12 +686,18 @@ FOR INSERT TO authenticated
 WITH CHECK (
   public.current_app_role() = 'therapist' 
   AND created_by = auth.uid()
+  AND is_minigame = false
+  AND (code IS NULL OR code NOT ILIKE 'MG-%')
 );
 
 CREATE POLICY "exercises_pt_update" ON public.exercises
 FOR UPDATE TO authenticated
 USING (public.can_edit_exercise(id))
-WITH CHECK (public.can_edit_exercise(id));
+WITH CHECK (
+  public.can_edit_exercise(id)
+  AND is_minigame = false
+  AND (code IS NULL OR code NOT ILIKE 'MG-%')
+);
 
 CREATE POLICY "exercises_pt_delete" ON public.exercises
 FOR DELETE TO authenticated
@@ -439,7 +758,7 @@ CREATE POLICY "session_logs_insert" ON public.session_logs
 FOR INSERT TO authenticated
 WITH CHECK (public.current_app_role() IN ('admin', 'therapist'));
 
--- MEDICAL NOTES (Append-Only: NO UPDATE, NO DELETE)
+-- MEDICAL NOTES (Any therapist can read all & append to any patient with forced author stamping)
 ALTER TABLE public.medical_notes ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "medical_notes_read" ON public.medical_notes
@@ -448,9 +767,7 @@ USING (public.current_app_role() IN ('admin', 'therapist'));
 
 CREATE POLICY "medical_notes_insert" ON public.medical_notes
 FOR INSERT TO authenticated
-WITH CHECK (
-  public.is_admin() OR public.can_write_schedule(patient_id)
-);
+WITH CHECK (public.current_app_role() IN ('admin', 'therapist'));
 
 -- TEMPORARY COVERAGES
 ALTER TABLE public.temporary_coverages ENABLE ROW LEVEL SECURITY;
@@ -483,17 +800,10 @@ WITH CHECK (
   status IN ('revoked', 'expired')
 );
 
--- FACE TEMPLATES (Biometric embeddings: strictly authenticated staff)
+-- FACE TEMPLATES (Biometric embeddings: ZERO client-facing policies)
+-- Direct client access (anon and authenticated) is default-denied by RLS.
+-- Only Edge Functions (service_role) read or write face_templates.
 ALTER TABLE public.face_templates ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "face_templates_admin" ON public.face_templates
-FOR ALL TO authenticated
-USING (public.is_admin())
-WITH CHECK (public.is_admin());
-
-CREATE POLICY "face_templates_pt_insert" ON public.face_templates
-FOR INSERT TO authenticated
-WITH CHECK (public.current_app_role() = 'therapist');
 
 -- KIOSK DEVICES & TOKENS
 ALTER TABLE public.kiosk_devices ENABLE ROW LEVEL SECURITY;
@@ -509,16 +819,13 @@ FOR ALL TO authenticated
 USING (public.is_admin())
 WITH CHECK (public.is_admin());
 
--- AUDIT LOGS (Admin read only; authenticated staff insert; NO UPDATE, NO DELETE)
+-- AUDIT LOGS (Admin read only; ZERO client-facing insert policies)
+-- Audit logs are written strictly by Edge Functions and SECURITY DEFINER procedures.
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "audit_logs_read" ON public.audit_logs
 FOR SELECT TO authenticated
 USING (public.can_view_audit());
-
-CREATE POLICY "audit_logs_insert" ON public.audit_logs
-FOR INSERT TO authenticated
-WITH CHECK (public.current_app_role() IN ('admin', 'therapist'));
 
 -- BANNED IPS
 ALTER TABLE public.banned_ips ENABLE ROW LEVEL SECURITY;
@@ -541,10 +848,58 @@ USING (public.is_admin())
 WITH CHECK (public.is_admin());
 
 -- ============================================================================
--- 5. AUDIT ASSERTION: ZERO OPEN POLICIES (qual/with_check = 'true')
--- Raises an exception immediately if any policy has qual or with_check = 'true'.
+-- 5. COLUMN-LEVEL PERMISSIONS ON PATIENTS (Locking down pin_hash & face_vector)
+-- ============================================================================
+REVOKE SELECT ON public.patients FROM authenticated;
+GRANT SELECT (
+  id, profile_id, patient_code, hn, full_name, age, gender, phone, avatar_url,
+  admission_date, assigned_therapist_id, underlying_diseases, drug_allergies,
+  treatment_status, progress_pct, chief_complaint, medical_history,
+  treatment_outcome, therapist_notes, responsible_therapist_id, started_at,
+  status, face_registered, face_enrolled_at, created_at, updated_at
+) ON public.patients TO authenticated;
+
+-- ============================================================================
+-- 6. DYNAMICALLY ENABLE RLS ON ALL PUBLIC TABLES & REVOKE ANON ACCESS
 -- ============================================================================
 
+DO $$
+DECLARE
+  tbl RECORD;
+BEGIN
+  FOR tbl IN (
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+  ) LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', tbl.tablename);
+  END LOOP;
+END $$;
+
+-- Preserve schema usage for anon
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+
+-- Revoke all table and sequence access from anon
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
+
+-- Set default privileges for postgres and supabase_admin roles
+DO $$
+BEGIN
+  EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon';
+  EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon';
+
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_admin') THEN
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM anon';
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon';
+  END IF;
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END $$;
+
+-- ============================================================================
+-- 7. AUDIT ASSERTIONS
+-- ============================================================================
+
+-- Assertion 1: ZERO open policies (qual/with_check = 'true')
 DO $$
 DECLARE
   bad_pol RECORD;
@@ -569,3 +924,22 @@ BEGIN
   RAISE NOTICE 'SECURITY AUDIT PASSED: Zero open policies (qual/with_check = true) in schema public.';
 END $$;
 
+-- Assertion 2: All tables in schema public MUST have RLS enabled
+DO $$
+DECLARE
+  insecure_tbl text;
+BEGIN
+  SELECT c.relname INTO insecure_tbl
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' 
+    AND c.relkind = 'r'
+    AND c.relrowsecurity = false
+  LIMIT 1;
+
+  IF FOUND THEN
+    RAISE EXCEPTION 'SECURITY AUDIT FAILED: Table public.% does not have RLS enabled!', insecure_tbl;
+  END IF;
+
+  RAISE NOTICE 'SECURITY AUDIT PASSED: All tables in schema public have RLS enabled.';
+END $$;

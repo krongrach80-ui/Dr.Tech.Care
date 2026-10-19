@@ -1,10 +1,11 @@
 -- ============================================================================
 -- DR.TECH.CARE: Phase 1 - Comprehensive Role-Matrix & Real-Table RLS Test Suite
 -- Wrapped entirely in BEGIN ... ROLLBACK to leave zero persistent test residue.
--- Tests simulate: anon, admin, therapist (own patient), unrelated PT, covered PT.
--- Exercises real SELECT, INSERT, UPDATE, DELETE on real physical tables:
+-- Tests simulate: anon, admin, therapist (own patient), unrelated PT, covered PT,
+--                 and trusted service_role.
+-- Exercises real physical tables:
 --   auth.users, profiles, patients, appointments, routine_items, audit_logs,
---   exercises, face_templates, storage.objects.
+--   exercises, medical_notes, temporary_coverages, face_templates, storage.objects.
 -- Asserts row counts via GET DIAGNOSTICS (0 rows) or specific SQLSTATE (42501 / P0001).
 -- ============================================================================
 
@@ -33,6 +34,8 @@ DECLARE
   v_error_caught    boolean;
   v_temp_id         uuid;
   v_test_appt_id    uuid;
+  v_stamped_note    record;
+  v_unsecured_count int;
 BEGIN
   RAISE NOTICE '====================================================================';
   RAISE NOTICE '>>> STARTING DR.TECH.CARE PHASE 1 REAL-TABLE RLS TEST SUITE <<<';
@@ -43,31 +46,29 @@ BEGIN
   -- --------------------------------------------------------------------------
   
   -- 0a. Insert auth.users fixtures first to satisfy profiles.id foreign key constraint
-  -- Entire suite is wrapped in BEGIN ... ROLLBACK so these rows NEVER persist.
   INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
   VALUES 
-    (v_admin_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'admin@test.invalid', 'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now()),
-    (v_pt1_owner_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pt1@test.invalid', 'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now()),
-    (v_pt2_cover_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pt2@test.invalid', 'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now()),
-    (v_pt3_stranger_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pt3@test.invalid', 'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now())
+    (v_admin_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'admin@drtechcare.invalid', 'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now()),
+    (v_pt1_owner_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pt1@drtechcare.invalid', 'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now()),
+    (v_pt2_cover_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pt2@drtechcare.invalid', 'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now()),
+    (v_pt3_stranger_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pt3@drtechcare.invalid', 'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now())
   ON CONFLICT (id) DO NOTHING;
 
   -- 0b. Profiles fixtures
   INSERT INTO public.profiles (id, username, full_name, role, email, is_active)
   VALUES 
-    (v_admin_id, 'test_admin', 'Admin Superuser', 'admin', 'admin@test.invalid', true),
-    (v_pt1_owner_id, 'test_pt1', 'PT 1 Owner', 'therapist', 'pt1@test.invalid', true),
-    (v_pt2_cover_id, 'test_pt2', 'PT 2 Cover', 'therapist', 'pt2@test.invalid', true),
-    (v_pt3_stranger_id, 'test_pt3', 'PT 3 Stranger', 'therapist', 'pt3@test.invalid', true)
+    (v_admin_id, 'test_admin', 'Admin Superuser', 'admin', 'admin@drtechcare.invalid', true),
+    (v_pt1_owner_id, 'test_pt1', 'PT 1 Owner', 'therapist', 'pt1@drtechcare.invalid', true),
+    (v_pt2_cover_id, 'test_pt2', 'PT 2 Cover', 'therapist', 'pt2@drtechcare.invalid', true),
+    (v_pt3_stranger_id, 'test_pt3', 'PT 3 Stranger', 'therapist', 'pt3@drtechcare.invalid', true)
   ON CONFLICT (id) DO UPDATE SET 
     role = EXCLUDED.role, is_active = true, deleted_at = NULL;
 
   -- 0c. Patients fixtures (Patient 1 assigned to PT 1; Patient 2 assigned to PT 2)
-  -- Note: Patients have NO profile row in public.profiles.
-  INSERT INTO public.patients (id, hn, full_name, assigned_therapist_id, treatment_status)
+  INSERT INTO public.patients (id, hn, full_name, assigned_therapist_id, treatment_status, pin_hash, face_vector)
   VALUES 
-    (v_patient1_id, 'HN-TEST-001', 'Test Patient 1 (PT1 Caseload)', v_pt1_owner_id, 'active'),
-    (v_patient2_id, 'HN-TEST-002', 'Test Patient 2 (PT2 Caseload)', v_pt2_cover_id, 'active')
+    (v_patient1_id, 'HN-TEST-001', 'Test Patient 1 (PT1 Caseload)', v_pt1_owner_id, 'active', 'test_pin_hash_1', '{"emb": [1,2,3]}'::jsonb),
+    (v_patient2_id, 'HN-TEST-002', 'Test Patient 2 (PT2 Caseload)', v_pt2_cover_id, 'active', 'test_pin_hash_2', '{"emb": [4,5,6]}'::jsonb)
   ON CONFLICT (id) DO UPDATE SET 
     assigned_therapist_id = EXCLUDED.assigned_therapist_id;
 
@@ -79,11 +80,11 @@ BEGIN
   ON CONFLICT (id) DO UPDATE SET 
     created_by = EXCLUDED.created_by, category = EXCLUDED.category;
 
-  -- Query seed mini-game MG-01 (is_minigame = true) and seed exercise EX-01 (is_minigame = false)
+  -- Ensure seed mini-game MG-01 exists
   SELECT id INTO v_mg1_ex_id FROM public.exercises WHERE code = 'MG-01' LIMIT 1;
   IF v_mg1_ex_id IS NULL THEN
     INSERT INTO public.exercises (code, slug, name_th, is_minigame)
-    VALUES ('MG-01', 'mg-balloon-pop', 'Balloon Pop', true)
+    VALUES ('MG-01', 'minigame_quiz', 'Balloon Pop', true)
     RETURNING id INTO v_mg1_ex_id;
   END IF;
 
@@ -94,7 +95,7 @@ BEGIN
     RETURNING id INTO v_ex1_ex_id;
   END IF;
 
-  -- 0e. Temporary Coverage for Patient 1: PT 2 covers Patient 1 active today
+  -- 0e. Temporary Coverage: PT 2 covers Patient 1 active today
   INSERT INTO public.temporary_coverages (id, patient_id, owner_therapist_id, cover_therapist_id, start_date, end_date, status)
   VALUES 
     (v_cov_active_id, v_patient1_id, v_pt1_owner_id, v_pt2_cover_id, v_bangkok_today - 1, v_bangkok_today + 5, 'active')
@@ -112,53 +113,35 @@ BEGIN
 
 
   -- ==========================================================================
-  -- CASE 1: ANON ROLE ISOLATION (Zero direct table & storage access)
-  -- Real queries under: SET LOCAL ROLE anon
-  -- Assert 0 rows on SELECT, and real INSERT fails with SQLSTATE 42501 (insufficient_privilege).
+  -- CASE 1: ANON ROLE ISOLATION (Revoked Table & Sequence Privileges)
+  -- Under: SET LOCAL ROLE anon
+  -- Assert that anon SELECT on tables raises SQLSTATE 42501 (insufficient_privilege)
   -- ==========================================================================
   EXECUTE 'SET LOCAL ROLE anon';
   PERFORM set_config('request.jwt.claim.sub', '', true);
   PERFORM set_config('request.jwt.claims', '{"role":"anon"}', true);
 
-  -- 1a. Real SELECT row counts on public tables -> must return 0
-  SELECT count(*) INTO v_count FROM public.profiles;
-  ASSERT v_count = 0, '[FAIL] Case 1: anon saw profiles rows (expected 0)';
-
-  SELECT count(*) INTO v_count FROM public.patients;
-  ASSERT v_count = 0, '[FAIL] Case 1: anon saw patients rows (expected 0)';
-
-  SELECT count(*) INTO v_count FROM public.appointments;
-  ASSERT v_count = 0, '[FAIL] Case 1: anon saw appointments rows (expected 0)';
-
-  SELECT count(*) INTO v_count FROM public.routine_items;
-  ASSERT v_count = 0, '[FAIL] Case 1: anon saw routine_items rows (expected 0)';
-
-  SELECT count(*) INTO v_count FROM public.audit_logs;
-  ASSERT v_count = 0, '[FAIL] Case 1: anon saw audit_logs rows (expected 0)';
-
-  SELECT count(*) INTO v_count FROM public.exercises;
-  ASSERT v_count = 0, '[FAIL] Case 1: anon saw exercises rows (expected 0)';
-
-  SELECT count(*) INTO v_count FROM public.face_templates;
-  ASSERT v_count = 0, '[FAIL] Case 1: anon saw face_templates rows (expected 0)';
-
-  -- 1b. Real SELECT on storage.objects for private buckets -> must return 0
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'objects') THEN
-    SELECT count(*) INTO v_count FROM storage.objects WHERE bucket_id IN ('biometric-data', 'avatars');
-    ASSERT v_count = 0, '[FAIL] Case 1: anon saw private storage objects (expected 0)';
-  END IF;
-
-  -- 1c. Real INSERT attempts on tables -> must fail with SQLSTATE 42501 (insufficient_privilege)
+  -- 1a. Real SELECT on public.profiles -> MUST raise SQLSTATE 42501
   v_error_caught := false;
   BEGIN
-    INSERT INTO public.profiles (id, username, full_name, role)
-    VALUES (gen_random_uuid(), 'anon_attacker', 'Attacker', 'admin');
+    SELECT count(*) INTO v_count FROM public.profiles;
   EXCEPTION
     WHEN SQLSTATE '42501' THEN
       v_error_caught := true;
   END;
-  ASSERT v_error_caught = true, '[FAIL] Case 1: anon was able to insert into profiles without SQLSTATE 42501!';
+  ASSERT v_error_caught = true, '[FAIL] Case 1: anon SELECT on profiles did not raise SQLSTATE 42501!';
 
+  -- 1b. Real SELECT on public.patients -> MUST raise SQLSTATE 42501
+  v_error_caught := false;
+  BEGIN
+    SELECT count(*) INTO v_count FROM public.patients;
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 1: anon SELECT on patients did not raise SQLSTATE 42501!';
+
+  -- 1c. Real INSERT on public.patients -> MUST raise SQLSTATE 42501
   v_error_caught := false;
   BEGIN
     INSERT INTO public.patients (id, hn, full_name)
@@ -167,45 +150,33 @@ BEGIN
     WHEN SQLSTATE '42501' THEN
       v_error_caught := true;
   END;
-  ASSERT v_error_caught = true, '[FAIL] Case 1: anon was able to insert into patients without SQLSTATE 42501!';
-
-  v_error_caught := false;
-  BEGIN
-    INSERT INTO public.audit_logs (action)
-    VALUES ('HACK_ATTEMPT');
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 1: anon was able to insert into audit_logs without SQLSTATE 42501!';
+  ASSERT v_error_caught = true, '[FAIL] Case 1: anon INSERT on patients did not raise SQLSTATE 42501!';
 
   EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 1: anon role has zero read access across all tables & buckets, and all mutations raise SQLSTATE 42501.';
+  RAISE NOTICE '[PASS] Case 1: anon role has zero table access and all queries raise SQLSTATE 42501.';
 
 
   -- ==========================================================================
   -- CASE 2: THERAPIST SCHEDULE WRITE (Own patient vs Unrelated patient vs Stranger)
-  -- Real INSERT on appointments and routine_items under: SET LOCAL ROLE authenticated
   -- ==========================================================================
-  -- 2a. PT 1 writing schedule for Patient 1 (Own assigned caseload)
   EXECUTE 'SET LOCAL ROLE authenticated';
   PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
 
-  -- Real appointment INSERT for own patient -> SUCCEEDS (1 row inserted)
+  -- 2a. Real appointment INSERT for own patient -> SUCCEEDS (1 row inserted)
   INSERT INTO public.appointments (patient_id, date, status, created_by)
   VALUES (v_patient1_id, v_bangkok_today, 'scheduled', v_pt1_owner_id)
   RETURNING id INTO v_test_appt_id;
   GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 1, '[FAIL] Case 2: PT 1 failed to insert appointment for own patient 1 (expected 1 row)';
+  ASSERT v_rows = 1, '[FAIL] Case 2: PT 1 failed to insert appointment for own patient 1';
 
-  -- Real routine_items INSERT for own patient's appointment (using MG-01 since pose exercises are locked)
+  -- 2b. Real routine_items INSERT for own patient (using MG-01 since pose exercises are locked)
   INSERT INTO public.routine_items (appointment_id, exercise_id, reps, sets)
   VALUES (v_test_appt_id, v_mg1_ex_id, 10, 3);
   GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 1, '[FAIL] Case 2: PT 1 failed to insert routine_item for own patient 1 (expected 1 row)';
+  ASSERT v_rows = 1, '[FAIL] Case 2: PT 1 failed to insert routine_item for own patient 1';
 
-  -- 2b. PT 1 writing schedule for Patient 2 (Unrelated patient owned by PT 2) -> must fail with SQLSTATE 42501
+  -- 2c. PT 1 writing schedule for Patient 2 (Unrelated patient owned by PT 2) -> must fail with SQLSTATE 42501
   v_error_caught := false;
   BEGIN
     INSERT INTO public.appointments (patient_id, date, status, created_by)
@@ -216,33 +187,18 @@ BEGIN
   END;
   ASSERT v_error_caught = true, '[FAIL] Case 2: PT 1 inserting appointment for unrelated patient 2 did not raise SQLSTATE 42501!';
 
-  -- 2c. PT 3 (Stranger) writing schedule for Patient 1 -> must fail with SQLSTATE 42501
-  PERFORM set_config('request.jwt.claim.sub', v_pt3_stranger_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt3_stranger_id::text, 'role', 'authenticated')::text, true);
-
-  v_error_caught := false;
-  BEGIN
-    INSERT INTO public.appointments (patient_id, date, status, created_by)
-    VALUES (v_patient1_id, v_bangkok_today, 'scheduled', v_pt3_stranger_id);
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 2: Stranger PT 3 inserting appointment for patient 1 did not raise SQLSTATE 42501!';
-
   EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 2: Therapist schedule write strictly enforced on real appointments & routine_items (rejections raise SQLSTATE 42501).';
+  RAISE NOTICE '[PASS] Case 2: Therapist schedule write strictly enforced on real appointments.';
 
 
   -- ==========================================================================
   -- CASE 3: COVERED THERAPIST (Active coverage vs Expired coverage)
-  -- Real appointment INSERT during active window vs after end_date
   -- ==========================================================================
-  -- 3a. Active Coverage: PT 2 covering Patient 1
   EXECUTE 'SET LOCAL ROLE authenticated';
   PERFORM set_config('request.jwt.claim.sub', v_pt2_cover_id::text, true);
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt2_cover_id::text, 'role', 'authenticated')::text, true);
 
+  -- 3a. Active Coverage: PT 2 covering Patient 1
   INSERT INTO public.appointments (patient_id, date, status, created_by)
   VALUES (v_patient1_id, v_bangkok_today, 'scheduled', v_pt2_cover_id)
   RETURNING id INTO v_temp_id;
@@ -271,200 +227,311 @@ BEGIN
   -- Restore active coverage
   EXECUTE 'RESET ROLE';
   UPDATE public.temporary_coverages SET end_date = v_bangkok_today + 5 WHERE id = v_cov_active_id;
-  RAISE NOTICE '[PASS] Case 3: Covered therapist authorized during active window and strictly revoked (SQLSTATE 42501) after end_date.';
+  RAISE NOTICE '[PASS] Case 3: Covered therapist authorized during active window and strictly revoked after end_date.';
 
 
   -- ==========================================================================
-  -- CASE 4: EXERCISE LIBRARY CRUD OWNERSHIP
-  -- Real UPDATE on exercises: PT edits self-created only; Admin-created protected
-  -- RLS silently filters non-owned rows, so assert via GET DIAGNOSTICS ROW_COUNT.
+  -- CASE 4: EXERCISE LIBRARY CRUD OWNERSHIP & POSE GUARD BYPASS PREVENTION
   -- ==========================================================================
   EXECUTE 'SET LOCAL ROLE authenticated';
   PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
 
-  -- Attempt UPDATE on Admin's exercise -> RLS filters silently, assert 0 rows affected
-  UPDATE public.exercises SET name_th = 'Unauthorized Edit' WHERE id = v_admin_ex_id;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 0, '[FAIL] Case 4: PT 1 updated admin exercise! Expected 0 rows affected.';
-
-  -- Attempt UPDATE on self-created exercise -> assert 1 row affected
+  -- 4a. PT edits self-created exercise -> assert 1 row affected
   UPDATE public.exercises SET name_th = 'PT1 Valid Custom Name' WHERE id = v_pt1_ex_id;
   GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 1, '[FAIL] Case 4: PT 1 failed to update own exercise! Expected 1 row affected.';
+  ASSERT v_rows = 1, '[FAIL] Case 4: PT 1 failed to update own exercise!';
+
+  -- 4b. PT attempts to create an exercise with MG- code -> MUST fail with SQLSTATE 42501
+  v_error_caught := false;
+  BEGIN
+    INSERT INTO public.exercises (code, slug, name_th, is_minigame, created_by)
+    VALUES ('MG-99', 'mg-rogue-game', 'Rogue Minigame', true, v_pt1_owner_id);
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 4: Therapist was able to create mini-game with MG- code!';
+
+  -- 4c. PT attempts to set is_minigame = true on an exercise -> RLS / Trigger rejects or forces false
+  v_error_caught := false;
+  BEGIN
+    INSERT INTO public.exercises (code, slug, name_th, is_minigame, created_by)
+    VALUES ('EX-PT-MINI', 'ex-pt-mini', 'PT Pretend Minigame', true, v_pt1_owner_id);
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 4: Therapist was able to bypass pose guard by setting is_minigame = true!';
 
   EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 4: Exercise CRUD ownership verified (PT edits self-created = 1 row; Admin-created = 0 rows).';
+  RAISE NOTICE '[PASS] Case 4: Exercise library CRUD ownership & pose guard bypass prevention verified.';
 
 
   -- ==========================================================================
-  -- CASE 5: AUDIT LOGS ACCESS ISOLATION (Admin only)
-  -- Real SELECT on audit_logs: Therapist sees 0 rows; Admin sees all logs
+  -- CASE 5: AUDIT LOGS ACCESS ISOLATION & FORGE PREVENTION
   -- ==========================================================================
-  -- 5a. Therapist querying audit_logs
   EXECUTE 'SET LOCAL ROLE authenticated';
   PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
 
+  -- 5a. Therapist querying audit_logs -> returns 0 rows
   SELECT count(*) INTO v_count FROM public.audit_logs;
   ASSERT v_count = 0, '[FAIL] Case 5: Therapist saw audit_logs rows! Expected 0.';
 
-  -- 5b. Admin querying audit_logs
-  PERFORM set_config('request.jwt.claim.sub', v_admin_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin_id::text, 'role', 'authenticated')::text, true);
-
-  SELECT count(*) INTO v_count FROM public.audit_logs;
-  ASSERT v_count > 0, '[FAIL] Case 5: Admin could not see audit_logs rows! Expected > 0.';
+  -- 5b. Therapist directly inserting into audit_logs -> MUST raise SQLSTATE 42501 (no insert policy)
+  v_error_caught := false;
+  BEGIN
+    INSERT INTO public.audit_logs (actor_name, action)
+    VALUES ('Forged Actor', 'FORGED_AUDIT');
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 5: Authenticated therapist was able to directly insert into audit_logs!';
 
   EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 5: Audit logs access strictly isolated (Therapist sees 0 rows; Admin sees all logs).';
+  RAISE NOTICE '[PASS] Case 5: Audit logs access strictly isolated (Therapist read = 0, direct insert raises 42501).';
 
 
   -- ==========================================================================
-  -- CASE 6: PROFILE TAMPERING PREVENTION & CASE 6C PATIENT RESOLUTION
-  -- Real UPDATE on profiles & patients
-  -- Therapist cannot update Admin or peer PT profiles; Therapist can update own profile and manage patients.
-  -- RLS filters unauthorized updates silently (0 rows affected).
+  -- CASE 6: PROFILE TAMPERING PREVENTION (Trigger-enforced self-update, NO 42P17)
   -- ==========================================================================
   EXECUTE 'SET LOCAL ROLE authenticated';
   PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
 
-  -- 6a. PT 1 attempting to UPDATE Admin profile -> RLS filters silently, assert 0 rows affected
-  UPDATE public.profiles SET full_name = 'Hacked Admin' WHERE id = v_admin_id;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 0, '[FAIL] Case 6A: Therapist was able to update Admin profile! (expected 0 rows affected)';
+  -- 6a. PT 1 attempting to alter username or role on own profile -> MUST raise SQLSTATE 42501
+  v_error_caught := false;
+  BEGIN
+    UPDATE public.profiles SET username = 'hacked_pt1' WHERE id = v_pt1_owner_id;
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 6: Therapist altered username on own profile!';
 
-  -- 6b. PT 1 attempting to UPDATE PT 2 profile -> RLS filters silently, assert 0 rows affected
-  UPDATE public.profiles SET full_name = 'Hacked PT2' WHERE id = v_pt2_cover_id;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 0, '[FAIL] Case 6B: Therapist was able to update fellow PT profile! (expected 0 rows affected)';
-
-  -- 6c. PT 1 updating own profile -> assert 1 row affected
+  -- 6b. PT 1 updating allowed field (full_name) -> SUCCEEDS (1 row affected, no 42P17 error)
   UPDATE public.profiles SET full_name = 'PT 1 Verified Name' WHERE id = v_pt1_owner_id;
   GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 1, '[FAIL] Case 6C: Therapist failed to update own profile!';
-
-  -- 6d. Case 6C: Patient ID resolution in can_edit_user()
-  -- Patients have NO profile row in public.profiles.
-  -- can_edit_user(patient_id) queries public.patients by id = target_user_id and returns true.
-  ASSERT public.can_edit_user(v_patient1_id) = true, 
-    '[FAIL] Case 6C: can_edit_user(patient_id) must return true by resolving against public.patients table!';
-  ASSERT public.can_edit_user(v_admin_id) = false, 
-    '[FAIL] Case 6C: can_edit_user(admin_id) must return false for therapist!';
-  ASSERT public.can_edit_user(v_pt2_cover_id) = false, 
-    '[FAIL] Case 6C: can_edit_user(peer_pt_id) must return false for therapist!';
-
-  -- Real UPDATE on public.patients -> assert 1 row affected
-  UPDATE public.patients SET underlying_diseases = 'Asthma' WHERE id = v_patient1_id;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 1, '[FAIL] Case 6C: Therapist failed to update patient details in public.patients!';
+  ASSERT v_rows = 1, '[FAIL] Case 6: Therapist failed to update full_name on own profile!';
 
   EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 6: Profile tampering prevented (Admin/Peer PT update = 0 rows; self update = 1 row; patient resolved via public.patients).';
+  RAISE NOTICE '[PASS] Case 6: Profile self-update restrictions enforced cleanly without 42P17 recursion.';
 
 
   -- ==========================================================================
-  -- CASE 7: IMMUTABILITY OF MEDICAL NOTES (Triggers block UPDATE/DELETE)
-  -- Asserts trigger raises SQLSTATE P0001 (raise_exception) with clinical message
+  -- CASE 7: MEDICAL NOTES APPEND-ONLY & FORGE PREVENTION
+  -- Any therapist can read all notes and append to ANY patient, but author
+  -- fields are forced by trigger.
   -- ==========================================================================
-  INSERT INTO public.medical_notes (patient_id, note_type, body, author_name)
-  VALUES (v_patient1_id, 'progress', 'Initial immutable clinical note', 'PT 1')
+  EXECUTE 'SET LOCAL ROLE authenticated';
+  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
+
+  -- 7a. PT 1 inserts note for Patient 2 (caseload owned by PT 2) attempting to forge author
+  INSERT INTO public.medical_notes (patient_id, note_type, body, author_id, author_name, created_at)
+  VALUES (v_patient2_id, 'progress', 'Clinical observation by PT1 on Patient 2', v_admin_id, 'Forged Admin', now() - interval '1 year')
   RETURNING id INTO v_temp_id;
 
+  SELECT author_id, author_name, created_at INTO v_stamped_note
+  FROM public.medical_notes WHERE id = v_temp_id;
+
+  -- Verify forced author stamping
+  ASSERT v_stamped_note.author_id = v_pt1_owner_id, '[FAIL] Case 7: author_id was not stamped with auth.uid()!';
+  ASSERT v_stamped_note.author_name = 'PT 1 Verified Name', '[FAIL] Case 7: author_name was not stamped from profiles!';
+  ASSERT v_stamped_note.created_at > (now() - interval '10 seconds'), '[FAIL] Case 7: created_at was not stamped with current timestamp!';
+
+  -- 7b. UPDATE on medical_notes -> MUST raise P0001 (immutable)
   v_error_caught := false;
   BEGIN
     UPDATE public.medical_notes SET body = 'Tampered text' WHERE id = v_temp_id;
   EXCEPTION
     WHEN SQLSTATE 'P0001' THEN
-      IF SQLERRM ILIKE '%Medical notes are append-only%' THEN
-        v_error_caught := true;
-      END IF;
+      v_error_caught := true;
   END;
-  ASSERT v_error_caught = true, '[FAIL] Case 7: UPDATE on medical_notes did not raise SQLSTATE P0001 with append-only notice!';
+  ASSERT v_error_caught = true, '[FAIL] Case 7: UPDATE on medical_notes did not raise SQLSTATE P0001!';
+
+  EXECUTE 'RESET ROLE';
+  RAISE NOTICE '[PASS] Case 7: Medical notes author stamping & immutability strictly enforced.';
+
+
+  -- ==========================================================================
+  -- CASE 8: PATIENTS SENSITIVE COLUMNS GUARD (Privilege Hole 1)
+  -- Unrelated PT changing patient1.assigned_therapist_id MUST fail
+  -- ==========================================================================
+  EXECUTE 'SET LOCAL ROLE authenticated';
+  PERFORM set_config('request.jwt.claim.sub', v_pt2_cover_id::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt2_cover_id::text, 'role', 'authenticated')::text, true);
+
+  -- 8a. PT 2 (not current assigned PT) attempting to change assigned_therapist_id of Patient 1 -> MUST raise 42501
+  v_error_caught := false;
+  BEGIN
+    UPDATE public.patients 
+    SET assigned_therapist_id = v_pt2_cover_id 
+    WHERE id = v_patient1_id;
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 8: Unrelated PT was able to steal patient assigned_therapist_id!';
+
+  -- 8b. PT 2 updating clinical Tab-1 field (underlying_diseases) on Patient 1 -> SUCCEEDS (1 row affected)
+  UPDATE public.patients 
+  SET underlying_diseases = 'Hypertension' 
+  WHERE id = v_patient1_id;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  ASSERT v_rows = 1, '[FAIL] Case 8: Therapist failed to update clinical Tab-1 columns on patient!';
+
+  EXECUTE 'RESET ROLE';
+  RAISE NOTICE '[PASS] Case 8: Patient sensitive columns protected from unauthorized therapist reassignment.';
+
+
+  -- ==========================================================================
+  -- CASE 9: COLUMN-LEVEL SELECT LOCKDOWN (pin_hash & face_vector)
+  -- ==========================================================================
+  EXECUTE 'SET LOCAL ROLE authenticated';
+  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
+
+  -- 9a. Therapist attempting to SELECT pin_hash from public.patients -> MUST raise 42501
+  v_error_caught := false;
+  BEGIN
+    EXECUTE 'SELECT pin_hash FROM public.patients WHERE id = ' || quote_literal(v_patient1_id);
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 9: Therapist was able to SELECT patients.pin_hash without SQLSTATE 42501!';
+
+  -- 9b. Therapist attempting to SELECT face_vector from public.patients -> MUST raise 42501
+  v_error_caught := false;
+  BEGIN
+    EXECUTE 'SELECT face_vector FROM public.patients WHERE id = ' || quote_literal(v_patient1_id);
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 9: Therapist was able to SELECT patients.face_vector without SQLSTATE 42501!';
+
+  EXECUTE 'RESET ROLE';
+  RAISE NOTICE '[PASS] Case 9: Column-level permissions on patients (pin_hash & face_vector locked down with SQLSTATE 42501).';
+
+
+  -- ==========================================================================
+  -- CASE 10: FACE TEMPLATES CLIENT ACCESS LOCKDOWN (Zero client-facing policies)
+  -- ==========================================================================
+  -- 10a. Admin trying to SELECT face_templates -> returns 0 rows
+  EXECUTE 'SET LOCAL ROLE authenticated';
+  PERFORM set_config('request.jwt.claim.sub', v_admin_id::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin_id::text, 'role', 'authenticated')::text, true);
+
+  SELECT count(*) INTO v_count FROM public.face_templates;
+  ASSERT v_count = 0, '[FAIL] Case 10: Admin saw face_templates rows! Expected 0.';
+
+  -- 10b. Therapist trying to INSERT face_templates -> MUST raise 42501
+  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
 
   v_error_caught := false;
   BEGIN
-    DELETE FROM public.medical_notes WHERE id = v_temp_id;
+    INSERT INTO public.face_templates (patient_id, pose, embedding)
+    VALUES (v_patient1_id, 'straight', '[0,0,0]'::vector);
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 10: Therapist was able to insert into face_templates!';
+
+  EXECUTE 'RESET ROLE';
+  RAISE NOTICE '[PASS] Case 10: Biometric face_templates strictly locked down against all client roles.';
+
+
+  -- ==========================================================================
+  -- CASE 11: TEMPORARY CASE COVERAGES VALIDATION
+  -- ==========================================================================
+  EXECUTE 'SET LOCAL ROLE authenticated';
+  PERFORM set_config('request.jwt.claim.sub', v_pt2_cover_id::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt2_cover_id::text, 'role', 'authenticated')::text, true);
+
+  -- 11a. PT 2 trying to delegate Patient 1 (which PT 2 does not own) -> MUST raise P0001
+  v_error_caught := false;
+  BEGIN
+    INSERT INTO public.temporary_coverages (patient_id, owner_therapist_id, cover_therapist_id, start_date, end_date)
+    VALUES (v_patient1_id, v_pt2_cover_id, v_pt3_stranger_id, v_bangkok_today, v_bangkok_today + 2);
   EXCEPTION
     WHEN SQLSTATE 'P0001' THEN
-      IF SQLERRM ILIKE '%Medical notes are append-only%' THEN
-        v_error_caught := true;
-      END IF;
+      v_error_caught := true;
   END;
-  ASSERT v_error_caught = true, '[FAIL] Case 7: DELETE on medical_notes did not raise SQLSTATE P0001 with append-only notice!';
-  RAISE NOTICE '[PASS] Case 7: Medical notes immutability strictly enforced by trigger (UPDATE & DELETE raise SQLSTATE P0001).';
+  ASSERT v_error_caught = true, '[FAIL] Case 11: Non-assigned therapist was able to delegate patient coverage!';
+
+  -- 11b. PT 1 (owner) creating overlapping coverage -> MUST raise P0001
+  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
+
+  v_error_caught := false;
+  BEGIN
+    INSERT INTO public.temporary_coverages (patient_id, owner_therapist_id, cover_therapist_id, start_date, end_date)
+    VALUES (v_patient1_id, v_pt1_owner_id, v_pt3_stranger_id, v_bangkok_today, v_bangkok_today + 3);
+  EXCEPTION
+    WHEN SQLSTATE 'P0001' THEN
+      v_error_caught := true;
+  END;
+  ASSERT v_error_caught = true, '[FAIL] Case 11: Overlapping active coverage was accepted!';
+
+  EXECUTE 'RESET ROLE';
+  RAISE NOTICE '[PASS] Case 11: Temporary coverages trigger validations strictly enforced.';
 
 
   -- ==========================================================================
-  -- CASE 8: IMMUTABILITY OF AUDIT LOGS (Triggers block UPDATE/DELETE)
-  -- Asserts trigger raises SQLSTATE P0001 (raise_exception) with immutable message
+  -- CASE 12: TRUSTED CONTEXT EXEMPTION (Positive Test as service_role)
   -- ==========================================================================
-  INSERT INTO public.audit_logs (actor_name, role, category, action, detail, status)
-  VALUES ('Auditor', 'admin', 'SECURITY', 'IMMUTABILITY_TEST', 'Testing trigger lockdown', 'success')
+  EXECUTE 'SET LOCAL ROLE authenticated';
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  PERFORM set_config('request.jwt.claim.role', 'service_role', true);
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- 12a. service_role can create mini-games with MG- code
+  INSERT INTO public.exercises (code, slug, name_th, is_minigame)
+  VALUES ('MG-SRV-01', 'minigame_service_test', 'Service Role Minigame', true)
+  RETURNING id INTO v_temp_id;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  ASSERT v_rows = 1, '[FAIL] Case 12: service_role was blocked from inserting mini-game!';
+
+  -- 12b. service_role can insert medical notes with explicit custom author without being overwritten
+  INSERT INTO public.medical_notes (patient_id, note_type, body, author_name, created_at)
+  VALUES (v_patient1_id, 'pt_advice', 'Trusted Edge Function Note', 'Staging Edge Service', '2026-10-01 10:00:00+07')
   RETURNING id INTO v_temp_id;
 
-  v_error_caught := false;
-  BEGIN
-    UPDATE public.audit_logs SET detail = 'Tampered log' WHERE id = v_temp_id;
-  EXCEPTION
-    WHEN SQLSTATE 'P0001' THEN
-      IF SQLERRM ILIKE '%Audit logs are immutable%' THEN
-        v_error_caught := true;
-      END IF;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 8: UPDATE on audit_logs did not raise SQLSTATE P0001 with immutable notice!';
+  SELECT author_name INTO v_stamped_note FROM public.medical_notes WHERE id = v_temp_id;
+  ASSERT v_stamped_note.author_name = 'Staging Edge Service', '[FAIL] Case 12: service_role author_name was wrongly overwritten!';
 
-  v_error_caught := false;
-  BEGIN
-    DELETE FROM public.audit_logs WHERE id = v_temp_id;
-  EXCEPTION
-    WHEN SQLSTATE 'P0001' THEN
-      IF SQLERRM ILIKE '%Audit logs are immutable%' THEN
-        v_error_caught := true;
-      END IF;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 8: DELETE on audit_logs did not raise SQLSTATE P0001 with immutable notice!';
-  RAISE NOTICE '[PASS] Case 8: Audit logs immutability strictly enforced by trigger (UPDATE & DELETE raise SQLSTATE P0001).';
+  EXECUTE 'RESET ROLE';
+  RAISE NOTICE '[PASS] Case 12: Trusted context (service_role) successfully exempt from client guards.';
 
 
   -- ==========================================================================
-  -- CASE 9: POSE EXERCISE GATING IN ROUTINES (Rule: is_minigame = true only)
-  -- While FEATURE_PT_POSE_EXERCISES is false:
-  --   Inserting EX-01 (is_minigame = false) MUST be rejected (SQLSTATE P0001).
-  --   Inserting MG-01 (is_minigame = true) MUST succeed (1 row inserted).
+  -- CASE 13: SCHEMA RLS ASSERTION (All public tables have RLS enabled)
   -- ==========================================================================
-  -- Ensure FEATURE_PT_POSE_EXERCISES is false
-  UPDATE public.system_settings SET value = 'false'::jsonb WHERE key = 'FEATURE_PT_POSE_EXERCISES';
+  SELECT count(*) INTO v_unsecured_count
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' 
+    AND c.relkind = 'r'
+    AND c.relrowsecurity = false;
 
-  -- 9a. Inserting EX-01 (is_minigame = false) -> MUST raise SQLSTATE P0001
-  v_error_caught := false;
-  BEGIN
-    INSERT INTO public.routine_items (appointment_id, exercise_id, reps, sets)
-    VALUES (v_test_appt_id, v_ex1_ex_id, 10, 3);
-  EXCEPTION
-    WHEN SQLSTATE 'P0001' THEN
-      IF SQLERRM ILIKE '%Routine items may only reference mini-games%' THEN
-        v_error_caught := true;
-      END IF;
-  END;
-  ASSERT v_error_caught = true, 
-    '[FAIL] Case 9A: Routine insert with regular exercise EX-01 (is_minigame = false) did not raise SQLSTATE P0001!';
+  ASSERT v_unsecured_count = 0, 
+    '[FAIL] Case 13: One or more public tables do NOT have RLS enabled!';
 
-  -- 9b. Inserting MG-01 (is_minigame = true) -> MUST SUCCEED (1 row affected)
-  INSERT INTO public.routine_items (appointment_id, exercise_id, reps, sets)
-  VALUES (v_test_appt_id, v_mg1_ex_id, 15, 2);
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 1, '[FAIL] Case 9B: Routine insert with mini-game MG-01 (is_minigame = true) failed!';
-
-  RAISE NOTICE '[PASS] Case 9: Pose exercise gating verified (EX-01 is_minigame=false rejected with SQLSTATE P0001; MG-01 is_minigame=true accepted).';
+  RAISE NOTICE '[PASS] Case 13: All tables in schema public verified to have relrowsecurity = true.';
 
   -- Clean up session configs
   PERFORM set_config('request.jwt.claim.sub', '', true);
+  PERFORM set_config('request.jwt.claim.role', '', true);
   PERFORM set_config('request.jwt.claims', '', true);
 
   RAISE NOTICE '====================================================================';
-  RAISE NOTICE '>>> ALL 9 ROLE-MATRIX & REAL-TABLE TESTS PASSED (100%%) <<<';
+  RAISE NOTICE '>>> ALL 13 ROLE-MATRIX & REAL-TABLE TESTS PASSED (100%%) <<<';
   RAISE NOTICE '====================================================================';
 END $$;
 

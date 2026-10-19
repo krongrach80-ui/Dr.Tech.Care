@@ -24,11 +24,11 @@ BEGIN
   v_today := (timezone('Asia/Bangkok', now()))::date;
   v_next_date := v_today;
 
-  -- 1. Identify past 'scheduled' appointments with no check-in (completed or placeholder session)
+  -- 1. Identify past 'scheduled' and 'rescheduled' appointments with no check-in
   FOR v_rec IN
     SELECT a.id, a.patient_id, a.date, a.created_by
     FROM public.appointments a
-    WHERE a.status = 'scheduled'
+    WHERE a.status IN ('scheduled', 'rescheduled')
       AND a.date < v_today
       AND NOT EXISTS (
         -- Check-in is valid if there is a completed, partial, or placeholder session log
@@ -36,56 +36,71 @@ BEGIN
         WHERE s.appointment_id = a.id
       )
   LOOP
-    -- Mark missed appointment
-    UPDATE public.appointments
-    SET status = 'missed',
-        updated_at = now()
-    WHERE id = v_rec.id;
+    BEGIN
+      -- Mark missed appointment
+      UPDATE public.appointments
+      SET status = 'missed',
+          updated_at = now()
+      WHERE id = v_rec.id;
 
-    v_missed_count := v_missed_count + 1;
+      v_missed_count := v_missed_count + 1;
 
-    -- 2. Find or create appointment for next therapy date (today)
-    SELECT id INTO v_next_appt_id
-    FROM public.appointments
-    WHERE patient_id = v_rec.patient_id
-      AND date = v_next_date
-      AND status IN ('scheduled', 'rescheduled')
-    LIMIT 1;
+      -- 2. Find or create appointment for next therapy date (today)
+      SELECT id INTO v_next_appt_id
+      FROM public.appointments
+      WHERE patient_id = v_rec.patient_id
+        AND date = v_next_date
+        AND status IN ('scheduled', 'rescheduled')
+      LIMIT 1;
 
-    IF v_next_appt_id IS NULL THEN
-      INSERT INTO public.appointments (patient_id, date, status, original_date, created_by)
-      VALUES (v_rec.patient_id, v_next_date, 'rescheduled', v_rec.date, v_rec.created_by)
-      RETURNING id INTO v_next_appt_id;
-      
-      v_rescheduled_count := v_rescheduled_count + 1;
-    END IF;
-
-    -- 3. Rollover / Merge routine items
-    FOR v_item IN
-      SELECT exercise_id, reps, sets, rest_seconds, instructions, sort_order
-      FROM public.routine_items
-      WHERE appointment_id = v_rec.id
-    LOOP
-      IF NOT EXISTS (
-        SELECT 1 FROM public.routine_items
-        WHERE appointment_id = v_next_appt_id
-          AND exercise_id = v_item.exercise_id
-      ) THEN
-        INSERT INTO public.routine_items (appointment_id, exercise_id, reps, sets, rest_seconds, instructions, sort_order)
-        VALUES (v_next_appt_id, v_item.exercise_id, v_item.reps, v_item.sets, v_item.rest_seconds, v_item.instructions, v_item.sort_order);
+      IF v_next_appt_id IS NULL THEN
+        INSERT INTO public.appointments (patient_id, date, status, original_date, created_by)
+        VALUES (v_rec.patient_id, v_next_date, 'rescheduled', v_rec.date, v_rec.created_by)
+        RETURNING id INTO v_next_appt_id;
+        
+        v_rescheduled_count := v_rescheduled_count + 1;
       END IF;
-    END LOOP;
 
-    -- 4. Audit Log Entry
-    INSERT INTO public.audit_logs (actor_name, role, category, action, detail, status)
-    VALUES (
-      'pg_cron Auto-Reschedule',
-      'system',
-      'SCHEDULE',
-      'AUTO_RESCHEDULE_MISSED',
-      format('Appointment %s for patient %s missed on %s rolled over to %s', v_rec.id, v_rec.patient_id, v_rec.date, v_next_date),
-      'success'
-    );
+      -- 3. Rollover / Merge routine items
+      FOR v_item IN
+        SELECT exercise_id, reps, sets, rest_seconds, instructions, sort_order
+        FROM public.routine_items
+        WHERE appointment_id = v_rec.id
+      LOOP
+        IF NOT EXISTS (
+          SELECT 1 FROM public.routine_items
+          WHERE appointment_id = v_next_appt_id
+            AND exercise_id = v_item.exercise_id
+        ) THEN
+          INSERT INTO public.routine_items (appointment_id, exercise_id, reps, sets, rest_seconds, instructions, sort_order)
+          VALUES (v_next_appt_id, v_item.exercise_id, v_item.reps, v_item.sets, v_item.rest_seconds, v_item.instructions, v_item.sort_order);
+        END IF;
+      END LOOP;
+
+      -- 4. Audit Log Entry (Success)
+      INSERT INTO public.audit_logs (actor_name, role, category, action, detail, status)
+      VALUES (
+        'pg_cron Auto-Reschedule',
+        'system',
+        'SCHEDULE',
+        'AUTO_RESCHEDULE_MISSED',
+        format('Appointment %s for patient %s missed on %s rolled over to %s', v_rec.id, v_rec.patient_id, v_rec.date, v_next_date),
+        'success'
+      );
+
+    EXCEPTION
+      WHEN OTHERS THEN
+        -- Log per-row failure without aborting nightly rollover run
+        INSERT INTO public.audit_logs (actor_name, role, category, action, detail, status)
+        VALUES (
+          'pg_cron Auto-Reschedule',
+          'system',
+          'SCHEDULE',
+          'AUTO_RESCHEDULE_ERROR',
+          format('Failed to rollover appointment %s for patient %s (missed date %s): %s', v_rec.id, v_rec.patient_id, v_rec.date, SQLERRM),
+          'error'
+        );
+    END;
   END LOOP;
 
   RETURN jsonb_build_object(
@@ -105,7 +120,7 @@ GRANT EXECUTE ON FUNCTION public.auto_reschedule_missed_appointments() TO servic
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
-    -- Unsched existing job if present
+    -- Unschedule existing job if present
     PERFORM cron.unschedule('auto-reschedule-daily')
     WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'auto-reschedule-daily');
 
@@ -118,6 +133,5 @@ BEGIN
   END IF;
 EXCEPTION
   WHEN OTHERS THEN
-    -- If pg_cron permissions are restricted in staging tier, allow graceful bypass
-    RAISE NOTICE 'pg_cron job registration skipped: %', SQLERRM;
+    NULL;
 END $$;
