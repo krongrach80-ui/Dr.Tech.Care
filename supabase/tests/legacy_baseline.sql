@@ -252,10 +252,11 @@ VALUES
     'discharged'
   );
 
--- Exercises
+-- Exercises (Includes regular exercise and legacy mini-game with slug 'minigame_quiz' and no code)
 INSERT INTO public.exercises (id, slug, name_th, name_en, category, difficulty)
 VALUES 
-  ('44444444-0000-0000-0000-000000000001', 'legacy-shoulder-press', 'ท่ายกแขนเหนือศีรษะ', 'Shoulder Overhead Press', 'ข้อไหล่', 'medium');
+  ('44444444-0000-0000-0000-000000000001', 'legacy-shoulder-press', 'ท่ายกแขนเหนือศีรษะ', 'Shoulder Overhead Press', 'ข้อไหล่', 'medium'),
+  ('44444444-0000-0000-0000-000000000002', 'minigame_quiz', 'มินิเกมตอบคำถามเดิม', 'Legacy Quiz', 'มินิเกม (Minigame)', 'easy');
 
 -- Treatment Sessions
 INSERT INTO public.treatment_sessions (
@@ -352,35 +353,55 @@ VALUES ('198.51.100.99', 'Legacy brute-force attempt simulated fixture', now());
 
 -- ============================================================================
 -- VERIFICATION QUERY (Run this after applying all_migrations.sql)
+-- Expected counts after Step 2 and after idempotent re-run:
+--   - patients: 2 total, 1 discharged, 1 face_registered
+--   - medical_notes: 5 total (1 progress, 2 pt_advice, 2 outcome_rom)
+--   - session_logs: 2 total, 1 with correct > 0, 2 with score > 0
+--   - audit_logs: 1 imported LEGACY_LOGIN
+--   - temporary_coverages: 1 total, 1 with owner_therapist_id, 1 active
+--   - exercises: exactly one row per mini-game slug with code MG-0x and is_minigame = true
 -- ============================================================================
 /*
 SELECT 
   'patients' AS table_name, count(*) AS total_rows, 
-  count(*) FILTER (WHERE treatment_status = 'discharged') AS discharged_count,
-  count(*) FILTER (WHERE face_registered = true) AS face_registered_count
+  count(*) FILTER (WHERE treatment_status = 'discharged') AS col_metric_1,
+  count(*) FILTER (WHERE face_registered = true) AS col_metric_2,
+  0 AS col_metric_3
 FROM public.patients
 UNION ALL
 SELECT 
   'medical_notes' AS table_name, count(*) AS total_rows,
-  count(*) FILTER (WHERE note_type = 'progress') AS progress_count,
-  count(*) FILTER (WHERE note_type = 'pt_advice') AS pt_advice_count
+  count(*) FILTER (WHERE note_type = 'progress') AS col_metric_1,
+  count(*) FILTER (WHERE note_type = 'pt_advice') AS col_metric_2,
+  count(*) FILTER (WHERE note_type = 'outcome_rom') AS col_metric_3
 FROM public.medical_notes
 UNION ALL
 SELECT 
   'session_logs' AS table_name, count(*) AS total_rows,
-  count(*) FILTER (WHERE correct > 0) AS quiz_sessions_count,
-  count(*) FILTER (WHERE score > 0) AS scored_sessions_count
+  count(*) FILTER (WHERE correct > 0) AS col_metric_1,
+  count(*) FILTER (WHERE score > 0) AS col_metric_2,
+  0 AS col_metric_3
 FROM public.session_logs
 UNION ALL
 SELECT 
   'audit_logs' AS table_name, count(*) AS total_rows,
-  count(*) FILTER (WHERE action = 'LEGACY_LOGIN') AS imported_activity_count,
-  0
+  count(*) FILTER (WHERE action = 'LEGACY_LOGIN') AS col_metric_1,
+  0 AS col_metric_2,
+  0 AS col_metric_3
 FROM public.audit_logs
 UNION ALL
 SELECT 
   'temporary_coverages' AS table_name, count(*) AS total_rows,
-  count(*) FILTER (WHERE owner_therapist_id IS NOT NULL) AS backfilled_owner_count,
-  count(*) FILTER (WHERE status = 'active') AS active_count
-FROM public.temporary_coverages;
+  count(*) FILTER (WHERE owner_therapist_id IS NOT NULL) AS col_metric_1,
+  count(*) FILTER (WHERE status = 'active') AS col_metric_2,
+  0 AS col_metric_3
+FROM public.temporary_coverages
+UNION ALL
+SELECT 
+  'mini_games' AS table_name, count(*) AS total_rows,
+  count(*) FILTER (WHERE code LIKE 'MG-%') AS col_metric_1,
+  count(*) FILTER (WHERE is_minigame = true) AS col_metric_2,
+  0 AS col_metric_3
+FROM public.exercises
+WHERE slug IN ('minigame_quiz', 'minigame_arm_coordination', 'minigame_balloon_catch');
 */

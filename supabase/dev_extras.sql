@@ -2,7 +2,7 @@
 -- DR.TECH.CARE: DEV & STAGING EXTRAS (STAGING ONLY)
 -- Includes: Staging Seed Fixtures & Real-Table RLS Test Suite
 -- Note: Test suite is wrapped in BEGIN ... ROLLBACK.
--- Generated: 2026-10-19T02:19:50.909Z
+-- Generated: 2026-10-19T02:31:00.190Z
 -- ========================================================
 
 
@@ -138,7 +138,7 @@ BEGIN
   SELECT id INTO v_mg1_ex_id FROM public.exercises WHERE code = 'MG-01' LIMIT 1;
   IF v_mg1_ex_id IS NULL THEN
     INSERT INTO public.exercises (code, slug, name_th, is_minigame)
-    VALUES ('MG-01', 'minigame_quiz', 'Balloon Pop', true)
+    VALUES ('MG-01', 'minigame_quiz', 'มินิเกมตอบคำถามฝึกสมองและการตอบสนอง (Interactive Quiz)', true)
     RETURNING id INTO v_mg1_ex_id;
   END IF;
 

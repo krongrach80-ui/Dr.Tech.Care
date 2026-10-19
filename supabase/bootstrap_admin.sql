@@ -19,6 +19,10 @@ Rules:
   - Usernames must match: ^[a-z0-9._-]{3,32}$
   - INTERNAL_AUTH_DOMAIN: Configured as 'drtechcare.invalid' (RFC 2606 / 6761 reserved .invalid TLD).
     Supabase Auth uses this domain for non-public internal accounts.
+  - NOTE: drtechcare.invalid must be verified on staging first. Supabase Auth may reject it
+    depending on email provider validation settings. If rejected, INTERNAL_AUTH_DOMAIN
+    must be changed in ONE central place and stay identical across bootstrap, Edge Functions,
+    and frontend login mapping.
 
 Example:
   - 'admin' -> 'admin@drtechcare.invalid'
@@ -58,7 +62,24 @@ STEP 4: EXECUTE THE SQL BELOW IN SUPABASE SQL EDITOR
 Replace '<REPLACE_WITH_AUTH_UID_FROM_STEP_3>' with the UUID from Step 3 and run:
 */
 
--- INSERT OR UPDATE ADMIN PROFILE
+-- 4.1 PRE-FLIGHT CHECK: Prevent silent overwrite if username 'admin' belongs to another ID
+DO $$
+DECLARE
+  v_conflict_id uuid;
+  v_target_id uuid := '<REPLACE_WITH_AUTH_UID_FROM_STEP_3>'::uuid;
+BEGIN
+  SELECT id INTO v_conflict_id 
+  FROM public.profiles 
+  WHERE username = 'admin' AND id != v_target_id;
+
+  IF FOUND THEN
+    RAISE EXCEPTION 'A profile with username "admin" already exists with a different ID (%). Please reconcile or deactivate the conflicting profile first.', v_conflict_id;
+  END IF;
+END $$;
+
+-- 4.2 INSERT OR UPDATE ADMIN PROFILE
+-- must_change_password defaults to TRUE for mandatory password rotation on first login.
+-- Only set to false if the operator is the permanent administrator with a verified strong password.
 INSERT INTO public.profiles (
   id,
   username,
@@ -79,7 +100,7 @@ VALUES (
   'admin@drtechcare.invalid',
   NULL,
   true,
-  false
+  true
 )
 ON CONFLICT (id) DO UPDATE SET
   username = 'admin',
@@ -88,9 +109,29 @@ ON CONFLICT (id) DO UPDATE SET
   phone = EXCLUDED.phone,
   email = 'admin@drtechcare.invalid',
   is_active = true,
+  must_change_password = EXCLUDED.must_change_password,
   deleted_at = NULL;
 
--- VERIFICATION
-SELECT id, username, full_name, role, email, is_active 
+-- 4.3 VERIFICATION OF CREATED ADMIN
+SELECT id, username, full_name, role, email, is_active, must_change_password 
 FROM public.profiles 
 WHERE role = 'admin';
+
+-- ================================================================================
+-- INSECURE LEGACY TEST ACCOUNTS AUDIT (from init_all.sql / seed.sql)
+-- ================================================================================
+-- The following accounts were historically seeded with weak default passwords ('1234'):
+--   - 'admin' (director@strongcare.hospital)
+--   - 'pt_thanakorn' (thanakorn.w@strongcare.hospital)
+--   - 'pt_pimchanok' (pimchanok.s@strongcare.hospital)
+--
+-- RUN THIS QUERY IN PRODUCTION TO AUDIT THEIR STATUS:
+SELECT id, username, full_name, role, email, is_active, created_at
+FROM public.profiles
+WHERE username IN ('admin', 'pt_thanakorn', 'pt_pimchanok')
+ORDER BY username;
+
+-- OPERATOR ACTION:
+-- If any of these legacy profiles exist on production, verify their auth identity
+-- and deactivate (is_active = false) or reset their credentials immediately.
+-- Do NOT auto-delete them to avoid breaking clinical FK references.

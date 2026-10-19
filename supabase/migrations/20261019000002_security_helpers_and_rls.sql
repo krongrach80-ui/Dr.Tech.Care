@@ -884,15 +884,15 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
 -- Set default privileges for postgres and supabase_admin roles
 DO $$
 BEGIN
-  EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon';
-  EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon';
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres') THEN
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon';
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon';
+  END IF;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_admin') THEN
     EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM anon';
     EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon';
   END IF;
-EXCEPTION
-  WHEN OTHERS THEN NULL;
 END $$;
 
 -- ============================================================================

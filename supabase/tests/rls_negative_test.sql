@@ -84,7 +84,7 @@ BEGIN
   SELECT id INTO v_mg1_ex_id FROM public.exercises WHERE code = 'MG-01' LIMIT 1;
   IF v_mg1_ex_id IS NULL THEN
     INSERT INTO public.exercises (code, slug, name_th, is_minigame)
-    VALUES ('MG-01', 'minigame_quiz', 'Balloon Pop', true)
+    VALUES ('MG-01', 'minigame_quiz', 'มินิเกมตอบคำถามฝึกสมองและการตอบสนอง (Interactive Quiz)', true)
     RETURNING id INTO v_mg1_ex_id;
   END IF;
 

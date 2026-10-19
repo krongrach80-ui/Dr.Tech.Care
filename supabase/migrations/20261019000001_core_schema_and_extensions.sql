@@ -3,6 +3,12 @@
 -- Additive, idempotent migration ensuring all existing data survives.
 -- WARNING: Do NOT use legacy init_all.sql or schema.sql; they contain hardcoded
 --          dev passwords. Only execute official timestamped migrations.
+--
+-- Phase 2 Mini-Game Field Mappings between Frontend DailyRoutineAssignmentModal.tsx & DB Schema:
+--   1. Modal holdSeconds (rest between sets) maps to routine_items.rest_seconds and exercises.rest_seconds.
+--   2. Modal difficulty ('beginner', 'intermediate', 'advanced') maps to routine_items.difficulty (per-prescription).
+--      exercises.difficulty ('easy', 'medium', 'hard') is library-level catalog metadata only.
+--   3. Modal targetJoint maps to exercises.target_joint.
 -- ============================================================================
 
 -- 1. Enable Required Extensions
@@ -138,29 +144,10 @@ UPDATE public.patients
 SET admission_date = started_at
 WHERE admission_date IS NULL AND started_at IS NOT NULL;
 
--- Backfill assigned_therapist_id from responsible_therapist_id
--- Checks both public.profiles and legacy public.therapists mapping
-UPDATE public.patients p
-SET assigned_therapist_id = COALESCE(
-  (SELECT prof.id FROM public.profiles prof WHERE prof.id = p.responsible_therapist_id),
-  (SELECT t.profile_id FROM public.therapists t WHERE t.id = p.responsible_therapist_id)
-)
-WHERE p.assigned_therapist_id IS NULL AND p.responsible_therapist_id IS NOT NULL;
-
 -- Backfill treatment_status from legacy status 'discharged'
 UPDATE public.patients
 SET treatment_status = 'discharged'
 WHERE status = 'discharged' AND treatment_status != 'discharged';
-
--- Backfill face_registered from legacy face_vector or face_templates
-UPDATE public.patients p
-SET face_registered = true,
-    face_enrolled_at = COALESCE(p.face_enrolled_at, now())
-WHERE p.face_registered = false
-  AND (
-    p.face_vector IS NOT NULL 
-    OR EXISTS (SELECT 1 FROM public.face_templates ft WHERE ft.patient_id = p.id)
-  );
 
 -- Add unique constraint on hn once backfilled
 DO $$
@@ -233,7 +220,11 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'exercises_code_unique'
   ) THEN
-    UPDATE public.exercises SET code = 'EX-' || substring(id::text, 1, 4) WHERE code IS NULL;
+    -- Generate collision-resistant unique code for legacy exercises (16^8 values)
+    UPDATE public.exercises 
+    SET code = 'EX-' || substring(replace(id::text, '-', ''), 1, 8) 
+    WHERE code IS NULL;
+
     ALTER TABLE public.exercises ADD CONSTRAINT exercises_code_unique UNIQUE (code);
   END IF;
 END $$;
@@ -271,6 +262,10 @@ CREATE TABLE IF NOT EXISTS public.routine_items (
   sort_order int NOT NULL DEFAULT 0,
   created_at timestamptz DEFAULT now()
 );
+
+-- Phase 2 Prep: Add routine_items.difficulty matching frontend prescription difficulty
+ALTER TABLE public.routine_items ADD COLUMN IF NOT EXISTS difficulty text DEFAULT 'beginner' 
+  CHECK (difficulty IN ('beginner', 'intermediate', 'advanced'));
 
 -- 9. Session Logs Table (Unified Execution Log)
 CREATE TABLE IF NOT EXISTS public.session_logs (
@@ -329,7 +324,7 @@ BEGIN
   END IF;
 END $$;
 
--- Ensure non-null and constraint on note_type
+-- Ensure non-null and constraint on note_type without silent exception swallowing
 DO $$
 BEGIN
   UPDATE public.medical_notes SET note_type = 'progress' WHERE note_type IS NULL;
@@ -348,8 +343,6 @@ BEGIN
   ALTER TABLE public.medical_notes DROP CONSTRAINT IF EXISTS medical_notes_author_id_fkey;
   ALTER TABLE public.medical_notes ADD CONSTRAINT medical_notes_author_id_fkey 
     FOREIGN KEY (author_id) REFERENCES public.profiles(id) ON DELETE RESTRICT;
-EXCEPTION
-  WHEN OTHERS THEN NULL;
 END $$;
 
 -- 11. Temporary Case Coverages Table
@@ -398,12 +391,10 @@ BEGIN
     ALTER TABLE public.temporary_coverages ALTER COLUMN patient_name DROP NOT NULL;
   END IF;
 
-  -- Reconcile status check constraint
+  -- Reconcile status check constraint without silent exception swallowing
   ALTER TABLE public.temporary_coverages DROP CONSTRAINT IF EXISTS temporary_coverages_status_check;
   ALTER TABLE public.temporary_coverages ADD CONSTRAINT temporary_coverages_status_check 
     CHECK (status IN ('active', 'revoked', 'expired'));
-EXCEPTION
-  WHEN OTHERS THEN NULL;
 END $$;
 
 -- 12. Face Templates Table (DIM = 128, Euclidean distance <-> calibrated)
@@ -463,8 +454,6 @@ BEGIN
   ALTER TABLE public.audit_logs DROP CONSTRAINT IF EXISTS audit_logs_actor_id_fkey;
   ALTER TABLE public.audit_logs ADD CONSTRAINT audit_logs_actor_id_fkey 
     FOREIGN KEY (actor_id) REFERENCES public.profiles(id) ON DELETE RESTRICT;
-EXCEPTION
-  WHEN OTHERS THEN NULL;
 END $$;
 
 -- 16. System Settings Table
@@ -502,7 +491,27 @@ END $$;
 
 -- ============================================================================
 -- 18. DATA BACKFILLS (Ensuring all existing data survives)
+-- Placed AFTER all tables are created to resolve all cross-table relations safely.
 -- ============================================================================
+
+-- Backfill patients.assigned_therapist_id from responsible_therapist_id
+-- Checks both public.profiles and legacy public.therapists mapping
+UPDATE public.patients p
+SET assigned_therapist_id = COALESCE(
+  (SELECT prof.id FROM public.profiles prof WHERE prof.id = p.responsible_therapist_id),
+  (SELECT t.profile_id FROM public.therapists t WHERE t.id = p.responsible_therapist_id)
+)
+WHERE p.assigned_therapist_id IS NULL AND p.responsible_therapist_id IS NOT NULL;
+
+-- Backfill patients.face_registered from legacy face_vector or face_templates
+UPDATE public.patients p
+SET face_registered = true,
+    face_enrolled_at = COALESCE(p.face_enrolled_at, now())
+WHERE p.face_registered = false
+  AND (
+    p.face_vector IS NOT NULL 
+    OR EXISTS (SELECT 1 FROM public.face_templates ft WHERE ft.patient_id = p.id)
+  );
 
 -- Backfill from activity_logs -> audit_logs
 DO $$
@@ -601,7 +610,7 @@ CREATE INDEX IF NOT EXISTS idx_kiosk_tokens_hash ON public.kiosk_tokens(token_ha
 -- ============================================================================
 -- 20. PRODUCTION REFERENCE DATA (Settings Defaults & Core Clinical Mini-Games)
 -- Verified against frontend DailyRoutineAssignmentModal.tsx & Kiosk Hub
--- Uses ON CONFLICT DO NOTHING so re-running never resets tuned values.
+-- Normalizes existing rows first, then uses plain ON CONFLICT DO NOTHING.
 -- ============================================================================
 
 -- Core System Settings Defaults
@@ -614,8 +623,31 @@ VALUES
   ('KIOSK_SESSION_TIMEOUT_SECONDS', '90'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
+-- T2 / T5: Normalize any pre-existing rows with mini-game slugs before inserting defaults
+UPDATE public.exercises
+SET code = 'MG-01', 
+    is_minigame = true,
+    target_joint = COALESCE(target_joint, 'ประสานระบบประสาทและความจำ'),
+    rest_seconds = COALESCE(rest_seconds, 15)
+WHERE slug = 'minigame_quiz' AND (code IS NULL OR code LIKE 'EX-%');
+
+UPDATE public.exercises
+SET code = 'MG-02', 
+    is_minigame = true,
+    target_joint = COALESCE(target_joint, 'ข้อต่อหัวไหล่และแขนสองข้าง'),
+    rest_seconds = COALESCE(rest_seconds, 5)
+WHERE slug = 'minigame_arm_coordination' AND (code IS NULL OR code LIKE 'EX-%');
+
+UPDATE public.exercises
+SET code = 'MG-03', 
+    is_minigame = true,
+    target_joint = COALESCE(target_joint, 'ช่วงการเคลื่อนไหวของข้อไหล่ (ROM)'),
+    rest_seconds = COALESCE(rest_seconds, 5)
+WHERE slug = 'minigame_balloon_catch' AND (code IS NULL OR code LIKE 'EX-%');
+
 -- Clinical Mini-Games: Exact matches with frontend AVAILABLE_MINIGAMES
-INSERT INTO public.exercises (code, slug, name_th, name_en, category, kind, is_minigame, difficulty, default_reps, default_sets, rest_seconds, instructions, benefits, is_active)
+-- Note: Plain ON CONFLICT DO NOTHING (no conflict target) skips both code & slug unique collisions
+INSERT INTO public.exercises (code, slug, name_th, name_en, category, kind, is_minigame, difficulty, default_reps, default_sets, rest_seconds, target_joint, instructions, benefits, is_active)
 VALUES 
   (
     'MG-01',
@@ -629,6 +661,7 @@ VALUES
     5,
     1,
     15,
+    'ประสานระบบประสาทและความจำ',
     'ตอบคำถามฝึกสมอง การสังเกต และการตอบสนองผ่านจอสัมผัสหรือท่าทาง',
     'ฟื้นฟูการทำงานประสานระบบประสาทและความจำ',
     true
@@ -644,7 +677,8 @@ VALUES
     'medium',
     10,
     2,
-    15,
+    5,
+    'ข้อต่อหัวไหล่และแขนสองข้าง',
     'เคลื่อนไหวแขนทั้งสองข้างประสานกันตามเป้าหมายบนหน้าจอ',
     'ฟื้นฟูข้อต่อหัวไหล่และแขนสองข้าง',
     true
@@ -660,9 +694,70 @@ VALUES
     'easy',
     12,
     2,
-    15,
+    5,
+    'ช่วงการเคลื่อนไหวของข้อไหล่ (ROM)',
     'สะบัดและเอื้อมแขนเพื่อจับลูกโป่งที่ลอยขึ้นมาในทิศทางต่างๆ',
     'เพิ่มช่วงการเคลื่อนไหวของข้อไหล่ (ROM)',
     true
   )
-ON CONFLICT (code) DO NOTHING;
+ON CONFLICT DO NOTHING;
+
+-- ============================================================================
+-- 21. STRUCTURAL INTEGRITY ASSERTION (T3)
+-- Validates that no silent error swallowing occurred during schema migration.
+-- ============================================================================
+DO $$
+DECLARE
+  v_notes_body_nullable text;
+  v_notes_type_nullable text;
+  v_notes_fk_deltype char;
+  v_audit_fk_deltype char;
+  v_temp_cov_check_exists boolean;
+BEGIN
+  -- 1. Check medical_notes.body NOT NULL
+  SELECT is_nullable INTO v_notes_body_nullable
+  FROM information_schema.columns
+  WHERE table_schema = 'public' AND table_name = 'medical_notes' AND column_name = 'body';
+
+  IF v_notes_body_nullable IS DISTINCT FROM 'NO' THEN
+    RAISE EXCEPTION 'MIGRATION ASSERTION FAILED: medical_notes.body must be NOT NULL (current: %)', v_notes_body_nullable;
+  END IF;
+
+  -- 2. Check medical_notes.note_type NOT NULL
+  SELECT is_nullable INTO v_notes_type_nullable
+  FROM information_schema.columns
+  WHERE table_schema = 'public' AND table_name = 'medical_notes' AND column_name = 'note_type';
+
+  IF v_notes_type_nullable IS DISTINCT FROM 'NO' THEN
+    RAISE EXCEPTION 'MIGRATION ASSERTION FAILED: medical_notes.note_type must be NOT NULL (current: %)', v_notes_type_nullable;
+  END IF;
+
+  -- 3. Check medical_notes_author_id_fkey confdeltype = 'r' (RESTRICT)
+  SELECT confdeltype INTO v_notes_fk_deltype
+  FROM pg_constraint
+  WHERE conname = 'medical_notes_author_id_fkey';
+
+  IF v_notes_fk_deltype IS DISTINCT FROM 'r' THEN
+    RAISE EXCEPTION 'MIGRATION ASSERTION FAILED: medical_notes_author_id_fkey must have confdeltype = ''r'' (RESTRICT), found: %', v_notes_fk_deltype;
+  END IF;
+
+  -- 4. Check audit_logs_actor_id_fkey confdeltype = 'r' (RESTRICT)
+  SELECT confdeltype INTO v_audit_fk_deltype
+  FROM pg_constraint
+  WHERE conname = 'audit_logs_actor_id_fkey';
+
+  IF v_audit_fk_deltype IS DISTINCT FROM 'r' THEN
+    RAISE EXCEPTION 'MIGRATION ASSERTION FAILED: audit_logs_actor_id_fkey must have confdeltype = ''r'' (RESTRICT), found: %', v_audit_fk_deltype;
+  END IF;
+
+  -- 5. Check temporary_coverages_status_check exists
+  SELECT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'temporary_coverages_status_check'
+  ) INTO v_temp_cov_check_exists;
+
+  IF NOT v_temp_cov_check_exists THEN
+    RAISE EXCEPTION 'MIGRATION ASSERTION FAILED: temporary_coverages_status_check constraint is missing!';
+  END IF;
+
+  RAISE NOTICE 'MIGRATION ASSERTION PASSED: All structural constraints, non-null guarantees, and soft-delete foreign keys verified.';
+END $$;

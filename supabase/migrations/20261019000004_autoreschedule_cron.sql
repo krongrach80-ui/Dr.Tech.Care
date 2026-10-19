@@ -120,9 +120,9 @@ GRANT EXECUTE ON FUNCTION public.auto_reschedule_missed_appointments() TO servic
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
-    -- Unschedule existing job if present
-    PERFORM cron.unschedule('auto-reschedule-daily')
-    WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'auto-reschedule-daily');
+    IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'auto-reschedule-daily') THEN
+      PERFORM cron.unschedule('auto-reschedule-daily');
+    END IF;
 
     -- Schedule daily at 17:05 UTC (00:05 Asia/Bangkok)
     PERFORM cron.schedule(
@@ -131,7 +131,4 @@ BEGIN
       'SELECT public.auto_reschedule_missed_appointments();'
     );
   END IF;
-EXCEPTION
-  WHEN OTHERS THEN
-    NULL;
 END $$;
