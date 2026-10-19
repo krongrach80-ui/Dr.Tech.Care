@@ -3,7 +3,7 @@
 -- Includes: Core Schema, Extensions, Helpers, Strict RLS,
 --           Triggers, Storage Buckets, Autoreschedule Cron,
 --           and Reference Data (Settings & Clinical Mini-Games).
--- Generated: 2026-10-19T04:22:10.501Z
+-- Generated: 2026-10-19T04:57:20.394Z
 -- ========================================================
 
 
@@ -671,11 +671,15 @@ VALUES
   ('KIOSK_SESSION_TIMEOUT_SECONDS', '90'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
--- T2 / T5: Mini-game convergence for pre-existing legacy rows
+-- T2 / T5 / F2: Mini-game convergence for pre-existing legacy rows (re-runnable)
 -- Sets code, name_th, target_joint, rest_seconds (15/5/5), default_reps, and default_sets
 -- ONLY at the moment of normalization (code IS NULL OR code LIKE 'EX-%').
 -- If a non-minigame row already holds MG-0x, renames it to EX-<8 hex> first with RAISE NOTICE.
-DO $$
+CREATE OR REPLACE FUNCTION public.converge_minigame_exercises()
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $fn$
 DECLARE
   v_conflicting_id uuid;
   v_new_random_code text;
@@ -689,10 +693,11 @@ BEGIN
     ) AS t(slug, target_code, name_th, target_joint, rest_sec, reps, sets)
   LOOP
     IF EXISTS (
-      SELECT 1 FROM public.exercises 
+      SELECT 1 FROM public.exercises
       WHERE slug = v_mg_games.slug AND (code IS NULL OR code LIKE 'EX-%')
     ) THEN
-      -- Handle conflict if another row currently holds target_code (MG-0x)
+      -- Handle conflict if another row currently holds target_code (MG-0x).
+      -- IS DISTINCT FROM so rows with a NULL slug are detected too (F2).
       SELECT id INTO v_conflicting_id
       FROM public.exercises
       WHERE code = v_mg_games.target_code AND slug IS DISTINCT FROM v_mg_games.slug
@@ -717,11 +722,17 @@ BEGIN
           default_sets = v_mg_games.sets,
           is_minigame = true
       WHERE slug = v_mg_games.slug AND (code IS NULL OR code LIKE 'EX-%');
-      
+
       RAISE NOTICE 'Normalized legacy exercise slug % to code %', v_mg_games.slug, v_mg_games.target_code;
     END IF;
   END LOOP;
-END $$;
+END
+$fn$;
+
+REVOKE EXECUTE ON FUNCTION public.converge_minigame_exercises() FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.converge_minigame_exercises() TO service_role;
+
+SELECT public.converge_minigame_exercises();
 
 -- Clinical Mini-Games: Exact matches with frontend AVAILABLE_MINIGAMES
 -- Note: Plain ON CONFLICT DO NOTHING (no conflict target) skips both code & slug unique collisions
@@ -2230,10 +2241,18 @@ END $$;
 -- DR.TECH.CARE: Phase 1 - Migration 4: Auto-Reschedule Routine & pg_cron Job
 -- Daily execution at 00:05 Asia/Bangkok (17:05 UTC)
 -- Handles missed appointments, routine rollover, and writes audit log.
+--
+-- Round 3 change: the function takes p_now (default now()) so the Bangkok-midnight
+-- boundary can be tested against the REAL function (see rls_negative_test.sql Case 16)
+-- instead of re-implementing date arithmetic in the test.
 -- ============================================================================
 
+-- The old zero-argument signature must go: keeping it next to f(p_now DEFAULT now())
+-- would make `SELECT auto_reschedule_missed_appointments()` ambiguous.
+DROP FUNCTION IF EXISTS public.auto_reschedule_missed_appointments();
+
 -- Function: auto_reschedule_missed_appointments
-CREATE OR REPLACE FUNCTION public.auto_reschedule_missed_appointments()
+CREATE OR REPLACE FUNCTION public.auto_reschedule_missed_appointments(p_now timestamptz DEFAULT now())
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -2249,7 +2268,7 @@ DECLARE
   v_item record;
 BEGIN
   -- Compute "today" in hospital timezone explicitly (Asia/Bangkok, UTC+7)
-  v_today := (now() AT TIME ZONE 'Asia/Bangkok')::date;
+  v_today := (p_now AT TIME ZONE 'Asia/Bangkok')::date;
   v_next_date := v_today;
 
   -- 1. Identify past 'scheduled' and 'rescheduled' appointments with no check-in
@@ -2285,7 +2304,7 @@ BEGIN
         INSERT INTO public.appointments (patient_id, date, status, original_date, created_by)
         VALUES (v_rec.patient_id, v_next_date, 'rescheduled', v_rec.date, v_rec.created_by)
         RETURNING id INTO v_next_appt_id;
-        
+
         v_rescheduled_count := v_rescheduled_count + 1;
       END IF;
 
@@ -2336,13 +2355,16 @@ BEGIN
     'today_bangkok', v_today,
     'missed_marked', v_missed_count,
     'rescheduled_created', v_rescheduled_count,
-    'executed_at', now()
+    'executed_at', p_now
   );
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.auto_reschedule_missed_appointments() FROM public, anon;
-GRANT EXECUTE ON FUNCTION public.auto_reschedule_missed_appointments() TO service_role;
+-- authenticated is revoked explicitly: Supabase default privileges grant EXECUTE on new
+-- functions to anon/authenticated/service_role, and REVOKE ... FROM public, anon alone
+-- would leave every logged-in therapist able to call this SECURITY DEFINER function via RPC.
+REVOKE EXECUTE ON FUNCTION public.auto_reschedule_missed_appointments(timestamptz) FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.auto_reschedule_missed_appointments(timestamptz) TO service_role;
 
 -- 2. Schedule pg_cron Job (if pg_cron extension is available on Supabase)
 DO $$

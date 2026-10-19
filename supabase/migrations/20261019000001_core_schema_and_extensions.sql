@@ -661,11 +661,15 @@ VALUES
   ('KIOSK_SESSION_TIMEOUT_SECONDS', '90'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
--- T2 / T5: Mini-game convergence for pre-existing legacy rows
+-- T2 / T5 / F2: Mini-game convergence for pre-existing legacy rows (re-runnable)
 -- Sets code, name_th, target_joint, rest_seconds (15/5/5), default_reps, and default_sets
 -- ONLY at the moment of normalization (code IS NULL OR code LIKE 'EX-%').
 -- If a non-minigame row already holds MG-0x, renames it to EX-<8 hex> first with RAISE NOTICE.
-DO $$
+CREATE OR REPLACE FUNCTION public.converge_minigame_exercises()
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $fn$
 DECLARE
   v_conflicting_id uuid;
   v_new_random_code text;
@@ -679,10 +683,11 @@ BEGIN
     ) AS t(slug, target_code, name_th, target_joint, rest_sec, reps, sets)
   LOOP
     IF EXISTS (
-      SELECT 1 FROM public.exercises 
+      SELECT 1 FROM public.exercises
       WHERE slug = v_mg_games.slug AND (code IS NULL OR code LIKE 'EX-%')
     ) THEN
-      -- Handle conflict if another row currently holds target_code (MG-0x)
+      -- Handle conflict if another row currently holds target_code (MG-0x).
+      -- IS DISTINCT FROM so rows with a NULL slug are detected too (F2).
       SELECT id INTO v_conflicting_id
       FROM public.exercises
       WHERE code = v_mg_games.target_code AND slug IS DISTINCT FROM v_mg_games.slug
@@ -707,11 +712,17 @@ BEGIN
           default_sets = v_mg_games.sets,
           is_minigame = true
       WHERE slug = v_mg_games.slug AND (code IS NULL OR code LIKE 'EX-%');
-      
+
       RAISE NOTICE 'Normalized legacy exercise slug % to code %', v_mg_games.slug, v_mg_games.target_code;
     END IF;
   END LOOP;
-END $$;
+END
+$fn$;
+
+REVOKE EXECUTE ON FUNCTION public.converge_minigame_exercises() FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.converge_minigame_exercises() TO service_role;
+
+SELECT public.converge_minigame_exercises();
 
 -- Clinical Mini-Games: Exact matches with frontend AVAILABLE_MINIGAMES
 -- Note: Plain ON CONFLICT DO NOTHING (no conflict target) skips both code & slug unique collisions

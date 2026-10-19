@@ -2,10 +2,18 @@
 -- DR.TECH.CARE: Phase 1 - Migration 4: Auto-Reschedule Routine & pg_cron Job
 -- Daily execution at 00:05 Asia/Bangkok (17:05 UTC)
 -- Handles missed appointments, routine rollover, and writes audit log.
+--
+-- Round 3 change: the function takes p_now (default now()) so the Bangkok-midnight
+-- boundary can be tested against the REAL function (see rls_negative_test.sql Case 16)
+-- instead of re-implementing date arithmetic in the test.
 -- ============================================================================
 
+-- The old zero-argument signature must go: keeping it next to f(p_now DEFAULT now())
+-- would make `SELECT auto_reschedule_missed_appointments()` ambiguous.
+DROP FUNCTION IF EXISTS public.auto_reschedule_missed_appointments();
+
 -- Function: auto_reschedule_missed_appointments
-CREATE OR REPLACE FUNCTION public.auto_reschedule_missed_appointments()
+CREATE OR REPLACE FUNCTION public.auto_reschedule_missed_appointments(p_now timestamptz DEFAULT now())
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -21,7 +29,7 @@ DECLARE
   v_item record;
 BEGIN
   -- Compute "today" in hospital timezone explicitly (Asia/Bangkok, UTC+7)
-  v_today := (now() AT TIME ZONE 'Asia/Bangkok')::date;
+  v_today := (p_now AT TIME ZONE 'Asia/Bangkok')::date;
   v_next_date := v_today;
 
   -- 1. Identify past 'scheduled' and 'rescheduled' appointments with no check-in
@@ -57,7 +65,7 @@ BEGIN
         INSERT INTO public.appointments (patient_id, date, status, original_date, created_by)
         VALUES (v_rec.patient_id, v_next_date, 'rescheduled', v_rec.date, v_rec.created_by)
         RETURNING id INTO v_next_appt_id;
-        
+
         v_rescheduled_count := v_rescheduled_count + 1;
       END IF;
 
@@ -108,13 +116,16 @@ BEGIN
     'today_bangkok', v_today,
     'missed_marked', v_missed_count,
     'rescheduled_created', v_rescheduled_count,
-    'executed_at', now()
+    'executed_at', p_now
   );
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.auto_reschedule_missed_appointments() FROM public, anon;
-GRANT EXECUTE ON FUNCTION public.auto_reschedule_missed_appointments() TO service_role;
+-- authenticated is revoked explicitly: Supabase default privileges grant EXECUTE on new
+-- functions to anon/authenticated/service_role, and REVOKE ... FROM public, anon alone
+-- would leave every logged-in therapist able to call this SECURITY DEFINER function via RPC.
+REVOKE EXECUTE ON FUNCTION public.auto_reschedule_missed_appointments(timestamptz) FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.auto_reschedule_missed_appointments(timestamptz) TO service_role;
 
 -- 2. Schedule pg_cron Job (if pg_cron extension is available on Supabase)
 DO $$

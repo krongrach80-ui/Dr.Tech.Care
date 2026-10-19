@@ -2,7 +2,7 @@
 -- DR.TECH.CARE: DEV & STAGING EXTRAS (STAGING ONLY)
 -- Includes: Staging Seed Fixtures & Real-Table RLS Test Suite
 -- Note: Test suite is wrapped in BEGIN ... ROLLBACK.
--- Generated: 2026-10-19T04:22:10.502Z
+-- Generated: 2026-10-19T04:57:20.399Z
 -- ========================================================
 
 
@@ -53,88 +53,191 @@ ON CONFLICT (code) DO NOTHING;
 
 -- >>> FILE: rls_negative_test.sql <<<
 -- ============================================================================
--- DR.TECH.CARE: Phase 1 - Comprehensive Role-Matrix & Real-Table RLS Test Suite
--- Wrapped entirely in BEGIN ... ROLLBACK to leave zero persistent test residue.
--- Tests simulate: anon, admin, therapist (own patient), unrelated PT, covered PT,
---                 and trusted service_role.
--- Exercises real physical tables:
---   auth.users, profiles, patients, appointments, routine_items, audit_logs,
---   exercises, medical_notes, temporary_coverages, face_templates, storage.objects.
--- Asserts row counts via GET DIAGNOSTICS (0 rows) or specific SQLSTATE (42501 / P0001).
+-- DR.TECH.CARE: Phase 1 - Role-Matrix & Real-Table RLS Test Suite (26 cases)
+-- Starts with BEGIN and ends with ROLLBACK: leaves zero persistent residue.
+-- Run through scripts/run-sql.mjs as supabase/dev_tests.sql (session user = postgres).
+-- Requires: all_migrations.sql already applied (incl. patches: converge_minigame_exercises(),
+--           auto_reschedule_missed_appointments(p_now)).
+--
+-- STATUS: written from code review, NOT yet executed against a real Supabase project.
+--
+-- Design (Round 3):
+--  * Helper schema zz_test (created inside this transaction, gone after ROLLBACK):
+--      as_postgres() / as_user(uuid) / as_anon() / as_service()  — ALWAYS reset role AND the
+--      request.jwt.* GUCs. The old suite reset only the role, so claims of the previous
+--      actor stuck around and is_trusted_context() returned false for postgres fixtures (P0001).
+--      expect_error(sql, sqlstates, msg), ok(cond, msg), trusted_probe().
+--  * Every case runs in its own BEGIN ... EXCEPTION sub-transaction: one failing case no longer
+--    hides the others. All failures are listed at the end and the script then raises (non-zero exit).
+--    NOTE for `git grep "when others"`: the harness catches OTHERS on purpose to COLLECT AND REPORT
+--    failures (nothing is swallowed). Scope that grep to supabase/migrations/.
+--  * ASSERT is not used: WHEN OTHERS does not catch ASSERT_FAILURE, so zz_test.ok() raises ZT001.
 -- ============================================================================
 
 BEGIN;
 
+CREATE SCHEMA zz_test;
+GRANT USAGE ON SCHEMA zz_test TO anon, authenticated, service_role;
+
+-- Pure assertion helper (callable under any role)
+CREATE FUNCTION zz_test.ok(p_cond boolean, p_msg text) RETURNS void
+LANGUAGE plpgsql AS $fn$
+BEGIN
+  IF p_cond IS NOT TRUE THEN
+    RAISE EXCEPTION '%', p_msg USING ERRCODE = 'ZT001';
+  END IF;
+END
+$fn$;
+
+-- Set the PostgREST-style claim GUCs (no DB role change). NULL role => empty strings.
+CREATE FUNCTION zz_test.set_claims(p_role text, p_sub uuid DEFAULT NULL) RETURNS void
+LANGUAGE plpgsql AS $fn$
+BEGIN
+  PERFORM set_config('request.jwt.claim.sub', COALESCE(p_sub::text, ''), true);
+  PERFORM set_config('request.jwt.claim.role', COALESCE(p_role, ''), true);
+  PERFORM set_config('request.jwt.claims',
+    CASE WHEN p_role IS NULL THEN ''
+         ELSE jsonb_strip_nulls(jsonb_build_object('sub', p_sub::text, 'role', p_role))::text END,
+    true);
+END
+$fn$;
+
+CREATE FUNCTION zz_test.as_postgres() RETURNS void
+LANGUAGE plpgsql AS $fn$
+BEGIN
+  EXECUTE 'RESET ROLE';
+  PERFORM zz_test.set_claims(NULL, NULL);
+END
+$fn$;
+
+CREATE FUNCTION zz_test.as_user(p_uid uuid) RETURNS void
+LANGUAGE plpgsql AS $fn$
+BEGIN
+  EXECUTE 'RESET ROLE';
+  PERFORM zz_test.set_claims('authenticated', p_uid);
+  EXECUTE 'SET LOCAL ROLE authenticated';
+END
+$fn$;
+
+CREATE FUNCTION zz_test.as_anon() RETURNS void
+LANGUAGE plpgsql AS $fn$
+BEGIN
+  EXECUTE 'RESET ROLE';
+  PERFORM zz_test.set_claims('anon', NULL);
+  EXECUTE 'SET LOCAL ROLE anon';
+END
+$fn$;
+
+CREATE FUNCTION zz_test.as_service() RETURNS void
+LANGUAGE plpgsql AS $fn$
+BEGIN
+  EXECUTE 'RESET ROLE';
+  PERFORM zz_test.set_claims('service_role', NULL);
+  EXECUTE 'SET LOCAL ROLE service_role';
+END
+$fn$;
+
+-- Run p_sql under the CURRENT role; fail unless it raises one of p_states.
+CREATE FUNCTION zz_test.expect_error(p_sql text, p_states text[], p_msg text) RETURNS void
+LANGUAGE plpgsql AS $fn$
+DECLARE
+  v_state text;
+  v_err text := '';
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+    v_state := 'OK';
+  EXCEPTION WHEN OTHERS THEN
+    v_state := SQLSTATE;
+    v_err := SQLERRM;
+  END;
+  IF NOT (v_state = ANY (p_states)) THEN
+    RAISE EXCEPTION '% [expected SQLSTATE %, got %: %]', p_msg, array_to_string(p_states, ' or '), v_state, v_err
+      USING ERRCODE = 'ZT001';
+  END IF;
+END
+$fn$;
+
+-- SECURITY DEFINER probe: calls is_trusted_context() the way production helpers (is_admin() etc.)
+-- do, so it can be evaluated under the anon DB role without needing EXECUTE on the function itself.
+CREATE FUNCTION zz_test.trusted_probe() RETURNS boolean
+LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+  SELECT public.is_trusted_context()
+$fn$;
+
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA zz_test TO anon, authenticated, service_role;
+
 DO $$
 DECLARE
-  -- Predefined Test Actors
+  -- Test actors
   v_admin_id        uuid := 'a0000000-0000-0000-0000-000000000001';
   v_pt1_owner_id    uuid := 'b0000000-0000-0000-0000-000000000002';
   v_pt2_cover_id    uuid := 'b0000000-0000-0000-0000-000000000003';
   v_pt3_stranger_id uuid := 'b0000000-0000-0000-0000-000000000004';
-  
-  -- Predefined Test Entities
+
+  -- Test entities
   v_patient1_id     uuid := 'c0000000-0000-0000-0000-000000000001';
   v_patient2_id     uuid := 'c0000000-0000-0000-0000-000000000002';
   v_admin_ex_id     uuid := 'd0000000-0000-0000-0000-000000000001';
   v_pt1_ex_id       uuid := 'd0000000-0000-0000-0000-000000000002';
   v_mg1_ex_id       uuid;
-  v_ex1_ex_id       uuid;
   v_cov_active_id   uuid := 'e0000000-0000-0000-0000-000000000001';
-  
-  v_bangkok_today   date := (timezone('Asia/Bangkok', now()))::date;
+
+  v_bkk_today       date := (timezone('Asia/Bangkok', now()))::date;
+
+  -- Scratch
   v_count           int;
   v_rows            int;
-  v_error_caught    boolean;
   v_temp_id         uuid;
   v_test_appt_id    uuid;
+  v_text            text;
+  v_flag            boolean;
+  v_res             jsonb;
   v_stamped_note    record;
-  v_unsecured_count int;
+  v_rec             record;
+
+  -- Harness
+  v_failures        text[] := ARRAY[]::text[];
+  v_passed          int := 0;
 BEGIN
   RAISE NOTICE '====================================================================';
-  RAISE NOTICE '>>> STARTING DR.TECH.CARE PHASE 1 REAL-TABLE RLS TEST SUITE <<<';
+  RAISE NOTICE '>>> DR.TECH.CARE PHASE 1 REAL-TABLE RLS TEST SUITE (26 cases) <<<';
   RAISE NOTICE '====================================================================';
 
   -- --------------------------------------------------------------------------
-  -- STEP 0: FIXTURE SETUP (Executed as session user / superuser)
+  -- STEP 0: FIXTURES (as postgres, with claims cleared => trusted context)
+  -- A failure here aborts the whole run: nothing below is meaningful without fixtures.
   -- --------------------------------------------------------------------------
-  
-  -- 0a. Insert auth.users fixtures first to satisfy profiles.id foreign key constraint
+  PERFORM zz_test.as_postgres();
+
   INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
-  VALUES 
-    (v_admin_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'admin@drtechcare.invalid', 'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now()),
-    (v_pt1_owner_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pt1@drtechcare.invalid', 'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now()),
-    (v_pt2_cover_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pt2@drtechcare.invalid', 'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now()),
-    (v_pt3_stranger_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pt3@drtechcare.invalid', 'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now())
+  VALUES
+    (v_admin_id,        '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'admin@drtechcare.invalid', 'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now()),
+    (v_pt1_owner_id,    '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pt1@drtechcare.invalid',   'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now()),
+    (v_pt2_cover_id,    '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pt2@drtechcare.invalid',   'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now()),
+    (v_pt3_stranger_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pt3@drtechcare.invalid',   'dummy_hash', now(), '{"provider":"email","providers":["email"]}', '{}', now(), now())
   ON CONFLICT (id) DO NOTHING;
 
-  -- 0b. Profiles fixtures
   INSERT INTO public.profiles (id, username, full_name, role, email, is_active)
-  VALUES 
-    (v_admin_id, 'test_admin', 'Admin Superuser', 'admin', 'admin@drtechcare.invalid', true),
-    (v_pt1_owner_id, 'test_pt1', 'PT 1 Owner', 'therapist', 'pt1@drtechcare.invalid', true),
-    (v_pt2_cover_id, 'test_pt2', 'PT 2 Cover', 'therapist', 'pt2@drtechcare.invalid', true),
-    (v_pt3_stranger_id, 'test_pt3', 'PT 3 Stranger', 'therapist', 'pt3@drtechcare.invalid', true)
-  ON CONFLICT (id) DO UPDATE SET 
-    role = EXCLUDED.role, is_active = true, deleted_at = NULL;
+  VALUES
+    (v_admin_id,        'test_admin', 'Admin Superuser', 'admin',     'admin@drtechcare.invalid', true),
+    (v_pt1_owner_id,    'test_pt1',   'PT 1 Owner',      'therapist', 'pt1@drtechcare.invalid',   true),
+    (v_pt2_cover_id,    'test_pt2',   'PT 2 Cover',      'therapist', 'pt2@drtechcare.invalid',   true),
+    (v_pt3_stranger_id, 'test_pt3',   'PT 3 Stranger',   'therapist', 'pt3@drtechcare.invalid',   true)
+  ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, is_active = true, deleted_at = NULL;
 
-  -- 0c. Patients fixtures (Patient 1 assigned to PT 1; Patient 2 assigned to PT 2)
   INSERT INTO public.patients (id, hn, full_name, assigned_therapist_id, treatment_status, pin_hash, face_vector)
-  VALUES 
+  VALUES
     (v_patient1_id, 'HN-TEST-001', 'Test Patient 1 (PT1 Caseload)', v_pt1_owner_id, 'active', 'test_pin_hash_1', '{"emb": [1,2,3]}'::jsonb),
     (v_patient2_id, 'HN-TEST-002', 'Test Patient 2 (PT2 Caseload)', v_pt2_cover_id, 'active', 'test_pin_hash_2', '{"emb": [4,5,6]}'::jsonb)
-  ON CONFLICT (id) DO UPDATE SET 
-    assigned_therapist_id = EXCLUDED.assigned_therapist_id;
+  ON CONFLICT (id) DO UPDATE SET assigned_therapist_id = EXCLUDED.assigned_therapist_id;
 
-  -- 0d. Exercises fixtures
   INSERT INTO public.exercises (id, code, name_th, category, kind, is_minigame, created_by)
-  VALUES 
-    (v_admin_ex_id, 'EX-ADM-01', 'Admin Core Exercise', 'Core', 'single', false, v_admin_id),
-    (v_pt1_ex_id, 'EX-PT1-01', 'PT1 Custom Exercise', 'Custom', 'single', false, v_pt1_owner_id)
-  ON CONFLICT (id) DO UPDATE SET 
-    created_by = EXCLUDED.created_by, category = EXCLUDED.category;
+  VALUES
+    (v_admin_ex_id, 'EX-ADM-01', 'Admin Core Exercise', 'Core',   'single', false, v_admin_id),
+    (v_pt1_ex_id,   'EX-PT1-01', 'PT1 Custom Exercise', 'Custom', 'single', false, v_pt1_owner_id)
+  ON CONFLICT (id) DO UPDATE SET created_by = EXCLUDED.created_by, category = EXCLUDED.category;
 
-  -- Ensure seed mini-game MG-01 exists
   SELECT id INTO v_mg1_ex_id FROM public.exercises WHERE code = 'MG-01' LIMIT 1;
   IF v_mg1_ex_id IS NULL THEN
     INSERT INTO public.exercises (code, slug, name_th, is_minigame)
@@ -142,930 +245,829 @@ BEGIN
     RETURNING id INTO v_mg1_ex_id;
   END IF;
 
-  SELECT id INTO v_ex1_ex_id FROM public.exercises WHERE code = 'EX-01' LIMIT 1;
-  IF v_ex1_ex_id IS NULL THEN
-    INSERT INTO public.exercises (code, slug, name_th, is_minigame)
-    VALUES ('EX-01', 'ex-shoulder-abduction', 'Shoulder Abduction', false)
-    RETURNING id INTO v_ex1_ex_id;
-  END IF;
-
-  -- 0e. Temporary Coverage: PT 2 covers Patient 1 active today
+  -- PT 2 covers Patient 1, active today
   INSERT INTO public.temporary_coverages (id, patient_id, owner_therapist_id, cover_therapist_id, start_date, end_date, status)
-  VALUES 
-    (v_cov_active_id, v_patient1_id, v_pt1_owner_id, v_pt2_cover_id, v_bangkok_today - 1, v_bangkok_today + 5, 'active')
-  ON CONFLICT (id) DO UPDATE SET 
-    start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date, status = 'active', revoked_at = NULL;
+  VALUES (v_cov_active_id, v_patient1_id, v_pt1_owner_id, v_pt2_cover_id, v_bkk_today - 1, v_bkk_today + 5, 'active')
+  ON CONFLICT (id) DO UPDATE SET start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date, status = 'active', revoked_at = NULL;
 
-  -- 0f. Baseline Audit Log Entry
+  -- Baseline rows so "sees 0 rows" assertions are not vacuous
   INSERT INTO public.audit_logs (actor_name, role, category, action, detail, status)
   VALUES ('System Admin', 'admin', 'SECURITY', 'FIXTURE_SETUP', 'Baseline audit log entry', 'success');
 
-  -- 0g. Ensure FEATURE_PT_POSE_EXERCISES is false for pose gating tests
+  INSERT INTO public.face_templates (patient_id, pose, embedding)
+  VALUES (v_patient1_id, 'straight', array_fill(0.1::real, ARRAY[128])::vector);
+
   INSERT INTO public.system_settings (key, value)
   VALUES ('FEATURE_PT_POSE_EXERCISES', 'false'::jsonb)
   ON CONFLICT (key) DO UPDATE SET value = 'false'::jsonb;
 
 
   -- ==========================================================================
-  -- CASE 1: ANON ROLE ISOLATION (Revoked Table & Sequence Privileges)
-  -- Under: SET LOCAL ROLE anon
-  -- Assert that anon SELECT on tables raises SQLSTATE 42501 (insufficient_privilege)
+  -- CASE 1: ANON ROLE ISOLATION
   -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE anon';
-  PERFORM set_config('request.jwt.claim.sub', '', true);
-  PERFORM set_config('request.jwt.claims', '{"role":"anon"}', true);
-
-  -- 1a. Real SELECT on public.profiles -> MUST raise SQLSTATE 42501
-  v_error_caught := false;
   BEGIN
-    SELECT count(*) INTO v_count FROM public.profiles;
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
+    PERFORM zz_test.as_anon();
+    PERFORM zz_test.expect_error('SELECT count(*) FROM public.profiles', ARRAY['42501'], '[FAIL] 1a: anon SELECT on profiles');
+    PERFORM zz_test.expect_error('SELECT count(*) FROM public.patients', ARRAY['42501'], '[FAIL] 1b: anon SELECT on patients');
+    PERFORM zz_test.expect_error(
+      format('INSERT INTO public.patients (id, hn, full_name) VALUES (%L, ''HN-HACK'', ''Hacked Patient'')', gen_random_uuid()),
+      ARRAY['42501'], '[FAIL] 1c: anon INSERT on patients');
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 1: anon has zero table access (SQLSTATE 42501).';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 1: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 1: % (SQLSTATE %)', SQLERRM, SQLSTATE;
   END;
-  ASSERT v_error_caught = true, '[FAIL] Case 1: anon SELECT on profiles did not raise SQLSTATE 42501!';
-
-  -- 1b. Real SELECT on public.patients -> MUST raise SQLSTATE 42501
-  v_error_caught := false;
-  BEGIN
-    SELECT count(*) INTO v_count FROM public.patients;
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 1: anon SELECT on patients did not raise SQLSTATE 42501!';
-
-  -- 1c. Real INSERT on public.patients -> MUST raise SQLSTATE 42501
-  v_error_caught := false;
-  BEGIN
-    INSERT INTO public.patients (id, hn, full_name)
-    VALUES (gen_random_uuid(), 'HN-HACK', 'Hacked Patient');
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 1: anon INSERT on patients did not raise SQLSTATE 42501!';
-
-  EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 1: anon role has zero table access and all queries raise SQLSTATE 42501.';
 
 
   -- ==========================================================================
-  -- CASE 2: THERAPIST SCHEDULE WRITE (Own patient vs Unrelated patient vs Stranger)
+  -- CASE 2: THERAPIST SCHEDULE WRITE (own patient vs unrelated patient)
   -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
-
-  -- 2a. Real appointment INSERT for own patient -> SUCCEEDS (1 row inserted)
-  INSERT INTO public.appointments (patient_id, date, status, created_by)
-  VALUES (v_patient1_id, v_bangkok_today, 'scheduled', v_pt1_owner_id)
-  RETURNING id INTO v_test_appt_id;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 1, '[FAIL] Case 2: PT 1 failed to insert appointment for own patient 1';
-
-  -- 2b. Real routine_items INSERT for own patient (using MG-01 since pose exercises are locked)
-  INSERT INTO public.routine_items (appointment_id, exercise_id, reps, sets)
-  VALUES (v_test_appt_id, v_mg1_ex_id, 10, 3);
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 1, '[FAIL] Case 2: PT 1 failed to insert routine_item for own patient 1';
-
-  -- 2c. PT 1 writing schedule for Patient 2 (Unrelated patient owned by PT 2) -> must fail with SQLSTATE 42501
-  v_error_caught := false;
   BEGIN
+    PERFORM zz_test.as_user(v_pt1_owner_id);
+
     INSERT INTO public.appointments (patient_id, date, status, created_by)
-    VALUES (v_patient2_id, v_bangkok_today, 'scheduled', v_pt1_owner_id);
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
+    VALUES (v_patient1_id, v_bkk_today, 'scheduled', v_pt1_owner_id)
+    RETURNING id INTO v_test_appt_id;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    PERFORM zz_test.ok(v_rows = 1, '[FAIL] 2a: PT 1 failed to insert appointment for own patient 1');
+
+    -- MG-01 because pose exercises are locked
+    INSERT INTO public.routine_items (appointment_id, exercise_id, reps, sets)
+    VALUES (v_test_appt_id, v_mg1_ex_id, 10, 3);
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    PERFORM zz_test.ok(v_rows = 1, '[FAIL] 2b: PT 1 failed to insert routine_item for own patient 1');
+
+    PERFORM zz_test.expect_error(
+      format('INSERT INTO public.appointments (patient_id, date, status, created_by) VALUES (%L, %L, ''scheduled'', %L)',
+             v_patient2_id, v_bkk_today, v_pt1_owner_id),
+      ARRAY['42501'], '[FAIL] 2c: PT 1 inserting appointment for unrelated patient 2');
+
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 2: therapist schedule write enforced on real appointments.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 2: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 2: % (SQLSTATE %)', SQLERRM, SQLSTATE;
   END;
-  ASSERT v_error_caught = true, '[FAIL] Case 2: PT 1 inserting appointment for unrelated patient 2 did not raise SQLSTATE 42501!';
-
-  EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 2: Therapist schedule write strictly enforced on real appointments.';
 
 
   -- ==========================================================================
-  -- CASE 3: COVERED THERAPIST (Active coverage vs Expired coverage)
+  -- CASE 3: COVERED THERAPIST (active vs expired coverage)
   -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_pt2_cover_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt2_cover_id::text, 'role', 'authenticated')::text, true);
-
-  -- 3a. Active Coverage: PT 2 covering Patient 1
-  INSERT INTO public.appointments (patient_id, date, status, created_by)
-  VALUES (v_patient1_id, v_bangkok_today, 'scheduled', v_pt2_cover_id)
-  RETURNING id INTO v_temp_id;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 1, '[FAIL] Case 3: Active covering PT 2 should insert appointment (expected 1 row)';
-
-  -- 3b. Expire coverage: set end_date = yesterday
-  EXECUTE 'RESET ROLE';
-  UPDATE public.temporary_coverages SET end_date = v_bangkok_today - 1 WHERE id = v_cov_active_id;
-
-  -- 3c. PT 2 attempts write after expiration -> must fail with SQLSTATE 42501
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_pt2_cover_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt2_cover_id::text, 'role', 'authenticated')::text, true);
-
-  v_error_caught := false;
   BEGIN
+    PERFORM zz_test.as_user(v_pt2_cover_id);
     INSERT INTO public.appointments (patient_id, date, status, created_by)
-    VALUES (v_patient1_id, v_bangkok_today, 'scheduled', v_pt2_cover_id);
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
+    VALUES (v_patient1_id, v_bkk_today, 'scheduled', v_pt2_cover_id)
+    RETURNING id INTO v_temp_id;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    PERFORM zz_test.ok(v_rows = 1, '[FAIL] 3a: active covering PT 2 should insert appointment');
+
+    -- Expire the coverage as postgres (claims cleared by as_postgres => trusted, trigger lets it through)
+    PERFORM zz_test.as_postgres();
+    UPDATE public.temporary_coverages SET end_date = v_bkk_today - 1 WHERE id = v_cov_active_id;
+
+    PERFORM zz_test.as_user(v_pt2_cover_id);
+    PERFORM zz_test.expect_error(
+      format('INSERT INTO public.appointments (patient_id, date, status, created_by) VALUES (%L, %L, ''scheduled'', %L)',
+             v_patient1_id, v_bkk_today, v_pt2_cover_id),
+      ARRAY['42501'], '[FAIL] 3c: covering PT after expiration');
+
+    PERFORM zz_test.as_postgres();
+    UPDATE public.temporary_coverages SET end_date = v_bkk_today + 5 WHERE id = v_cov_active_id;
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 3: covered therapist authorized in window, revoked after end_date.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 3: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 3: % (SQLSTATE %)', SQLERRM, SQLSTATE;
   END;
-  ASSERT v_error_caught = true, '[FAIL] Case 3: Covering PT after expiration did not raise SQLSTATE 42501!';
-
-  -- Restore active coverage
-  EXECUTE 'RESET ROLE';
-  UPDATE public.temporary_coverages SET end_date = v_bangkok_today + 5 WHERE id = v_cov_active_id;
-  RAISE NOTICE '[PASS] Case 3: Covered therapist authorized during active window and strictly revoked after end_date.';
 
 
   -- ==========================================================================
-  -- CASE 4: EXERCISE LIBRARY CRUD OWNERSHIP & POSE GUARD BYPASS PREVENTION
+  -- CASE 4: EXERCISE LIBRARY OWNERSHIP & POSE GUARD BYPASS PREVENTION
   -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
-
-  -- 4a. PT edits self-created exercise -> assert 1 row affected
-  UPDATE public.exercises SET name_th = 'PT1 Valid Custom Name' WHERE id = v_pt1_ex_id;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 1, '[FAIL] Case 4: PT 1 failed to update own exercise!';
-
-  -- 4b. PT attempts to create an exercise with MG- code -> MUST fail with SQLSTATE 42501
-  v_error_caught := false;
   BEGIN
+    PERFORM zz_test.as_user(v_pt1_owner_id);
+
+    UPDATE public.exercises SET name_th = 'PT1 Valid Custom Name' WHERE id = v_pt1_ex_id;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    PERFORM zz_test.ok(v_rows = 1, '[FAIL] 4a: PT 1 failed to update own exercise');
+
+    PERFORM zz_test.expect_error(
+      format('INSERT INTO public.exercises (code, slug, name_th, is_minigame, created_by) VALUES (''MG-99'', ''mg-rogue-game'', ''Rogue Minigame'', true, %L)', v_pt1_owner_id),
+      ARRAY['42501'], '[FAIL] 4b: therapist created exercise with MG- code');
+
+    -- 4c: the guard trigger does not reject is_minigame = true, it FORCES it to false (INSERT succeeds)
     INSERT INTO public.exercises (code, slug, name_th, is_minigame, created_by)
-    VALUES ('MG-99', 'mg-rogue-game', 'Rogue Minigame', true, v_pt1_owner_id);
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 4: Therapist was able to create mini-game with MG- code!';
+    VALUES ('EX-PT-MINI', 'ex-pt-mini', 'PT Pretend Minigame', true, v_pt1_owner_id)
+    RETURNING id, is_minigame INTO v_temp_id, v_flag;
+    PERFORM zz_test.ok(v_flag = false, '[FAIL] 4c: therapist-authored exercise kept is_minigame = true');
 
-  -- 4c. PT attempts to set is_minigame = true on an exercise -> RLS / Trigger rejects or forces false
-  v_error_caught := false;
+    -- 4d: ...so it cannot be put in a routine while pose exercises are locked
+    INSERT INTO public.appointments (patient_id, date, status, created_by)
+    VALUES (v_patient1_id, v_bkk_today + 30, 'scheduled', v_pt1_owner_id)
+    RETURNING id INTO v_test_appt_id;
+    PERFORM zz_test.expect_error(
+      format('INSERT INTO public.routine_items (appointment_id, exercise_id, reps, sets) VALUES (%L, %L, 10, 3)', v_test_appt_id, v_temp_id),
+      ARRAY['P0001'], '[FAIL] 4d: pose exercise accepted into routine while FEATURE_PT_POSE_EXERCISES = false');
+
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 4: exercise ownership and pose-guard bypass prevention verified.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 4: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 4: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 5: AUDIT LOGS ISOLATION & FORGE PREVENTION
+  -- ==========================================================================
   BEGIN
-    INSERT INTO public.exercises (code, slug, name_th, is_minigame, created_by)
-    VALUES ('EX-PT-MINI', 'ex-pt-mini', 'PT Pretend Minigame', true, v_pt1_owner_id);
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
+    PERFORM zz_test.as_user(v_pt1_owner_id);
+    SELECT count(*) INTO v_count FROM public.audit_logs;
+    PERFORM zz_test.ok(v_count = 0, format('[FAIL] 5a: therapist saw %s audit_logs rows (expected 0; baseline row exists)', v_count));
+    PERFORM zz_test.expect_error(
+      'INSERT INTO public.audit_logs (actor_name, action) VALUES (''Forged Actor'', ''FORGED_AUDIT'')',
+      ARRAY['42501'], '[FAIL] 5b: therapist inserted into audit_logs');
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 5: audit_logs isolated (read = 0, insert raises 42501).';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 5: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 5: % (SQLSTATE %)', SQLERRM, SQLSTATE;
   END;
-  ASSERT v_error_caught = true, '[FAIL] Case 4: Therapist was able to bypass pose guard by setting is_minigame = true!';
-
-  EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 4: Exercise library CRUD ownership & pose guard bypass prevention verified.';
 
 
   -- ==========================================================================
-  -- CASE 5: AUDIT LOGS ACCESS ISOLATION & FORGE PREVENTION
+  -- CASE 6: PROFILE TAMPERING PREVENTION (trigger-enforced, no 42P17)
   -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
-
-  -- 5a. Therapist querying audit_logs -> returns 0 rows
-  SELECT count(*) INTO v_count FROM public.audit_logs;
-  ASSERT v_count = 0, '[FAIL] Case 5: Therapist saw audit_logs rows! Expected 0.';
-
-  -- 5b. Therapist directly inserting into audit_logs -> MUST raise SQLSTATE 42501 (no insert policy)
-  v_error_caught := false;
   BEGIN
-    INSERT INTO public.audit_logs (actor_name, action)
-    VALUES ('Forged Actor', 'FORGED_AUDIT');
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
+    PERFORM zz_test.as_user(v_pt1_owner_id);
+    PERFORM zz_test.expect_error(
+      format('UPDATE public.profiles SET username = ''hacked_pt1'' WHERE id = %L', v_pt1_owner_id),
+      ARRAY['42501'], '[FAIL] 6a: therapist altered username on own profile');
+
+    UPDATE public.profiles SET full_name = 'PT 1 Verified Name' WHERE id = v_pt1_owner_id;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    PERFORM zz_test.ok(v_rows = 1, '[FAIL] 6b: therapist failed to update full_name on own profile');
+
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 6: profile self-update restricted without 42P17 recursion.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 6: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 6: % (SQLSTATE %)', SQLERRM, SQLSTATE;
   END;
-  ASSERT v_error_caught = true, '[FAIL] Case 5: Authenticated therapist was able to directly insert into audit_logs!';
-
-  EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 5: Audit logs access strictly isolated (Therapist read = 0, direct insert raises 42501).';
 
 
   -- ==========================================================================
-  -- CASE 6: PROFILE TAMPERING PREVENTION (Trigger-enforced self-update, NO 42P17)
+  -- CASE 7: MEDICAL NOTES — author stamping, then append-only
+  --   as therapist: UPDATE/DELETE hit the REVOKEd privilege  -> 42501
+  --   as postgres : UPDATE/DELETE reach the immutability trigger -> P0001
   -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
-
-  -- 6a. PT 1 attempting to alter username or role on own profile -> MUST raise SQLSTATE 42501
-  v_error_caught := false;
   BEGIN
-    UPDATE public.profiles SET username = 'hacked_pt1' WHERE id = v_pt1_owner_id;
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
+    PERFORM zz_test.as_user(v_pt1_owner_id);
+    INSERT INTO public.medical_notes (patient_id, note_type, body, author_id, author_name, created_at)
+    VALUES (v_patient2_id, 'progress', 'Clinical observation by PT1 on Patient 2', v_admin_id, 'Forged Admin', now() - interval '1 year')
+    RETURNING id INTO v_temp_id;
+
+    SELECT author_id, author_name, created_at INTO v_stamped_note FROM public.medical_notes WHERE id = v_temp_id;
+    SELECT full_name INTO v_text FROM public.profiles WHERE id = v_pt1_owner_id;  -- no dependency on Case 6
+    PERFORM zz_test.ok(v_stamped_note.author_id = v_pt1_owner_id, '[FAIL] 7a: author_id was not stamped with auth.uid()');
+    PERFORM zz_test.ok(v_stamped_note.author_name = v_text, format('[FAIL] 7a: author_name %L not stamped from profiles (%L)', v_stamped_note.author_name, v_text));
+    PERFORM zz_test.ok(v_stamped_note.created_at > now() - interval '10 seconds', '[FAIL] 7a: forged created_at was kept');
+
+    PERFORM zz_test.expect_error(format('UPDATE public.medical_notes SET body = ''Tampered text'' WHERE id = %L', v_temp_id),
+      ARRAY['42501'], '[FAIL] 7b: therapist UPDATE on medical_notes (privilege revoked)');
+    PERFORM zz_test.expect_error(format('DELETE FROM public.medical_notes WHERE id = %L', v_temp_id),
+      ARRAY['42501'], '[FAIL] 7c: therapist DELETE on medical_notes (privilege revoked)');
+
+    PERFORM zz_test.as_postgres();
+    PERFORM zz_test.expect_error(format('UPDATE public.medical_notes SET body = ''Tampered text'' WHERE id = %L', v_temp_id),
+      ARRAY['P0001'], '[FAIL] 7d: immutability trigger did not block UPDATE (postgres session)');
+    PERFORM zz_test.expect_error(format('DELETE FROM public.medical_notes WHERE id = %L', v_temp_id),
+      ARRAY['P0001'], '[FAIL] 7e: immutability trigger did not block DELETE (postgres session)');
+
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 7: medical notes stamped, privileges revoked (42501) and trigger blocks mutation (P0001).';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 7: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 7: % (SQLSTATE %)', SQLERRM, SQLSTATE;
   END;
-  ASSERT v_error_caught = true, '[FAIL] Case 6: Therapist altered username on own profile!';
-
-  -- 6b. PT 1 updating allowed field (full_name) -> SUCCEEDS (1 row affected, no 42P17 error)
-  UPDATE public.profiles SET full_name = 'PT 1 Verified Name' WHERE id = v_pt1_owner_id;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 1, '[FAIL] Case 6: Therapist failed to update full_name on own profile!';
-
-  EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 6: Profile self-update restrictions enforced cleanly without 42P17 recursion.';
 
 
   -- ==========================================================================
-  -- CASE 7: MEDICAL NOTES APPEND-ONLY & FORGE PREVENTION
-  -- Any therapist can read all notes and append to ANY patient, but author
-  -- fields are forced by trigger.
+  -- CASE 8: PATIENT SENSITIVE COLUMNS GUARD
   -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
-
-  -- 7a. PT 1 inserts note for Patient 2 (caseload owned by PT 2) attempting to forge author
-  INSERT INTO public.medical_notes (patient_id, note_type, body, author_id, author_name, created_at)
-  VALUES (v_patient2_id, 'progress', 'Clinical observation by PT1 on Patient 2', v_admin_id, 'Forged Admin', now() - interval '1 year')
-  RETURNING id INTO v_temp_id;
-
-  SELECT author_id, author_name, created_at INTO v_stamped_note
-  FROM public.medical_notes WHERE id = v_temp_id;
-
-  -- Verify forced author stamping
-  ASSERT v_stamped_note.author_id = v_pt1_owner_id, '[FAIL] Case 7: author_id was not stamped with auth.uid()!';
-  ASSERT v_stamped_note.author_name = 'PT 1 Verified Name', '[FAIL] Case 7: author_name was not stamped from profiles!';
-  ASSERT v_stamped_note.created_at > (now() - interval '10 seconds'), '[FAIL] Case 7: created_at was not stamped with current timestamp!';
-
-  -- 7b. UPDATE on medical_notes -> MUST raise P0001 (immutable)
-  v_error_caught := false;
   BEGIN
-    UPDATE public.medical_notes SET body = 'Tampered text' WHERE id = v_temp_id;
-  EXCEPTION
-    WHEN SQLSTATE 'P0001' THEN
-      v_error_caught := true;
+    PERFORM zz_test.as_user(v_pt2_cover_id);
+    PERFORM zz_test.expect_error(
+      format('UPDATE public.patients SET assigned_therapist_id = %L WHERE id = %L', v_pt2_cover_id, v_patient1_id),
+      ARRAY['42501'], '[FAIL] 8a: covering PT stole patient assigned_therapist_id');
+
+    UPDATE public.patients SET underlying_diseases = 'Hypertension' WHERE id = v_patient1_id;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    PERFORM zz_test.ok(v_rows = 1, '[FAIL] 8b: covering therapist failed to update clinical column');
+
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 8: sensitive patient columns protected from reassignment.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 8: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 8: % (SQLSTATE %)', SQLERRM, SQLSTATE;
   END;
-  ASSERT v_error_caught = true, '[FAIL] Case 7: UPDATE on medical_notes did not raise SQLSTATE P0001!';
-
-  EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 7: Medical notes author stamping & immutability strictly enforced.';
-
-
-  -- ==========================================================================
-  -- CASE 8: PATIENTS SENSITIVE COLUMNS GUARD (Privilege Hole 1)
-  -- Unrelated PT changing patient1.assigned_therapist_id MUST fail
-  -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_pt2_cover_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt2_cover_id::text, 'role', 'authenticated')::text, true);
-
-  -- 8a. PT 2 (not current assigned PT) attempting to change assigned_therapist_id of Patient 1 -> MUST raise 42501
-  v_error_caught := false;
-  BEGIN
-    UPDATE public.patients 
-    SET assigned_therapist_id = v_pt2_cover_id 
-    WHERE id = v_patient1_id;
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 8: Unrelated PT was able to steal patient assigned_therapist_id!';
-
-  -- 8b. PT 2 updating clinical Tab-1 field (underlying_diseases) on Patient 1 -> SUCCEEDS (1 row affected)
-  UPDATE public.patients 
-  SET underlying_diseases = 'Hypertension' 
-  WHERE id = v_patient1_id;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 1, '[FAIL] Case 8: Therapist failed to update clinical Tab-1 columns on patient!';
-
-  EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 8: Patient sensitive columns protected from unauthorized therapist reassignment.';
 
 
   -- ==========================================================================
   -- CASE 9: COLUMN-LEVEL SELECT LOCKDOWN (pin_hash & face_vector)
   -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
-
-  -- 9a. Therapist attempting to SELECT pin_hash from public.patients -> MUST raise 42501
-  v_error_caught := false;
   BEGIN
-    EXECUTE 'SELECT pin_hash FROM public.patients WHERE id = ' || quote_literal(v_patient1_id);
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 9: Therapist was able to SELECT patients.pin_hash without SQLSTATE 42501!';
-
-  -- 9b. Therapist attempting to SELECT face_vector from public.patients -> MUST raise 42501
-  v_error_caught := false;
-  BEGIN
-    EXECUTE 'SELECT face_vector FROM public.patients WHERE id = ' || quote_literal(v_patient1_id);
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 9: Therapist was able to SELECT patients.face_vector without SQLSTATE 42501!';
-
-  EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 9: Column-level permissions on patients (pin_hash & face_vector locked down with SQLSTATE 42501).';
-
-
-  -- ==========================================================================
-  -- CASE 10: FACE TEMPLATES CLIENT ACCESS LOCKDOWN (Zero client-facing policies)
-  -- ==========================================================================
-  -- 10a. Admin trying to SELECT face_templates -> returns 0 rows
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_admin_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin_id::text, 'role', 'authenticated')::text, true);
-
-  SELECT count(*) INTO v_count FROM public.face_templates;
-  ASSERT v_count = 0, '[FAIL] Case 10: Admin saw face_templates rows! Expected 0.';
-
-  -- 10b. Therapist trying to INSERT face_templates -> MUST raise 42501
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
-
-  v_error_caught := false;
-  BEGIN
-    INSERT INTO public.face_templates (patient_id, pose, embedding)
-    VALUES (v_patient1_id, 'straight', '[0,0,0]'::vector);
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 10: Therapist was able to insert into face_templates!';
-
-  EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 10: Biometric face_templates strictly locked down against all client roles.';
-
-
-  -- ==========================================================================
-  -- CASE 11: TEMPORARY CASE COVERAGES VALIDATION
-  -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_pt2_cover_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt2_cover_id::text, 'role', 'authenticated')::text, true);
-
-  -- 11a. PT 2 trying to delegate Patient 1 (which PT 2 does not own) -> MUST raise P0001
-  v_error_caught := false;
-  BEGIN
-    INSERT INTO public.temporary_coverages (patient_id, owner_therapist_id, cover_therapist_id, start_date, end_date)
-    VALUES (v_patient1_id, v_pt2_cover_id, v_pt3_stranger_id, v_bangkok_today, v_bangkok_today + 2);
-  EXCEPTION
-    WHEN SQLSTATE 'P0001' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 11: Non-assigned therapist was able to delegate patient coverage!';
-
-  -- 11b. PT 1 (owner) creating overlapping coverage -> MUST raise P0001
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
-
-  v_error_caught := false;
-  BEGIN
-    INSERT INTO public.temporary_coverages (patient_id, owner_therapist_id, cover_therapist_id, start_date, end_date)
-    VALUES (v_patient1_id, v_pt1_owner_id, v_pt3_stranger_id, v_bangkok_today, v_bangkok_today + 3);
-  EXCEPTION
-    WHEN SQLSTATE 'P0001' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 11: Overlapping active coverage was accepted!';
-
-  EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 11: Temporary coverages trigger validations strictly enforced.';
-
-
-  -- ==========================================================================
-  -- CASE 12: TRUSTED CONTEXT EXEMPTION (Positive Test as service_role)
-  -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', '', true);
-  PERFORM set_config('request.jwt.claim.role', 'service_role', true);
-  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
-
-  -- 12a. service_role can create mini-games with MG- code
-  INSERT INTO public.exercises (code, slug, name_th, is_minigame)
-  VALUES ('MG-SRV-01', 'minigame_service_test', 'Service Role Minigame', true)
-  RETURNING id INTO v_temp_id;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 1, '[FAIL] Case 12: service_role was blocked from inserting mini-game!';
-
-  -- 12b. service_role can insert medical notes with explicit custom author without being overwritten
-  INSERT INTO public.medical_notes (patient_id, note_type, body, author_name, created_at)
-  VALUES (v_patient1_id, 'pt_advice', 'Trusted Edge Function Note', 'Staging Edge Service', '2026-10-01 10:00:00+07')
-  RETURNING id INTO v_temp_id;
-
-  SELECT author_name INTO v_stamped_note FROM public.medical_notes WHERE id = v_temp_id;
-  ASSERT v_stamped_note.author_name = 'Staging Edge Service', '[FAIL] Case 12: service_role author_name was wrongly overwritten!';
-
-  EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 12: Trusted context (service_role) successfully exempt from client guards.';
-
-
-  -- ==========================================================================
-  -- CASE 13: SCHEMA RLS ASSERTION (All public tables have RLS enabled)
-  -- ==========================================================================
-  SELECT count(*) INTO v_unsecured_count
-  FROM pg_class c
-  JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = 'public' 
-    AND c.relkind = 'r'
-    AND c.relrowsecurity = false;
-
-  ASSERT v_unsecured_count = 0, 
-    '[FAIL] Case 13: One or more public tables do NOT have RLS enabled!';
-
-  RAISE NOTICE '[PASS] Case 13: All tables in schema public verified to have relrowsecurity = true.';
-
-  -- ==========================================================================
-  -- CASE 14: ANON ROLE IS UNTRUSTED (Cannot bypass patient trigger)
-  -- ==========================================================================
-  GRANT UPDATE ON public.patients TO anon;
-  EXECUTE 'SET LOCAL ROLE anon';
-  PERFORM set_config('request.jwt.claim.role', 'anon', true);
-
-  v_error_caught := false;
-  BEGIN
-    UPDATE public.patients
-    SET assigned_therapist_id = v_pt3_stranger_id
-    WHERE id = v_patient1_id;
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  EXECUTE 'RESET ROLE';
-  REVOKE UPDATE ON public.patients FROM anon;
-
-  ASSERT v_error_caught = true, '[FAIL] Case 14: Anon was considered trusted and altered assigned_therapist_id!';
-  RAISE NOTICE '[PASS] Case 14: Anon context is strictly untrusted and rejected by patient sensitive update guard.';
-
-
-  -- ==========================================================================
-  -- CASE 15: HARD-DELETE PATIENT REJECTION
-  -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_admin_id::text, true);
-  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin_id::text, 'role', 'authenticated')::text, true);
-
-  v_error_caught := false;
-  BEGIN
-    DELETE FROM public.patients WHERE id = v_patient2_id;
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  EXECUTE 'RESET ROLE';
-
-  ASSERT v_error_caught = true, '[FAIL] Case 15: Authenticated client was able to hard-delete a patient record!';
-  RAISE NOTICE '[PASS] Case 15: Hard deletion of patients is strictly blocked for authenticated clients.';
-
-
-  -- ==========================================================================
-  -- CASE 16: TIMEZONE BOUNDARY TEST (Bangkok 00:30 rollover)
-  -- ==========================================================================
-  DECLARE
-    v_bkk_now timestamptz := '2026-10-20 00:30:00+07';
-    v_bkk_today date := (v_bkk_now AT TIME ZONE 'Asia/Bangkok')::date;
-    v_utc_date date := (v_bkk_now AT TIME ZONE 'UTC')::date;
-    v_boundary_appt_id uuid := 'a0000000-0000-0000-0000-000000000099';
-  BEGIN
-    ASSERT v_bkk_today > v_utc_date, '[FAIL] Case 16: Timezone calculation assertion mismatch!';
-    
-    INSERT INTO public.appointments (id, patient_id, date, status)
-    VALUES (v_boundary_appt_id, v_patient1_id, v_utc_date, 'scheduled')
-    ON CONFLICT (id) DO NOTHING;
-
-    ASSERT (SELECT date < v_bkk_today FROM public.appointments WHERE id = v_boundary_appt_id) = true,
-      '[FAIL] Case 16: Appointment on UTC date was not recognized as past date in Bangkok timezone!';
-
-    DELETE FROM public.appointments WHERE id = v_boundary_appt_id;
-    RAISE NOTICE '[PASS] Case 16: Timezone boundary test passed (00:30 Bangkok strictly distinguishes hospital today vs yesterday).';
-  END;
-
-  -- ==========================================================================
-  -- CASE 17: FRESH DB MEDICAL NOTE INSERT & SESSION AUTHOR STAMPING (F1)
-  -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
-
-  -- Therapist inserts medical note with forged author and NULL legacy fields
-  INSERT INTO public.medical_notes (patient_id, note_type, body, author_name)
-  VALUES (v_patient1_id, 'progress', 'Patient completed mobility assessment smoothly.', 'Forged System Admin')
-  RETURNING id INTO v_temp_id;
-
-  SELECT author_id, author_name, note, author_role, formatted_date 
-  INTO v_stamped_note 
-  FROM public.medical_notes 
-  WHERE id = v_temp_id;
-
-  ASSERT v_stamped_note.author_id = v_pt1_owner_id, '[FAIL] Case 17: Medical note author_id was not stamped with session UID!';
-  ASSERT v_stamped_note.author_name != 'Forged System Admin', '[FAIL] Case 17: Forged author_name was accepted on medical note!';
-  ASSERT v_stamped_note.note = 'Patient completed mobility assessment smoothly.', '[FAIL] Case 17: Legacy note column was not back-filled!';
-  ASSERT v_stamped_note.author_role = 'therapist', '[FAIL] Case 17: Legacy author_role was not back-filled!';
-  ASSERT v_stamped_note.formatted_date IS NOT NULL, '[FAIL] Case 17: Legacy formatted_date was not generated!';
-
-  EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 17: Fresh DB medical note inserted and author metadata stamped from session.';
-
-
-  -- ==========================================================================
-  -- CASE 18: MINIGAME CONVERGENCE CONFLICT RENAME ON NULL SLUG (F2)
-  -- ==========================================================================
-  DECLARE
-    v_conflicting_null_slug_id uuid := 'd0000000-0000-0000-0000-000000000098';
-    v_renamed_code text;
-    v_rec_test record;
-  BEGIN
-    INSERT INTO public.exercises (id, code, slug, name_th, is_minigame)
-    VALUES (v_conflicting_null_slug_id, 'MG-02', NULL, 'Legacy Exercise With Null Slug', false)
-    ON CONFLICT (id) DO UPDATE SET code = 'MG-02', slug = NULL;
-
-    FOR v_rec_test IN
-      SELECT * FROM (VALUES
-        ('minigame_arm_coordination', 'MG-02', 'มินิเกมฝึกประสานการเคลื่อนไหวแขน (Bilateral Arm Coordination)', 'ข้อต่อหัวไหล่และแขนสองข้าง', 5, 10, 2)
-      ) AS t(slug, target_code, name_th, target_joint, rest_sec, reps, sets)
-    LOOP
-      IF EXISTS (
-        SELECT 1 FROM public.exercises WHERE code = v_rec_test.target_code AND slug IS DISTINCT FROM v_rec_test.slug
-      ) THEN
-        UPDATE public.exercises
-        SET code = 'EX-' || upper(substr(md5(random()::text || clock_timestamp()::text), 1, 8))
-        WHERE id = v_conflicting_null_slug_id;
-        RAISE NOTICE 'Notice: Renamed conflicting row with NULL slug to EX- prefix';
-      END IF;
-    END LOOP;
-
-    SELECT code INTO v_renamed_code FROM public.exercises WHERE id = v_conflicting_null_slug_id;
-    ASSERT v_renamed_code LIKE 'EX-%', '[FAIL] Case 18: Conflicting exercise with NULL slug was not renamed to EX- prefix!';
-    DELETE FROM public.exercises WHERE id = v_conflicting_null_slug_id;
-    RAISE NOTICE '[PASS] Case 18: Mini-game conflict check with NULL slug safely renamed conflicting row.';
+    PERFORM zz_test.as_user(v_pt1_owner_id);
+    PERFORM zz_test.expect_error(format('SELECT pin_hash FROM public.patients WHERE id = %L', v_patient1_id),
+      ARRAY['42501'], '[FAIL] 9a: therapist selected pin_hash');
+    PERFORM zz_test.expect_error(format('SELECT face_vector FROM public.patients WHERE id = %L', v_patient1_id),
+      ARRAY['42501'], '[FAIL] 9b: therapist selected face_vector');
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 9: pin_hash and face_vector locked down (42501).';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 9: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 9: % (SQLSTATE %)', SQLERRM, SQLSTATE;
   END;
 
 
   -- ==========================================================================
-  -- CASE 19: THERAPIST WRITE RESTRICTIONS & COVERAGE CLINICAL UPDATE (F5b)
+  -- CASE 10: FACE TEMPLATES — zero client-facing policies
   -- ==========================================================================
-  -- 19a. Therapist 3 (stranger, no coverage) attempts to update Patient 1 -> 0 rows
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_pt3_stranger_id::text, true);
-  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt3_stranger_id::text, 'role', 'authenticated')::text, true);
-
-  UPDATE public.patients
-  SET therapist_notes = 'Tampered by stranger PT'
-  WHERE id = v_patient1_id;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 0, '[FAIL] Case 19a: Unassigned/uncovered therapist was able to update patient!';
-
-  -- 19b. Therapist 2 (has active coverage for Patient 1) updates clinical notes -> MUST succeed (1 row)
-  PERFORM set_config('request.jwt.claim.sub', v_pt2_cover_id::text, true);
-  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt2_cover_id::text, 'role', 'authenticated')::text, true);
-
-  UPDATE public.patients
-  SET therapist_notes = 'Covering PT clinical update: gait improved'
-  WHERE id = v_patient1_id;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  ASSERT v_rows = 1, '[FAIL] Case 19b: Active covering therapist was blocked from updating clinical notes!';
-
-  -- 19c. Therapist 2 (covering) attempts to discharge or reassign Patient 1 -> MUST be rejected by sensitive fields trigger
-  v_error_caught := false;
   BEGIN
-    UPDATE public.patients
-    SET treatment_status = 'discharged'
-    WHERE id = v_patient1_id;
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 19c: Covering therapist was able to discharge patient!';
+    PERFORM zz_test.as_user(v_admin_id);
+    SELECT count(*) INTO v_count FROM public.face_templates;
+    PERFORM zz_test.ok(v_count = 0, format('[FAIL] 10a: admin saw %s face_templates rows (expected 0; fixture row exists)', v_count));
 
-  EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 19: can_write_patient correctly restricts stranger PT, permits covered clinical edits, and guards sensitive fields.';
+    -- real 128-dim vector, otherwise a dimension error (22000) fires before RLS is evaluated
+    PERFORM zz_test.as_user(v_pt1_owner_id);
+    PERFORM zz_test.expect_error(
+      format('INSERT INTO public.face_templates (patient_id, pose, embedding) VALUES (%L, ''straight'', array_fill(0.1::real, ARRAY[128])::vector)', v_patient1_id),
+      ARRAY['42501'], '[FAIL] 10b: therapist inserted into face_templates');
+
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 10: face_templates locked against all client roles.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 10: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 10: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 11: TEMPORARY COVERAGE VALIDATION (trigger)
+  -- ==========================================================================
+  BEGIN
+    PERFORM zz_test.as_user(v_pt2_cover_id);
+    PERFORM zz_test.expect_error(
+      format('INSERT INTO public.temporary_coverages (patient_id, owner_therapist_id, cover_therapist_id, start_date, end_date) VALUES (%L, %L, %L, %L, %L)',
+             v_patient1_id, v_pt2_cover_id, v_pt3_stranger_id, v_bkk_today, v_bkk_today + 2),
+      ARRAY['P0001'], '[FAIL] 11a: non-assigned therapist delegated a patient');
+
+    PERFORM zz_test.as_user(v_pt1_owner_id);
+    PERFORM zz_test.expect_error(
+      format('INSERT INTO public.temporary_coverages (patient_id, owner_therapist_id, cover_therapist_id, start_date, end_date) VALUES (%L, %L, %L, %L, %L)',
+             v_patient1_id, v_pt1_owner_id, v_pt3_stranger_id, v_bkk_today, v_bkk_today + 3),
+      ARRAY['P0001'], '[FAIL] 11b: overlapping active coverage accepted');
+
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 11: coverage trigger validations enforced.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 11: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 11: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 12: TRUSTED CONTEXT (real service_role DB role + service_role claims)
+  -- ==========================================================================
+  BEGIN
+    PERFORM zz_test.as_service();
+
+    INSERT INTO public.exercises (code, slug, name_th, is_minigame)
+    VALUES ('MG-SRV-01', 'minigame_service_test', 'Service Role Minigame', true)
+    RETURNING id, is_minigame INTO v_temp_id, v_flag;
+    PERFORM zz_test.ok(v_flag = true, '[FAIL] 12a: service_role mini-game lost is_minigame = true');
+
+    INSERT INTO public.medical_notes (patient_id, note_type, body, author_name, created_at)
+    VALUES (v_patient1_id, 'pt_advice', 'Trusted Edge Function Note', 'Staging Edge Service', '2026-10-01 10:00:00+07')
+    RETURNING id INTO v_temp_id;
+    SELECT author_name, created_at INTO v_stamped_note FROM public.medical_notes WHERE id = v_temp_id;
+    PERFORM zz_test.ok(v_stamped_note.author_name = 'Staging Edge Service', '[FAIL] 12b: service_role author_name was overwritten');
+    PERFORM zz_test.ok(v_stamped_note.created_at = timestamptz '2026-10-01 10:00:00+07', '[FAIL] 12b: service_role created_at was overwritten');
+
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 12: service_role exempt from client guards.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 12: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 12: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 13: ALL PUBLIC TABLES HAVE RLS ENABLED
+  -- ==========================================================================
+  BEGIN
+    PERFORM zz_test.as_postgres();
+    SELECT count(*) INTO v_count
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity = false;
+    PERFORM zz_test.ok(v_count = 0, format('[FAIL] 13: %s public table(s) without RLS', v_count));
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 13: every public table has relrowsecurity = true.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 13: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 13: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 14: ANON / AUTHENTICATED CLAIMS ARE NEVER TRUSTED
+  -- (anon has no policy, so a real anon UPDATE just matches 0 rows and never reaches the trigger;
+  --  test the decision function and the trigger path directly instead)
+  -- ==========================================================================
+  BEGIN
+    PERFORM zz_test.as_postgres();
+    PERFORM zz_test.set_claims('anon', NULL);
+    PERFORM zz_test.ok(public.is_trusted_context() = false, '[FAIL] 14a: is_trusted_context() = true with anon claims');
+    PERFORM zz_test.set_claims('authenticated', v_pt1_owner_id);
+    PERFORM zz_test.ok(public.is_trusted_context() = false, '[FAIL] 14b: is_trusted_context() = true with authenticated claims');
+
+    -- superuser bypasses privileges and RLS, so the guard TRIGGER is what must stop this
+    PERFORM zz_test.set_claims('anon', NULL);
+    PERFORM zz_test.expect_error(
+      format('UPDATE public.patients SET assigned_therapist_id = %L WHERE id = %L', v_pt3_stranger_id, v_patient1_id),
+      ARRAY['42501'], '[FAIL] 14c: sensitive-field trigger let an anon-claims session reassign a patient');
+
+    PERFORM zz_test.as_anon();
+    PERFORM zz_test.expect_error(
+      format('UPDATE public.patients SET assigned_therapist_id = %L WHERE id = %L', v_pt3_stranger_id, v_patient1_id),
+      ARRAY['42501'], '[FAIL] 14d: real anon role could UPDATE patients');
+
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 14: anon/authenticated claims are untrusted (function + trigger path).';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 14: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 14: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 15: HARD-DELETE PATIENT REJECTION (privilege + trigger), trusted delete still works
+  -- ==========================================================================
+  BEGIN
+    PERFORM zz_test.as_user(v_admin_id);
+    PERFORM zz_test.expect_error(format('DELETE FROM public.patients WHERE id = %L', v_patient2_id),
+      ARRAY['42501'], '[FAIL] 15a: authenticated admin hard-deleted a patient (DELETE privilege revoked)');
+
+    -- superuser + untrusted claims reaches the BEFORE DELETE trigger
+    PERFORM zz_test.as_postgres();
+    PERFORM zz_test.set_claims('authenticated', v_admin_id);
+    PERFORM zz_test.expect_error(format('DELETE FROM public.patients WHERE id = %L', v_patient2_id),
+      ARRAY['42501'], '[FAIL] 15b: hard-delete trigger did not block an untrusted session');
+
+    -- trusted path: a patient with no notes/dependents can be deleted by service_role
+    PERFORM zz_test.as_postgres();
+    INSERT INTO public.patients (id, full_name) VALUES ('c0000000-0000-0000-0000-0000000000a1', 'Disposable Patient');
+    PERFORM zz_test.as_service();
+    DELETE FROM public.patients WHERE id = 'c0000000-0000-0000-0000-0000000000a1';
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    PERFORM zz_test.ok(v_rows = 1, '[FAIL] 15c: service_role could not delete a disposable patient');
+
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 15: patient hard-delete blocked for clients, allowed for service_role.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 15: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 15: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 16: BANGKOK MIDNIGHT BOUNDARY — runs the REAL cron function with p_now
+  -- p_now = 00:30 Bangkok on the day after v_bkk_today = 17:30 UTC on v_bkk_today.
+  -- An appointment dated v_bkk_today is PAST in Bangkok but "today" in UTC.
+  -- ==========================================================================
+  BEGIN
+    PERFORM zz_test.as_postgres();
+    DECLARE
+      v_fake_now  timestamptz := ((v_bkk_today + 1)::timestamp + interval '30 minutes') AT TIME ZONE 'Asia/Bangkok';
+      v_late_now  timestamptz := (v_bkk_today::timestamp + interval '23 hours 30 minutes') AT TIME ZONE 'Asia/Bangkok';
+      v_appt_ctl  uuid := 'a0000000-0000-0000-0000-000000000098';
+      v_appt_16   uuid := 'a0000000-0000-0000-0000-000000000099';
+      v_status    text;
+    BEGIN
+      PERFORM zz_test.ok((v_fake_now AT TIME ZONE 'UTC')::date = v_bkk_today, '[FAIL] 16: precondition — fake now must still be v_bkk_today in UTC');
+
+      INSERT INTO public.appointments (id, patient_id, date, status)
+      VALUES (v_appt_ctl, v_patient2_id, v_bkk_today, 'scheduled'),
+             (v_appt_16,  v_patient2_id, v_bkk_today, 'scheduled');
+
+      -- control: 23:30 Bangkok on the SAME day => appointment dated today is not past
+      PERFORM public.auto_reschedule_missed_appointments(v_late_now);
+      SELECT status INTO v_status FROM public.appointments WHERE id = v_appt_ctl;
+      PERFORM zz_test.ok(v_status = 'scheduled', format('[FAIL] 16a: appointment marked %L at 23:30 Bangkok on its own day', v_status));
+
+      -- real boundary
+      v_res := public.auto_reschedule_missed_appointments(v_fake_now);
+      PERFORM zz_test.ok((v_res->>'today_bangkok')::date = v_bkk_today + 1,
+        format('[FAIL] 16b: function computed today_bangkok = %s, expected %s', v_res->>'today_bangkok', v_bkk_today + 1));
+      SELECT status INTO v_status FROM public.appointments WHERE id = v_appt_16;
+      PERFORM zz_test.ok(v_status = 'missed', format('[FAIL] 16c: appointment dated %s is %L at 00:30 Bangkok next day (expected missed)', v_bkk_today, v_status));
+
+      SELECT count(*) INTO v_count FROM public.appointments
+      WHERE patient_id = v_patient2_id AND date = v_bkk_today + 1 AND status = 'rescheduled' AND original_date = v_bkk_today;
+      PERFORM zz_test.ok(v_count = 1, format('[FAIL] 16d: expected 1 rescheduled appointment on %s, found %s', v_bkk_today + 1, v_count));
+
+      SELECT detail INTO v_text FROM public.audit_logs
+      WHERE action = 'AUTO_RESCHEDULE_ERROR' AND detail LIKE '%' || v_appt_16::text || '%' LIMIT 1;
+      PERFORM zz_test.ok(v_text IS NULL, format('[FAIL] 16e: cron logged a per-row error: %s', v_text));
+    END;
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 16: Bangkok-midnight rollover verified through the real function.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 16: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 16: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 17: MEDICAL NOTE INSERT ON A FRESH DB + SESSION AUTHOR STAMPING (F1)
+  -- ==========================================================================
+  BEGIN
+    PERFORM zz_test.as_user(v_pt1_owner_id);
+    INSERT INTO public.medical_notes (patient_id, note_type, body, author_name)
+    VALUES (v_patient1_id, 'progress', 'Patient completed mobility assessment smoothly.', 'Forged System Admin')
+    RETURNING id INTO v_temp_id;
+
+    SELECT author_id, author_name, note, author_role, formatted_date INTO v_stamped_note
+    FROM public.medical_notes WHERE id = v_temp_id;
+
+    PERFORM zz_test.ok(v_stamped_note.author_id = v_pt1_owner_id, '[FAIL] 17: author_id not stamped with session UID');
+    PERFORM zz_test.ok(v_stamped_note.author_name <> 'Forged System Admin', '[FAIL] 17: forged author_name accepted');
+    PERFORM zz_test.ok(v_stamped_note.note = 'Patient completed mobility assessment smoothly.', '[FAIL] 17: legacy note column not back-filled');
+    PERFORM zz_test.ok(v_stamped_note.author_role = 'therapist', '[FAIL] 17: legacy author_role not back-filled');
+    PERFORM zz_test.ok(v_stamped_note.formatted_date IS NOT NULL, '[FAIL] 17: legacy formatted_date not generated');
+
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 17: note inserted and author metadata stamped from session.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 17: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 17: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 18: MINI-GAME CONVERGENCE — runs the REAL section 20 (converge_minigame_exercises())
+  -- Simulate a legacy un-normalized MG-02 row (code NULL) plus a non-minigame row that holds
+  -- code 'MG-02' with a NULL slug. The old `slug != ...` check evaluated to NULL and missed it.
+  -- ==========================================================================
+  BEGIN
+    PERFORM zz_test.as_postgres();
+    DECLARE
+      v_conf_id uuid := 'd0000000-0000-0000-0000-000000000098';
+      v_mg2_id  uuid;
+      v_conf_code text;
+      v_mg2_code text;
+    BEGIN
+      SELECT id INTO v_mg2_id FROM public.exercises WHERE slug = 'minigame_arm_coordination';
+      PERFORM zz_test.ok(v_mg2_id IS NOT NULL, '[FAIL] 18: precondition — seeded minigame_arm_coordination row missing (apply all_migrations.sql first)');
+
+      UPDATE public.exercises SET code = NULL, is_minigame = false WHERE id = v_mg2_id;
+      INSERT INTO public.exercises (id, code, slug, name_th, is_minigame)
+      VALUES (v_conf_id, 'MG-02', NULL, 'Legacy Exercise With Null Slug', false);
+
+      PERFORM public.converge_minigame_exercises();
+
+      SELECT code INTO v_conf_code FROM public.exercises WHERE id = v_conf_id;
+      PERFORM zz_test.ok(v_conf_code LIKE 'EX-%', format('[FAIL] 18a: conflicting NULL-slug row has code %L (expected EX-...)', v_conf_code));
+
+      SELECT code, is_minigame INTO v_mg2_code, v_flag FROM public.exercises WHERE id = v_mg2_id;
+      PERFORM zz_test.ok(v_mg2_code = 'MG-02' AND v_flag = true, format('[FAIL] 18b: legacy row ended with code %L, is_minigame %L', v_mg2_code, v_flag));
+    END;
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 18: converge_minigame_exercises() renamed the NULL-slug conflict and normalized MG-02.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 18: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 18: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 19: THERAPIST WRITE RESTRICTIONS & COVERED CLINICAL UPDATE (F5b)
+  -- ==========================================================================
+  BEGIN
+    PERFORM zz_test.as_user(v_pt3_stranger_id);
+    UPDATE public.patients SET therapist_notes = 'Tampered by stranger PT' WHERE id = v_patient1_id;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    PERFORM zz_test.ok(v_rows = 0, format('[FAIL] 19a: stranger PT updated %s row(s) of patient 1', v_rows));
+
+    PERFORM zz_test.as_user(v_pt2_cover_id);
+    UPDATE public.patients SET therapist_notes = 'Covering PT clinical update: gait improved' WHERE id = v_patient1_id;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    PERFORM zz_test.ok(v_rows = 1, '[FAIL] 19b: active covering therapist blocked from clinical update');
+
+    PERFORM zz_test.expect_error(
+      format('UPDATE public.patients SET treatment_status = ''discharged'' WHERE id = %L', v_patient1_id),
+      ARRAY['42501'], '[FAIL] 19c: covering therapist discharged a patient');
+
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 19: can_write_patient restricts stranger, permits covered clinical edits, guards sensitive fields.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 19: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 19: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+  END;
 
 
   -- ==========================================================================
   -- CASE 20: PATIENT COLUMN-LEVEL WRITE LOCKDOWN & REGISTRATION GUARD (F5)
   -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
-
-  -- 20a. Attempt to update pin_hash -> MUST raise 42501 (permission denied for column)
-  v_error_caught := false;
   BEGIN
-    EXECUTE 'UPDATE public.patients SET pin_hash = ''hacked'' WHERE id = $1' USING v_patient1_id;
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 20a: Therapist was able to update pin_hash!';
+    PERFORM zz_test.as_user(v_pt1_owner_id);
+    PERFORM zz_test.expect_error(format('UPDATE public.patients SET pin_hash = ''hacked'' WHERE id = %L', v_patient1_id),
+      ARRAY['42501'], '[FAIL] 20a: therapist updated pin_hash');
+    PERFORM zz_test.expect_error(format('UPDATE public.patients SET progress_pct = 99.9 WHERE id = %L', v_patient1_id),
+      ARRAY['42501'], '[FAIL] 20b: therapist updated progress_pct');
+    PERFORM zz_test.expect_error(format('UPDATE public.patients SET face_registered = true WHERE id = %L', v_patient1_id),
+      ARRAY['42501'], '[FAIL] 20c: therapist updated face_registered');
+    PERFORM zz_test.expect_error(
+      format('INSERT INTO public.patients (full_name, assigned_therapist_id) VALUES (''Patient Stolen'', %L)', v_pt3_stranger_id),
+      ARRAY['42501'], '[FAIL] 20d: therapist registered a patient assigned to someone else');
 
-  -- 20b. Attempt to update progress_pct -> MUST raise 42501
-  v_error_caught := false;
-  BEGIN
-    EXECUTE 'UPDATE public.patients SET progress_pct = 99.9 WHERE id = $1' USING v_patient1_id;
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 20b: Therapist was able to update progress_pct!';
+    -- 20e positive control: registering for yourself works and the trigger assigns + generates the HN
+    INSERT INTO public.patients (full_name) VALUES ('Case20 Registered By PT1')
+    RETURNING id, hn, assigned_therapist_id INTO v_rec;
+    PERFORM zz_test.ok(v_rec.assigned_therapist_id = v_pt1_owner_id, '[FAIL] 20e: new patient not assigned to registering therapist');
+    PERFORM zz_test.ok(v_rec.hn LIKE 'P-%', format('[FAIL] 20e: hn %L not generated', v_rec.hn));
 
-  -- 20c. Attempt to update face_registered -> MUST raise 42501
-  v_error_caught := false;
-  BEGIN
-    EXECUTE 'UPDATE public.patients SET face_registered = true WHERE id = $1' USING v_patient1_id;
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 20c: Therapist was able to update face_registered!';
-
-  -- 20d. Non-admin therapist registering patient assigned to another therapist -> MUST raise 42501
-  v_error_caught := false;
-  BEGIN
-    INSERT INTO public.patients (full_name, assigned_therapist_id)
-    VALUES ('Patient Stolen', v_pt3_stranger_id);
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  ASSERT v_error_caught = true, '[FAIL] Case 20d: Non-admin therapist was able to assign newly registered patient to another therapist!';
-
-  EXECUTE 'RESET ROLE';
-  RAISE NOTICE '[PASS] Case 20: Column-level write permissions and registration assignment guard strictly enforced.';
-
-
-  -- ==========================================================================
-  -- CASE 21: PATIENT COLUMN-LEVEL VISIBILITY ASSERTION (F6)
-  -- ==========================================================================
-  DECLARE
-    v_missing_select_cols text[];
-    v_anon_select_count int;
-  BEGIN
-    SELECT array_agg(attname::text ORDER BY attname::text)
-    INTO v_missing_select_cols
-    FROM pg_attribute
-    WHERE attrelid = 'public.patients'::regclass
-      AND attnum > 0
-      AND NOT attisdropped
-      AND NOT has_column_privilege('authenticated', 'public.patients', attname, 'SELECT');
-
-    ASSERT v_missing_select_cols = ARRAY['face_vector', 'pin_hash'],
-      format('[FAIL] Case 21: Expected hidden columns to be {face_vector, pin_hash}, found: %s', v_missing_select_cols::text);
-
-    SELECT count(*) INTO v_anon_select_count
-    FROM pg_attribute
-    WHERE attrelid = 'public.patients'::regclass
-      AND attnum > 0
-      AND NOT attisdropped
-      AND has_column_privilege('anon', 'public.patients', attname, 'SELECT');
-
-    ASSERT v_anon_select_count = 0, '[FAIL] Case 21: Anon role has SELECT privilege on public.patients columns!';
-
-    RAISE NOTICE '[PASS] Case 21: Patient column visibility strictly verified: only pin_hash & face_vector are hidden from authenticated; anon has 0.';
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 20: column-level writes and registration assignment guard enforced.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 20: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 20: % (SQLSTATE %)', SQLERRM, SQLSTATE;
   END;
 
 
   -- ==========================================================================
-  -- CASE 22: DANGEROUS PRIVILEGES & IMMUTABILITY GRANTS ASSERTION (F7)
+  -- CASE 21: PATIENT COLUMN VISIBILITY (F6)
   -- ==========================================================================
-  DECLARE
-    v_dangerous_grant_count int;
-    v_notes_mutable_count int;
-    v_audit_mutable_count int;
   BEGIN
-    SELECT count(*) INTO v_dangerous_grant_count
-    FROM information_schema.table_privileges
-    WHERE table_schema = 'public'
-      AND grantee IN ('anon', 'authenticated')
-      AND privilege_type IN ('TRUNCATE', 'REFERENCES', 'TRIGGER');
+    PERFORM zz_test.as_postgres();
+    DECLARE
+      v_hidden text[];
+      v_anon_cols int;
+    BEGIN
+      SELECT array_agg(attname::text ORDER BY attname::text) INTO v_hidden
+      FROM pg_attribute
+      WHERE attrelid = 'public.patients'::regclass AND attnum > 0 AND NOT attisdropped
+        AND NOT has_column_privilege('authenticated', 'public.patients', attname::text, 'SELECT');
+      PERFORM zz_test.ok(v_hidden = ARRAY['face_vector', 'pin_hash'],
+        format('[FAIL] 21a: columns hidden from authenticated = %s (expected {face_vector,pin_hash})', v_hidden::text));
 
-    ASSERT v_dangerous_grant_count = 0,
-      format('[FAIL] Case 22: Found %s dangerous table privilege grants (TRUNCATE/REFERENCES/TRIGGER) for anon/authenticated!', v_dangerous_grant_count);
-
-    SELECT count(*) INTO v_notes_mutable_count
-    FROM information_schema.table_privileges
-    WHERE table_schema = 'public'
-      AND table_name = 'medical_notes'
-      AND grantee = 'authenticated'
-      AND privilege_type IN ('UPDATE', 'DELETE');
-
-    ASSERT v_notes_mutable_count = 0, '[FAIL] Case 22: Authenticated has UPDATE or DELETE grant on medical_notes!';
-
-    SELECT count(*) INTO v_audit_mutable_count
-    FROM information_schema.table_privileges
-    WHERE table_schema = 'public'
-      AND table_name = 'audit_logs'
-      AND grantee = 'authenticated'
-      AND privilege_type IN ('INSERT', 'UPDATE', 'DELETE');
-
-    ASSERT v_audit_mutable_count = 0, '[FAIL] Case 22: Authenticated has INSERT, UPDATE, or DELETE grant on audit_logs!';
-
-    RAISE NOTICE '[PASS] Case 22: Schema-wide table privilege grants asserted: zero TRUNCATE/REFERENCES/TRIGGER; notes & audit immutability grants verified.';
+      SELECT count(*) INTO v_anon_cols
+      FROM pg_attribute
+      WHERE attrelid = 'public.patients'::regclass AND attnum > 0 AND NOT attisdropped
+        AND has_column_privilege('anon', 'public.patients', attname::text, 'SELECT');
+      PERFORM zz_test.ok(v_anon_cols = 0, format('[FAIL] 21b: anon has SELECT on %s patients column(s)', v_anon_cols));
+    END;
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 21: only pin_hash and face_vector hidden from authenticated; anon sees none.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 21: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 21: % (SQLSTATE %)', SQLERRM, SQLSTATE;
   END;
 
 
   -- ==========================================================================
-  -- CASE 23: SESSION LOGS DIRECT INSERT DENIED FOR CLIENTS (F8)
+  -- CASE 22: DANGEROUS PRIVILEGES & IMMUTABILITY GRANTS (F7)
   -- ==========================================================================
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
-
-  v_error_caught := false;
   BEGIN
-    EXECUTE 'INSERT INTO public.session_logs (patient_id, session_date, score) VALUES ($1, $2, 100)'
-      USING v_patient1_id, v_bangkok_today;
-  EXCEPTION
-    WHEN SQLSTATE '42501' THEN
-      v_error_caught := true;
-  END;
-  EXECUTE 'RESET ROLE';
+    PERFORM zz_test.as_postgres();
+    SELECT count(*) INTO v_count
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    CROSS JOIN (VALUES ('anon'), ('authenticated')) r(rolname)
+    CROSS JOIN (VALUES ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) p(priv)
+    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
+      AND has_table_privilege(r.rolname, c.oid, p.priv);
+    PERFORM zz_test.ok(v_count = 0, format('[FAIL] 22a: %s TRUNCATE/REFERENCES/TRIGGER grants for anon/authenticated', v_count));
 
-  ASSERT v_error_caught = true, '[FAIL] Case 23: Staff was able to directly insert session_logs!';
-  RAISE NOTICE '[PASS] Case 23: Direct client insertion of session_logs is strictly rejected (service_role only).';
+    PERFORM zz_test.ok(NOT has_table_privilege('authenticated', 'public.medical_notes', 'UPDATE')
+                   AND NOT has_table_privilege('authenticated', 'public.medical_notes', 'DELETE'),
+      '[FAIL] 22b: authenticated has UPDATE or DELETE on medical_notes');
+    PERFORM zz_test.ok(NOT has_table_privilege('authenticated', 'public.audit_logs', 'INSERT')
+                   AND NOT has_table_privilege('authenticated', 'public.audit_logs', 'UPDATE')
+                   AND NOT has_table_privilege('authenticated', 'public.audit_logs', 'DELETE'),
+      '[FAIL] 22c: authenticated has INSERT/UPDATE/DELETE on audit_logs');
+
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 22: no dangerous grants; notes and audit logs are not client-mutable.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 22: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 22: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+  END;
+
+
+  -- ==========================================================================
+  -- CASE 23: SESSION LOGS DIRECT INSERT DENIED (F8) — real columns, so 42501 (not 42703) is reachable
+  -- ==========================================================================
+  BEGIN
+    PERFORM zz_test.as_user(v_pt1_owner_id);
+    PERFORM zz_test.expect_error(
+      format('INSERT INTO public.session_logs (patient_id, status, score) VALUES (%L, ''completed'', 100)', v_patient1_id),
+      ARRAY['42501'], '[FAIL] 23: staff inserted directly into session_logs');
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 23: direct client insert into session_logs rejected (service_role only).';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 23: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 23: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+  END;
 
 
   -- ==========================================================================
   -- CASE 24: TEMPORARY COVERAGE REVOCATION RULES (F9)
   -- ==========================================================================
-  DECLARE
-    v_test_cov_id uuid := 'e0000000-0000-0000-0000-000000000099';
-    v_rev_record record;
   BEGIN
-    INSERT INTO public.temporary_coverages (id, patient_id, owner_therapist_id, cover_therapist_id, start_date, end_date, status)
-    VALUES (v_test_cov_id, v_patient1_id, v_pt1_owner_id, v_pt2_cover_id, v_bangkok_today, v_bangkok_today + 5, 'active')
-    ON CONFLICT (id) DO UPDATE SET status = 'active', revoked_at = NULL, revoked_by = NULL;
-
-    -- 24a. Unrelated therapist (PT 3) attempts to revoke -> MUST be rejected (42501)
-    EXECUTE 'SET LOCAL ROLE authenticated';
-    PERFORM set_config('request.jwt.claim.sub', v_pt3_stranger_id::text, true);
-    PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt3_stranger_id::text, 'role', 'authenticated')::text, true);
-
-    v_error_caught := false;
+    PERFORM zz_test.as_postgres();
+    DECLARE
+      v_cov_id uuid := 'e0000000-0000-0000-0000-000000000099';
     BEGIN
-      UPDATE public.temporary_coverages SET status = 'revoked' WHERE id = v_test_cov_id;
-    EXCEPTION
-      WHEN SQLSTATE '42501' THEN
-        v_error_caught := true;
+      INSERT INTO public.temporary_coverages (id, patient_id, owner_therapist_id, cover_therapist_id, start_date, end_date, status)
+      VALUES (v_cov_id, v_patient1_id, v_pt1_owner_id, v_pt2_cover_id, v_bkk_today, v_bkk_today + 5, 'active')
+      ON CONFLICT (id) DO UPDATE SET status = 'active', revoked_at = NULL, revoked_by = NULL;
+
+      -- 24a: stranger is neither owner nor cover => RLS silently filters the row (no error): assert 0 rows
+      PERFORM zz_test.as_user(v_pt3_stranger_id);
+      UPDATE public.temporary_coverages SET status = 'revoked' WHERE id = v_cov_id;
+      GET DIAGNOSTICS v_rows = ROW_COUNT;
+      PERFORM zz_test.ok(v_rows = 0, format('[FAIL] 24a: stranger revoked %s coverage row(s)', v_rows));
+
+      -- 24b: cover may revoke but not change dates in the same statement
+      PERFORM zz_test.as_user(v_pt2_cover_id);
+      PERFORM zz_test.expect_error(
+        format('UPDATE public.temporary_coverages SET status = ''revoked'', end_date = %L WHERE id = %L', v_bkk_today + 10, v_cov_id),
+        ARRAY['P0001'], '[FAIL] 24b: coverage dates changed during revoke');
+
+      -- 24c: non-trusted caller cannot set 'expired'
+      PERFORM zz_test.expect_error(
+        format('UPDATE public.temporary_coverages SET status = ''expired'' WHERE id = %L', v_cov_id),
+        ARRAY['P0001', '42501'], '[FAIL] 24c: non-trusted caller set status = expired');
+
+      -- 24d: cover revokes successfully; trigger stamps revoked_by / revoked_at
+      UPDATE public.temporary_coverages SET status = 'revoked' WHERE id = v_cov_id;
+      GET DIAGNOSTICS v_rows = ROW_COUNT;
+      PERFORM zz_test.ok(v_rows = 1, '[FAIL] 24d: covering therapist blocked from revoking');
+      SELECT status, revoked_by, revoked_at INTO v_rec FROM public.temporary_coverages WHERE id = v_cov_id;
+      PERFORM zz_test.ok(v_rec.status = 'revoked', '[FAIL] 24d: status not revoked');
+      PERFORM zz_test.ok(v_rec.revoked_by = v_pt2_cover_id, '[FAIL] 24d: revoked_by not stamped with PT 2');
+      PERFORM zz_test.ok(v_rec.revoked_at IS NOT NULL, '[FAIL] 24d: revoked_at not stamped');
     END;
-    ASSERT v_error_caught = true, '[FAIL] Case 24a: Unrelated therapist was able to revoke coverage!';
-
-    -- 24b. Cover therapist (PT 2) attempts to alter dates during update -> MUST be rejected (P0001)
-    PERFORM set_config('request.jwt.claim.sub', v_pt2_cover_id::text, true);
-    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt2_cover_id::text, 'role', 'authenticated')::text, true);
-
-    v_error_caught := false;
-    BEGIN
-      UPDATE public.temporary_coverages SET status = 'revoked', end_date = v_bangkok_today + 10 WHERE id = v_test_cov_id;
-    EXCEPTION
-      WHEN SQLSTATE 'P0001' THEN
-        v_error_caught := true;
-    END;
-    ASSERT v_error_caught = true, '[FAIL] Case 24b: Caller was able to modify coverage dates during status update!';
-
-    -- 24c. Non-trusted caller attempts to set status = 'expired' -> MUST be rejected (P0001 / 42501)
-    v_error_caught := false;
-    BEGIN
-      UPDATE public.temporary_coverages SET status = 'expired' WHERE id = v_test_cov_id;
-    EXCEPTION
-      WHEN SQLSTATE 'P0001' OR SQLSTATE '42501' THEN
-        v_error_caught := true;
-    END;
-    ASSERT v_error_caught = true, '[FAIL] Case 24c: Non-trusted caller was able to set status = expired!';
-
-    -- 24d. Cover therapist (PT 2) successfully revokes coverage -> MUST succeed and stamp revoked_by = PT 2
-    UPDATE public.temporary_coverages SET status = 'revoked' WHERE id = v_test_cov_id;
-    GET DIAGNOSTICS v_rows = ROW_COUNT;
-    ASSERT v_rows = 1, '[FAIL] Case 24d: Covering therapist was blocked from revoking coverage!';
-
-    SELECT status, revoked_by, revoked_at INTO v_rev_record FROM public.temporary_coverages WHERE id = v_test_cov_id;
-    ASSERT v_rev_record.status = 'revoked', '[FAIL] Case 24d: Status was not set to revoked!';
-    ASSERT v_rev_record.revoked_by = v_pt2_cover_id, '[FAIL] Case 24d: revoked_by was not stamped with PT 2!';
-    ASSERT v_rev_record.revoked_at IS NOT NULL, '[FAIL] Case 24d: revoked_at was not stamped!';
-
-    EXECUTE 'RESET ROLE';
-    DELETE FROM public.temporary_coverages WHERE id = v_test_cov_id;
-    RAISE NOTICE '[PASS] Case 24: Coverage revocation rules verified (cover can revoke, stranger denied, stamps set, other columns locked).';
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 24: coverage revocation rules verified.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 24: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 24: % (SQLSTATE %)', SQLERRM, SQLSTATE;
   END;
 
 
   -- ==========================================================================
-  -- CASE 25: PATIENT ANONYMIZATION PROCEDURE (F10)
+  -- CASE 25: PATIENT ANONYMIZATION (F10)
+  -- No cleanup DELETEs: medical_notes are immutable (and patient delete cascades into them);
+  -- the final ROLLBACK removes everything.
   -- ==========================================================================
-  DECLARE
-    v_anon_patient_id uuid := 'c0000000-0000-0000-0000-000000000099';
-    v_anon_note_id uuid := '90000000-0000-0000-0000-000000000099';
-    v_anon_template_id uuid := '80000000-0000-0000-0000-000000000099';
-    v_anon_pat_rec record;
-    v_note_count int;
-    v_tmpl_count int;
-    v_audit_count int;
   BEGIN
-    INSERT INTO public.patients (id, full_name, phone, pin_hash, treatment_status)
-    VALUES (v_anon_patient_id, 'Sensitive Person', '089-999-8888', 'secret_hash', 'active')
-    ON CONFLICT (id) DO NOTHING;
-
-    INSERT INTO public.medical_notes (id, patient_id, note_type, body, author_name)
-    VALUES (v_anon_note_id, v_anon_patient_id, 'progress', 'Permanent Clinical Progress Record', 'Dr. Smith')
-    ON CONFLICT (id) DO NOTHING;
-
-    INSERT INTO public.face_templates (id, patient_id, pose, embedding)
-    VALUES (v_anon_template_id, v_anon_patient_id, 'straight', array_fill(0.1::real, ARRAY[128])::vector)
-    ON CONFLICT (id) DO NOTHING;
-
-    -- 25a. Therapist calling admin_anonymize_patient -> MUST be rejected (42501)
-    EXECUTE 'SET LOCAL ROLE authenticated';
-    PERFORM set_config('request.jwt.claim.sub', v_pt1_owner_id::text, true);
-    PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pt1_owner_id::text, 'role', 'authenticated')::text, true);
-
-    v_error_caught := false;
+    PERFORM zz_test.as_postgres();
+    DECLARE
+      v_pid uuid := 'c0000000-0000-0000-0000-000000000099';
     BEGIN
-      PERFORM public.admin_anonymize_patient(v_anon_patient_id, 'Therapist illegal request');
-    EXCEPTION
-      WHEN SQLSTATE '42501' THEN
-        v_error_caught := true;
+      INSERT INTO public.patients (id, full_name, phone, pin_hash, treatment_status)
+      VALUES (v_pid, 'Sensitive Person', '089-999-8888', 'secret_hash', 'active')
+      ON CONFLICT (id) DO NOTHING;
+      INSERT INTO public.medical_notes (patient_id, note_type, body, author_name)
+      VALUES (v_pid, 'progress', 'Permanent Clinical Progress Record', 'Dr. Smith');
+      INSERT INTO public.face_templates (patient_id, pose, embedding)
+      VALUES (v_pid, 'straight', array_fill(0.1::real, ARRAY[128])::vector);
+
+      PERFORM zz_test.as_user(v_pt1_owner_id);
+      PERFORM zz_test.expect_error(
+        format('SELECT public.admin_anonymize_patient(%L, ''Therapist illegal request'')', v_pid),
+        ARRAY['42501'], '[FAIL] 25a: therapist invoked admin_anonymize_patient');
+
+      PERFORM zz_test.as_user(v_admin_id);
+      PERFORM public.admin_anonymize_patient(v_pid, 'Right to be forgotten request');
+
+      PERFORM zz_test.as_postgres();
+      SELECT full_name, phone, pin_hash, treatment_status INTO v_rec FROM public.patients WHERE id = v_pid;
+      PERFORM zz_test.ok(v_rec.full_name = '[ANONYMIZED PATIENT]', '[FAIL] 25c: full_name not anonymized');
+      PERFORM zz_test.ok(v_rec.phone = '000-000-0000', '[FAIL] 25c: phone not wiped');
+      PERFORM zz_test.ok(v_rec.pin_hash IS NULL, '[FAIL] 25c: pin_hash not wiped');
+      PERFORM zz_test.ok(v_rec.treatment_status = 'discharged', '[FAIL] 25c: not discharged');
+
+      SELECT count(*) INTO v_count FROM public.face_templates WHERE patient_id = v_pid;
+      PERFORM zz_test.ok(v_count = 0, '[FAIL] 25c: face_templates not deleted');
+      SELECT count(*) INTO v_count FROM public.medical_notes WHERE patient_id = v_pid;
+      PERFORM zz_test.ok(v_count = 1, '[FAIL] 25c: clinical medical_notes deleted or altered');
+      SELECT count(*) INTO v_count FROM public.audit_logs
+      WHERE action = 'PATIENT_ANONYMIZED' AND detail LIKE '%' || v_pid::text || '%';
+      PERFORM zz_test.ok(v_count >= 1, '[FAIL] 25c: anonymization audit log not written');
     END;
-    ASSERT v_error_caught = true, '[FAIL] Case 25a: Therapist was able to invoke admin_anonymize_patient!';
-
-    -- 25b. Admin calling admin_anonymize_patient -> MUST succeed
-    PERFORM set_config('request.jwt.claim.sub', v_admin_id::text, true);
-    PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin_id::text, 'role', 'authenticated')::text, true);
-
-    PERFORM public.admin_anonymize_patient(v_anon_patient_id, 'Right to be forgotten request');
-
-    EXECUTE 'RESET ROLE';
-
-    -- 25c. Assertions: direct identifiers wiped, templates deleted, notes intact, audit logged
-    SELECT full_name, phone, pin_hash, treatment_status INTO v_anon_pat_rec
-    FROM public.patients WHERE id = v_anon_patient_id;
-
-    ASSERT v_anon_pat_rec.full_name = '[ANONYMIZED PATIENT]', '[FAIL] Case 25c: full_name was not anonymized!';
-    ASSERT v_anon_pat_rec.phone = '000-000-0000', '[FAIL] Case 25c: phone was not wiped!';
-    ASSERT v_anon_pat_rec.pin_hash IS NULL, '[FAIL] Case 25c: pin_hash was not wiped!';
-    ASSERT v_anon_pat_rec.treatment_status = 'discharged', '[FAIL] Case 25c: patient status was not set to discharged!';
-
-    SELECT count(*) INTO v_tmpl_count FROM public.face_templates WHERE patient_id = v_anon_patient_id;
-    ASSERT v_tmpl_count = 0, '[FAIL] Case 25c: face_templates were not deleted!';
-
-    SELECT count(*) INTO v_note_count FROM public.medical_notes WHERE patient_id = v_anon_patient_id;
-    ASSERT v_note_count = 1, '[FAIL] Case 25c: clinical medical_notes were deleted or altered!';
-
-    SELECT count(*) INTO v_audit_count FROM public.audit_logs 
-    WHERE action = 'PATIENT_ANONYMIZED' AND detail LIKE '%' || v_anon_patient_id::text || '%';
-    ASSERT v_audit_count >= 1, '[FAIL] Case 25c: Audit log for anonymization was not written!';
-
-    DELETE FROM public.medical_notes WHERE id = v_anon_note_id;
-    DELETE FROM public.patients WHERE id = v_anon_patient_id;
-    RAISE NOTICE '[PASS] Case 25: admin_anonymize_patient successfully verified (admin authorized, therapist denied, notes preserved, templates erased, audit logged).';
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 25: admin_anonymize_patient verified (admin ok, therapist denied, notes kept, templates erased, audited).';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 25: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 25: % (SQLSTATE %)', SQLERRM, SQLSTATE;
   END;
 
 
   -- ==========================================================================
-  -- CASE 26: GUC EMPTY STRING RESILIENCE IN is_trusted_context (F4)
+  -- CASE 26: is_trusted_context() WITH EMPTY-STRING GUCs (F4)
+  -- anon has no EXECUTE on is_trusted_context(), so it is probed from postgres claims or through the
+  -- SECURITY DEFINER probe (same call pattern as is_admin() & co. in production).
   -- ==========================================================================
-  -- Set empty strings on legacy and modern claim settings
-  PERFORM set_config('request.jwt.claim.role', '', true);
-  PERFORM set_config('request.jwt.claims', '', true);
+  BEGIN
+    -- 1. postgres session, GUCs empty-string => trusted
+    PERFORM zz_test.as_postgres();
+    PERFORM set_config('request.jwt.claim.role', '', true);
+    PERFORM set_config('request.jwt.claims', '', true);
+    PERFORM zz_test.ok(public.is_trusted_context() = true, '[FAIL] 26a: postgres session not trusted after GUC reset to empty string');
 
-  -- 1. Direct superuser session (postgres) must be recognized as trusted
-  ASSERT public.is_trusted_context() = true,
-    '[FAIL] Case 26: Direct superuser connection was NOT recognized as trusted after GUC reset to empty string!';
+    -- 2. anon DB role, GUCs empty-string => NOT trusted
+    PERFORM zz_test.as_anon();
+    PERFORM set_config('request.jwt.claim.role', '', true);
+    PERFORM set_config('request.jwt.claims', '', true);
+    PERFORM zz_test.ok(zz_test.trusted_probe() = false, '[FAIL] 26b: anon role trusted after GUC reset to empty string');
 
-  -- 2. When switched to anon role, must NOT be trusted
-  EXECUTE 'SET LOCAL ROLE anon';
-  PERFORM set_config('request.jwt.claim.role', '', true);
-  PERFORM set_config('request.jwt.claims', '', true);
+    -- 3. authenticated DB role, GUCs empty-string => NOT trusted
+    PERFORM zz_test.as_user(v_pt1_owner_id);
+    PERFORM set_config('request.jwt.claim.role', '', true);
+    PERFORM set_config('request.jwt.claims', '', true);
+    PERFORM zz_test.ok(zz_test.trusted_probe() = false, '[FAIL] 26c: authenticated role trusted after GUC reset to empty string');
 
-  ASSERT public.is_trusted_context() = false,
-    '[FAIL] Case 26: Anon role was mistakenly trusted after GUC reset to empty string!';
+    -- 4. modern PostgREST claims JSON with service_role => trusted
+    PERFORM zz_test.as_postgres();
+    PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+    PERFORM zz_test.ok(public.is_trusted_context() = true, '[FAIL] 26d: claims JSON role=service_role not recognized as trusted');
 
-  -- 3. Modern PostgREST claims JSON with service_role must be recognized as trusted
-  EXECUTE 'RESET ROLE';
-  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
-  ASSERT public.is_trusted_context() = true,
-    '[FAIL] Case 26: Modern PostgREST claims JSON with role=service_role was not recognized as trusted!';
+    PERFORM zz_test.as_postgres();
+    v_passed := v_passed + 1;
+    RAISE NOTICE '[PASS] Case 26: is_trusted_context() resilient to empty-string GUCs and reads modern claims JSON.';
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM zz_test.as_postgres();
+    v_failures := v_failures || format('Case 26: %s (SQLSTATE %s)', SQLERRM, SQLSTATE);
+    RAISE NOTICE '[FAIL] Case 26: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+  END;
 
-  -- Clean up session configs
-  PERFORM set_config('request.jwt.claims', '', true);
-  PERFORM set_config('request.jwt.claim.role', '', true);
-  EXECUTE 'RESET ROLE';
 
-  RAISE NOTICE '[PASS] Case 26: is_trusted_context verified resilient against empty string GUC reset and recognizes modern PostgREST JSON claims.';
-
+  -- --------------------------------------------------------------------------
+  -- VERDICT
+  -- --------------------------------------------------------------------------
+  PERFORM zz_test.as_postgres();
   RAISE NOTICE '====================================================================';
-  RAISE NOTICE '>>> ALL 26 ROLE-MATRIX & REAL-TABLE TESTS PASSED (100%%) <<<';
+  IF cardinality(v_failures) > 0 THEN
+    RAISE EXCEPTION E'RLS TEST SUITE FAILED: % passed, % failed:\n%',
+      v_passed, cardinality(v_failures), array_to_string(v_failures, E'\n');
+  END IF;
+  RAISE NOTICE '>>> ALL % ROLE-MATRIX CASES PASSED <<<', v_passed;
   RAISE NOTICE '====================================================================';
 END $$;
 
