@@ -339,10 +339,17 @@ BEGIN
       CHECK (note_type IN ('progress', 'outcome_rom', 'pt_advice'));
   END IF;
 
-  -- Ensure ON DELETE RESTRICT foreign key
-  ALTER TABLE public.medical_notes DROP CONSTRAINT IF EXISTS medical_notes_author_id_fkey;
-  ALTER TABLE public.medical_notes ADD CONSTRAINT medical_notes_author_id_fkey 
-    FOREIGN KEY (author_id) REFERENCES public.profiles(id) ON DELETE RESTRICT;
+  -- Ensure ON DELETE RESTRICT foreign key only if absent or different confdeltype
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'medical_notes_author_id_fkey'
+      AND conrelid = 'public.medical_notes'::regclass
+      AND confdeltype = 'r'
+  ) THEN
+    ALTER TABLE public.medical_notes DROP CONSTRAINT IF EXISTS medical_notes_author_id_fkey;
+    ALTER TABLE public.medical_notes ADD CONSTRAINT medical_notes_author_id_fkey 
+      FOREIGN KEY (author_id) REFERENCES public.profiles(id) ON DELETE RESTRICT;
+  END IF;
 END $$;
 
 -- 11. Temporary Case Coverages Table
@@ -391,10 +398,17 @@ BEGIN
     ALTER TABLE public.temporary_coverages ALTER COLUMN patient_name DROP NOT NULL;
   END IF;
 
-  -- Reconcile status check constraint without silent exception swallowing
-  ALTER TABLE public.temporary_coverages DROP CONSTRAINT IF EXISTS temporary_coverages_status_check;
-  ALTER TABLE public.temporary_coverages ADD CONSTRAINT temporary_coverages_status_check 
-    CHECK (status IN ('active', 'revoked', 'expired'));
+  -- Reconcile status check constraint only when missing or definition differs
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'temporary_coverages_status_check'
+      AND conrelid = 'public.temporary_coverages'::regclass
+      AND pg_get_constraintdef(oid) LIKE '%status%active%revoked%expired%'
+  ) THEN
+    ALTER TABLE public.temporary_coverages DROP CONSTRAINT IF EXISTS temporary_coverages_status_check;
+    ALTER TABLE public.temporary_coverages ADD CONSTRAINT temporary_coverages_status_check 
+      CHECK (status IN ('active', 'revoked', 'expired'));
+  END IF;
 END $$;
 
 -- 12. Face Templates Table (DIM = 128, Euclidean distance <-> calibrated)
@@ -451,9 +465,16 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
 
 DO $$
 BEGIN
-  ALTER TABLE public.audit_logs DROP CONSTRAINT IF EXISTS audit_logs_actor_id_fkey;
-  ALTER TABLE public.audit_logs ADD CONSTRAINT audit_logs_actor_id_fkey 
-    FOREIGN KEY (actor_id) REFERENCES public.profiles(id) ON DELETE RESTRICT;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'audit_logs_actor_id_fkey'
+      AND conrelid = 'public.audit_logs'::regclass
+      AND confdeltype = 'r'
+  ) THEN
+    ALTER TABLE public.audit_logs DROP CONSTRAINT IF EXISTS audit_logs_actor_id_fkey;
+    ALTER TABLE public.audit_logs ADD CONSTRAINT audit_logs_actor_id_fkey 
+      FOREIGN KEY (actor_id) REFERENCES public.profiles(id) ON DELETE RESTRICT;
+  END IF;
 END $$;
 
 -- 16. System Settings Table
@@ -623,27 +644,57 @@ VALUES
   ('KIOSK_SESSION_TIMEOUT_SECONDS', '90'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
--- T2 / T5: Normalize any pre-existing rows with mini-game slugs before inserting defaults
-UPDATE public.exercises
-SET code = 'MG-01', 
-    is_minigame = true,
-    target_joint = COALESCE(target_joint, 'ประสานระบบประสาทและความจำ'),
-    rest_seconds = COALESCE(rest_seconds, 15)
-WHERE slug = 'minigame_quiz' AND (code IS NULL OR code LIKE 'EX-%');
+-- T2 / T5: Mini-game convergence for pre-existing legacy rows
+-- Sets code, name_th, target_joint, rest_seconds (15/5/5), default_reps, and default_sets
+-- ONLY at the moment of normalization (code IS NULL OR code LIKE 'EX-%').
+-- If a non-minigame row already holds MG-0x, renames it to EX-<8 hex> first with RAISE NOTICE.
+DO $$
+DECLARE
+  v_conflicting_id uuid;
+  v_new_random_code text;
+  v_mg_games RECORD;
+BEGIN
+  FOR v_mg_games IN
+    SELECT * FROM (VALUES
+      ('minigame_quiz', 'MG-01', 'มินิเกมตอบคำถามฝึกสมองและการตอบสนอง (Interactive Quiz)', 'ประสานระบบประสาทและความจำ', 15, 5, 1),
+      ('minigame_arm_coordination', 'MG-02', 'มินิเกมฝึกประสานการเคลื่อนไหวแขน (Bilateral Arm Coordination)', 'ข้อต่อหัวไหล่และแขนสองข้าง', 5, 10, 2),
+      ('minigame_balloon_catch', 'MG-03', 'มินิเกมสะบัดแขนจับลูกโป่ง (Balloon Catch Game)', 'ช่วงการเคลื่อนไหวของข้อไหล่ (ROM)', 5, 12, 2)
+    ) AS t(slug, target_code, name_th, target_joint, rest_sec, reps, sets)
+  LOOP
+    IF EXISTS (
+      SELECT 1 FROM public.exercises 
+      WHERE slug = v_mg_games.slug AND (code IS NULL OR code LIKE 'EX-%')
+    ) THEN
+      -- Handle conflict if another row currently holds target_code (MG-0x)
+      SELECT id INTO v_conflicting_id
+      FROM public.exercises
+      WHERE code = v_mg_games.target_code AND slug != v_mg_games.slug
+      LIMIT 1;
 
-UPDATE public.exercises
-SET code = 'MG-02', 
-    is_minigame = true,
-    target_joint = COALESCE(target_joint, 'ข้อต่อหัวไหล่และแขนสองข้าง'),
-    rest_seconds = COALESCE(rest_seconds, 5)
-WHERE slug = 'minigame_arm_coordination' AND (code IS NULL OR code LIKE 'EX-%');
+      IF v_conflicting_id IS NOT NULL THEN
+        v_new_random_code := 'EX-' || upper(substr(md5(random()::text || clock_timestamp()::text), 1, 8));
+        UPDATE public.exercises
+        SET code = v_new_random_code
+        WHERE id = v_conflicting_id;
+        RAISE NOTICE 'Conflict resolved: Renamed non-minigame exercise % holding code % to %',
+          v_conflicting_id, v_mg_games.target_code, v_new_random_code;
+      END IF;
 
-UPDATE public.exercises
-SET code = 'MG-03', 
-    is_minigame = true,
-    target_joint = COALESCE(target_joint, 'ช่วงการเคลื่อนไหวของข้อไหล่ (ROM)'),
-    rest_seconds = COALESCE(rest_seconds, 5)
-WHERE slug = 'minigame_balloon_catch' AND (code IS NULL OR code LIKE 'EX-%');
+      -- Normalize legacy row to exact frontend constants
+      UPDATE public.exercises
+      SET code = v_mg_games.target_code,
+          name_th = v_mg_games.name_th,
+          target_joint = v_mg_games.target_joint,
+          rest_seconds = v_mg_games.rest_sec,
+          default_reps = v_mg_games.reps,
+          default_sets = v_mg_games.sets,
+          is_minigame = true
+      WHERE slug = v_mg_games.slug AND (code IS NULL OR code LIKE 'EX-%');
+      
+      RAISE NOTICE 'Normalized legacy exercise slug % to code %', v_mg_games.slug, v_mg_games.target_code;
+    END IF;
+  END LOOP;
+END $$;
 
 -- Clinical Mini-Games: Exact matches with frontend AVAILABLE_MINIGAMES
 -- Note: Plain ON CONFLICT DO NOTHING (no conflict target) skips both code & slug unique collisions

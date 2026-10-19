@@ -10,16 +10,24 @@
 -- ============================================================================
 
 -- Helper: Identify trusted execution contexts (Edge Functions, service_role, migrations, pg_cron)
+-- RESTRICTED: Never trusts anon or authenticated PostgREST clients.
+-- Explicitly checks service_role JWT claim OR direct superuser/admin DB roles (postgres, supabase_admin)
+-- when no untrusted client session role (anon, authenticated) has been set.
 CREATE OR REPLACE FUNCTION public.is_trusted_context()
 RETURNS boolean
 LANGUAGE sql
 STABLE
 AS $$
   SELECT 
-    auth.role() = 'service_role' 
-    OR auth.role() IS NULL 
-    OR auth.uid() IS NULL 
-    OR current_setting('request.jwt.claim.role', true) = 'service_role';
+    -- 1. Explicit service_role token/caller
+    (auth.role() = 'service_role' OR current_setting('request.jwt.claim.role', true) = 'service_role')
+    -- 2. Direct database administrative connections (psql, migrations, pg_cron, SQL editor)
+    OR (
+      session_user IN ('postgres', 'supabase_admin')
+      AND (auth.role() IS NULL OR auth.role() = '' OR auth.role() = 'service_role')
+      AND current_setting('request.jwt.claim.role', true) IS NULL
+      AND COALESCE(NULLIF(current_setting('role', true), 'none'), session_user) NOT IN ('anon', 'authenticated')
+    );
 $$;
 
 REVOKE EXECUTE ON FUNCTION public.is_trusted_context() FROM public, anon;
@@ -310,6 +318,30 @@ DROP TRIGGER IF EXISTS trg_guard_patient_sensitive_fields ON public.patients;
 CREATE TRIGGER trg_guard_patient_sensitive_fields
 BEFORE UPDATE ON public.patients
 FOR EACH ROW EXECUTE FUNCTION public.trg_guard_patient_sensitive_updates();
+
+-- Guard: Prevent patient hard deletion by clients (preserves clinical notes, history, and audit trails)
+CREATE OR REPLACE FUNCTION public.trg_prevent_patient_hard_delete()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NOT public.is_trusted_context() THEN
+    RAISE EXCEPTION 'Patients cannot be hard-deleted. Clinical history, treatment sessions, and medical notes are immutable records. Use treatment_status = ''discharged'' or deleted_at to archive.'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN OLD;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.trg_prevent_patient_hard_delete() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.trg_prevent_patient_hard_delete() TO authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_prevent_patient_hard_delete ON public.patients;
+CREATE TRIGGER trg_prevent_patient_hard_delete
+BEFORE DELETE ON public.patients
+FOR EACH ROW EXECUTE FUNCTION public.trg_prevent_patient_hard_delete();
 
 -- Guard: Pose Exercise Guard in Routine Items
 CREATE OR REPLACE FUNCTION public.trg_check_pose_exercise_guard()
@@ -633,12 +665,20 @@ WITH CHECK (id = auth.uid());
 -- PATIENTS
 ALTER TABLE public.patients ENABLE ROW LEVEL SECURITY;
 
+-- Hard delete on patients is completely disallowed for all client roles.
+-- History and clinical notes are immutable; deactivation is performed via treatment_status / deleted_at.
+REVOKE DELETE ON public.patients FROM anon, authenticated, public;
+
 CREATE POLICY "patients_read_staff" ON public.patients
 FOR SELECT TO authenticated
 USING (public.current_app_role() IN ('admin', 'therapist'));
 
-CREATE POLICY "patients_admin_all" ON public.patients
-FOR ALL TO authenticated
+CREATE POLICY "patients_admin_insert" ON public.patients
+FOR INSERT TO authenticated
+WITH CHECK (public.is_admin());
+
+CREATE POLICY "patients_admin_update" ON public.patients
+FOR UPDATE TO authenticated
 USING (public.is_admin())
 WITH CHECK (public.is_admin());
 

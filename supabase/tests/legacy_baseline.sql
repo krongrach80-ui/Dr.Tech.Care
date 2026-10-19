@@ -15,6 +15,16 @@
 --       production hashes, or plaintext credentials.
 -- ============================================================================
 
+-- Guard: Refuse execution unless app.allow_destructive_baseline = 'yes'
+DO $$
+BEGIN
+  IF COALESCE(current_setting('app.allow_destructive_baseline', true), 'no') != 'yes' THEN
+    RAISE EXCEPTION 'CRITICAL REFUSAL: legacy_baseline.sql is DESTRUCTIVE and will drop all public tables! You must explicitly set "SET app.allow_destructive_baseline = ''yes'';" or run via scripts/run-sql.mjs --i-know-this-is-staging.'
+      USING ERRCODE = '55000';
+  END IF;
+  RAISE NOTICE 'Safety check passed: app.allow_destructive_baseline is set to "yes". Proceeding with legacy baseline setup.';
+END $$;
+
 -- Extensions
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";

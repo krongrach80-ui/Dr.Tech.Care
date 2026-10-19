@@ -20,8 +20,8 @@ DECLARE
   v_next_appt_id uuid;
   v_item record;
 BEGIN
-  -- Compute "today" in hospital timezone (Asia/Bangkok)
-  v_today := (timezone('Asia/Bangkok', now()))::date;
+  -- Compute "today" in hospital timezone explicitly (Asia/Bangkok, UTC+7)
+  v_today := (now() AT TIME ZONE 'Asia/Bangkok')::date;
   v_next_date := v_today;
 
   -- 1. Identify past 'scheduled' and 'rescheduled' appointments with no check-in

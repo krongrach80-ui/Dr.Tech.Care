@@ -2,7 +2,7 @@
 -- DR.TECH.CARE: DEV & STAGING EXTRAS (STAGING ONLY)
 -- Includes: Staging Seed Fixtures & Real-Table RLS Test Suite
 -- Note: Test suite is wrapped in BEGIN ... ROLLBACK.
--- Generated: 2026-10-19T02:31:00.190Z
+-- Generated: 2026-10-19T02:53:12.034Z
 -- ========================================================
 
 
@@ -579,13 +579,79 @@ BEGIN
 
   RAISE NOTICE '[PASS] Case 13: All tables in schema public verified to have relrowsecurity = true.';
 
+  -- ==========================================================================
+  -- CASE 14: ANON ROLE IS UNTRUSTED (Cannot bypass patient trigger)
+  -- ==========================================================================
+  GRANT UPDATE ON public.patients TO anon;
+  EXECUTE 'SET LOCAL ROLE anon';
+  PERFORM set_config('request.jwt.claim.role', 'anon', true);
+
+  v_error_caught := false;
+  BEGIN
+    UPDATE public.patients
+    SET assigned_therapist_id = v_pt3_stranger_id
+    WHERE id = v_patient1_id;
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  EXECUTE 'RESET ROLE';
+  REVOKE UPDATE ON public.patients FROM anon;
+
+  ASSERT v_error_caught = true, '[FAIL] Case 14: Anon was considered trusted and altered assigned_therapist_id!';
+  RAISE NOTICE '[PASS] Case 14: Anon context is strictly untrusted and rejected by patient sensitive update guard.';
+
+
+  -- ==========================================================================
+  -- CASE 15: HARD-DELETE PATIENT REJECTION
+  -- ==========================================================================
+  EXECUTE 'SET LOCAL ROLE authenticated';
+  PERFORM set_config('request.jwt.claim.sub', v_admin_id::text, true);
+  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin_id::text, 'role', 'authenticated')::text, true);
+
+  v_error_caught := false;
+  BEGIN
+    DELETE FROM public.patients WHERE id = v_patient2_id;
+  EXCEPTION
+    WHEN SQLSTATE '42501' THEN
+      v_error_caught := true;
+  END;
+  EXECUTE 'RESET ROLE';
+
+  ASSERT v_error_caught = true, '[FAIL] Case 15: Authenticated client was able to hard-delete a patient record!';
+  RAISE NOTICE '[PASS] Case 15: Hard deletion of patients is strictly blocked for authenticated clients.';
+
+
+  -- ==========================================================================
+  -- CASE 16: TIMEZONE BOUNDARY TEST (Bangkok 00:30 rollover)
+  -- ==========================================================================
+  DECLARE
+    v_bkk_now timestamptz := '2026-10-20 00:30:00+07';
+    v_bkk_today date := (v_bkk_now AT TIME ZONE 'Asia/Bangkok')::date;
+    v_utc_date date := (v_bkk_now AT TIME ZONE 'UTC')::date;
+    v_boundary_appt_id uuid := 'a0000000-0000-0000-0000-000000000099';
+  BEGIN
+    ASSERT v_bkk_today > v_utc_date, '[FAIL] Case 16: Timezone calculation assertion mismatch!';
+    
+    INSERT INTO public.appointments (id, patient_id, date, status)
+    VALUES (v_boundary_appt_id, v_patient1_id, v_utc_date, 'scheduled')
+    ON CONFLICT (id) DO NOTHING;
+
+    ASSERT (SELECT date < v_bkk_today FROM public.appointments WHERE id = v_boundary_appt_id) = true,
+      '[FAIL] Case 16: Appointment on UTC date was not recognized as past date in Bangkok timezone!';
+
+    DELETE FROM public.appointments WHERE id = v_boundary_appt_id;
+    RAISE NOTICE '[PASS] Case 16: Timezone boundary test passed (00:30 Bangkok strictly distinguishes hospital today vs yesterday).';
+  END;
+
   -- Clean up session configs
   PERFORM set_config('request.jwt.claim.sub', '', true);
   PERFORM set_config('request.jwt.claim.role', '', true);
   PERFORM set_config('request.jwt.claims', '', true);
 
   RAISE NOTICE '====================================================================';
-  RAISE NOTICE '>>> ALL 13 ROLE-MATRIX & REAL-TABLE TESTS PASSED (100%%) <<<';
+  RAISE NOTICE '>>> ALL 16 ROLE-MATRIX & REAL-TABLE TESTS PASSED (100%%) <<<';
   RAISE NOTICE '====================================================================';
 END $$;
 

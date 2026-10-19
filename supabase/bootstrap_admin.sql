@@ -118,20 +118,39 @@ FROM public.profiles
 WHERE role = 'admin';
 
 -- ================================================================================
--- INSECURE LEGACY TEST ACCOUNTS AUDIT (from init_all.sql / seed.sql)
+-- INSECURE LEGACY TEST ACCOUNTS AUDIT (from init_all.sql / schema.sql / seed.sql)
 -- ================================================================================
 -- The following accounts were historically seeded with weak default passwords ('1234'):
 --   - 'admin' (director@strongcare.hospital)
 --   - 'pt_thanakorn' (thanakorn.w@strongcare.hospital)
 --   - 'pt_pimchanok' (pimchanok.s@strongcare.hospital)
 --
--- RUN THIS QUERY IN PRODUCTION TO AUDIT THEIR STATUS:
-SELECT id, username, full_name, role, email, is_active, created_at
-FROM public.profiles
-WHERE username IN ('admin', 'pt_thanakorn', 'pt_pimchanok')
-ORDER BY username;
-
--- OPERATOR ACTION:
--- If any of these legacy profiles exist on production, verify their auth identity
--- and deactivate (is_active = false) or reset their credentials immediately.
--- Do NOT auto-delete them to avoid breaking clinical FK references.
+-- MANDATORY OPERATOR REQUIREMENT:
+-- In ANY real environment (staging or production), these legacy accounts MUST be
+-- disabled (is_active = false) or have their passwords rotated immediately,
+-- REGARDLESS of what the query below shows. Never leave them with weak defaults.
+-- Do NOT hard-delete profiles to avoid breaking existing clinical foreign key references.
+--
+-- READ-ONLY AUDIT QUERY (joined to auth.users):
+SELECT 
+  p.id,
+  p.username,
+  p.full_name,
+  p.role,
+  p.is_active,
+  p.must_change_password,
+  p.created_at AS profile_created_at,
+  u.id AS auth_user_id,
+  u.email AS auth_email,
+  (u.encrypted_password IS NOT NULL) AS has_auth_password,
+  u.email_confirmed_at,
+  u.last_sign_in_at
+FROM public.profiles p
+LEFT JOIN auth.users u ON p.id = u.id
+WHERE p.username IN ('admin', 'pt_thanakorn', 'pt_pimchanok')
+   OR u.email IN (
+     'director@strongcare.hospital',
+     'thanakorn.w@strongcare.hospital',
+     'pimchanok.s@strongcare.hospital'
+   )
+ORDER BY p.username;
