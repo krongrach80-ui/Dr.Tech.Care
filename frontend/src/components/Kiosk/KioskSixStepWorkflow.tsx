@@ -1713,13 +1713,13 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           setIsScanning(false);
           setBiometricPhase(0);
           setScanStep('front');
-          setScanStatusMessage(`❌ ไม่พบหน้าที่ตรงกับข้อมูลที่มีอยู่ในระบบ (ความคล้ายคลึงสูงสุด: ${evaluation.bestScorePercent}%)`);
+          setScanStatusMessage(`❌ ยังไม่มีข้อมูลใบหน้านี้ในระบบ (ความคล้ายคลึง: ${evaluation.bestScorePercent}%)`);
           setShowNoAccountModal(true);
 
           audioFeedback.playHoldTick();
           try {
             voiceAssistant.speak(
-              'ไม่พบหน้าที่ตรงกับข้อมูลที่มีอยู่ในระบบค่ะ กรุณาลองสแกนใหม่อีกครั้ง หรือเลือกใช้รหัส PIN นะคะ',
+              'ไม่พบข้อมูลใบหน้าในระบบค่ะ หากท่านยังไม่มีบัญชี กรุณากดปุ่มสมัครบัญชีคนไข้ใหม่เพื่อลงทะเบียนเข้าใช้งานนะคะ',
               { level: 'system' }
             );
           } catch {}
@@ -2000,7 +2000,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           onOpenHospitalPortal();
         }
         try {
-          voiceAssistant.speak('กรุณาติดต่อเจ้าหน้าที่เคาน์เตอร์เพื่อเปิดประวัติคนไข้ใหม่ค่ะ', { level: 'system' });
+          voiceAssistant.speak('กรุณากรอกข้อมูลเพื่อสมัครบัญชีคนไข้ใหม่ได้เลยค่ะ', { level: 'system' });
         } catch {}
         break;
       case 'step1-pin':
@@ -2654,7 +2654,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] sm:text-xs shadow-sm transition active:scale-95 cursor-pointer pointer-events-auto flex items-center gap-1 border border-emerald-400/40"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>ยังไม่มีบัญชี? สมัครใหม่</span>
+                  <span>📝 ยังไม่มีบัญชี? สมัครบัญชีคนไข้ใหม่</span>
                 </button>
               </div>
             </>
@@ -2914,7 +2914,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   id="btnKioskRegisterNewPatient"
                 >
                   <Plus className="w-4 h-4 text-white" />
-                  <span>📝 สมัครบัญชีผู้ป่วยใหม่ (เปิดประวัติที่เคาน์เตอร์)</span>
+                  <span>📝 สมัครบัญชีคนไข้ใหม่ (ลงทะเบียนเปิดประวัติ)</span>
                 </button>
 
                 <button
@@ -3592,10 +3592,10 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             </div>
 
             <h3 className="text-xl sm:text-2xl font-black text-[#0B2B2B] tracking-tight">
-              ไม่พบหน้าที่ตรงกับข้อมูลที่มีอยู่ในระบบ
+              ยังไม่มีข้อมูลใบหน้านี้ในระบบ
             </h3>
             <p className="text-xs sm:text-sm font-extrabold text-amber-800 mt-1">
-              ระบบตรวจสอบแล้วไม่พบบัญชีผู้ป่วยที่ตรงกับใบหน้านี้
+              ระบบตรวจสอบแล้วไม่พบบัญชีผู้ป่วยที่ตรงกับใบหน้าของคุณ
             </p>
 
             {/* Description Card */}
@@ -3603,17 +3603,17 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               <div className="flex items-start gap-2">
                 <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <p className="font-bold text-slate-700">
-                  ระบบไม่พบเวชระเบียนที่ผูกกับใบหน้านี้ในฐานข้อมูลโรงพยาบาล
+                  ระบบไม่พบเวชระเบียนที่ผูกกับใบหน้านี้ในฐานข้อมูล
                 </p>
               </div>
               <p className="text-[11px] text-slate-500 font-medium pl-6">
-                หากท่านยังไม่เคยลงทะเบียน กรุณากดปุ่ม <span className="font-bold text-emerald-700">"สมัครบัญชีผู้ป่วยใหม่"</span> ด้านล่าง เพื่อกรอกข้อมูลเปิดประวัติ หรือติดต่อเคาน์เตอร์ต้อนรับ
+                หากท่านเป็นคนไข้ใหม่ กรุณากดปุ่ม <span className="font-bold text-emerald-700">"สมัครบัญชีคนไข้ใหม่"</span> ด้านล่าง เพื่อลงทะเบียนเปิดประวัติและเริ่มใช้งานได้ทันที
               </p>
             </div>
 
             {/* Action Buttons */}
             <div className="w-full space-y-2.5">
-              {/* PRIMARY CTA: สมัครบัญชีผู้ป่วยใหม่ (เปิดประวัติที่เคาน์เตอร์) */}
+              {/* PRIMARY CTA: สมัครบัญชีคนไข้ใหม่ (ลงทะเบียนเปิดประวัติทันที) */}
               <button
                 type="button"
                 onClick={() => {
@@ -3627,7 +3627,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-600 text-white font-black text-sm shadow-md hover:shadow-lg active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer border border-emerald-400/40"
               >
                 <Plus className="w-5 h-5 text-white" />
-                <span>📝 สมัครบัญชีผู้ป่วยใหม่ (เปิดประวัติที่เคาน์เตอร์)</span>
+                <span>📝 สมัครบัญชีคนไข้ใหม่ (ลงทะเบียนเปิดประวัติทันที)</span>
               </button>
 
               {/* SECONDARY: ผูกใบหน้ากับบัญชีที่มีอยู่แล้วในระบบ (ค้นหาด้วย HN / เบอร์โทร) */}

@@ -760,12 +760,14 @@ const getStoredUsers = (): UserAccount[] => {
           }
         } catch {}
       }
-      // If patient name remains a placeholder after auto-heal, strip biometric vectors so it cannot match
-      if (u.role === 'patient' && isPlaceholderPatientName(u.name, u.status)) {
-        delete (u as any).face_vector;
-        delete (u as any).biometricVector;
-      }
       return u;
+    })
+    .filter((u: UserAccount) => {
+      // Exclude placeholder/draft patient accounts like 'ผู้ป่วยใหม่' without real identity from active list
+      if (u.role === 'patient' && isPlaceholderPatientName(u.name, u.status)) {
+        return false;
+      }
+      return true;
     });
 };
 

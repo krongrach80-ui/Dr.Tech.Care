@@ -821,10 +821,23 @@ export const App: React.FC = () => {
           syncHash(currentScreen, null);
         }}
         onSuccessNavigateToKiosk={(patient) => {
-          selectPatient(patient);
-          setCurrentUserName(patient.name);
-          showToast(`ยินดีต้อนรับ ${patient.name} เข้าสู่ระบบตู้กายภาพบำบัด`);
-          handleNavigate(1);
+          const normalizedPatient: Patient = {
+            ...patient,
+            code: (patient as any).code || patient.patient_code || '',
+            patient_code: patient.patient_code || (patient as any).code || '',
+            name: patient.name || 'ผู้รับบริการ',
+          };
+          selectPatient(normalizedPatient);
+          setCurrentUserName(normalizedPatient.name);
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('drtechcare_active_patient', JSON.stringify(normalizedPatient));
+            } catch {}
+          }
+          showToast(`ยินดีต้อนรับ ${normalizedPatient.name} สมัครและเข้าสู่ระบบสำเร็จ`);
+          setTimeout(() => {
+            handleNavigate(2);
+          }, 350);
         }}
       />
 

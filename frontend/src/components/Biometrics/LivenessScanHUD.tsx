@@ -441,11 +441,11 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
           <button
             type="button"
             onClick={onRegisterNewPatient}
-            className="w-full min-h-[48px] py-2 px-3 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-600 text-white font-black text-xs sm:text-sm shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 border border-emerald-400/40"
+            className="w-full min-h-[50px] py-2.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-600 text-white font-black text-xs sm:text-sm shadow-lg hover:shadow-xl transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 border-2 border-emerald-300 ring-2 ring-emerald-500/30"
             id="btnRegisterFromHUD"
           >
-            <UserPlus className="w-4 h-4 text-white" />
-            <span>📝 ยังไม่มีบัญชี? สมัครผู้ป่วยใหม่</span>
+            <UserPlus className="w-5 h-5 text-white" />
+            <span>📝 ยังไม่มีบัญชี? สมัครบัญชีคนไข้ใหม่</span>
           </button>
         )}
         <button

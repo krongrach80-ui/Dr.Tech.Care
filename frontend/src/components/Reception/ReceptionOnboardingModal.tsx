@@ -438,13 +438,13 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-[#0B2B2B]/70 backdrop-blur-md animate-fadeIn"
+      className="fixed inset-0 z-[99999] flex items-center justify-center p-3 sm:p-5 bg-[#0B2B2B]/75 backdrop-blur-md animate-fadeIn"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
     >
       <div
-        className="w-full max-w-2xl bg-white rounded-[32px] p-6 sm:p-8 shadow-2xl border border-emerald-200/90 space-y-6 max-h-[92dvh] overflow-y-auto"
+        className="w-full max-w-2xl bg-white rounded-[32px] p-6 sm:p-8 shadow-2xl border-2 border-emerald-300 space-y-6 max-h-[92dvh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
@@ -455,10 +455,10 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
             </div>
             <div>
               <h3 className="text-base sm:text-lg font-bold text-[#0B2B2B] leading-tight">
-                ต้อนรับและลงทะเบียนคนไข้ใหม่
+                📝 สมัครบัญชีคนไข้ใหม่ (ลงทะเบียนเปิดประวัติผู้ป่วย)
               </h3>
               <p className="text-xs text-emerald-800 font-medium">
-                กรอกข้อมูลผู้ป่วยก่อน แล้วจึงสแกนบันทึกใบหน้าชีวมิติเพื่อใช้เข้าสู่ระบบตู้ Dr.Tech.Care
+                กรอกข้อมูลคนไข้และสแกนบันทึกใบหน้า เพื่อเปิดบัญชีเข้าใช้งานตู้ Dr.Tech.Care ได้ทันที
               </p>
             </div>
           </div>
