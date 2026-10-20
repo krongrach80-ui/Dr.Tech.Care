@@ -407,6 +407,7 @@ interface KioskSixStepWorkflowProps {
   ) => void;
   onOpenHospitalPortal: () => void;
   onOpenAbout?: () => void;
+  onOpenReception?: () => void;
   kioskStationName?: string;
   isActive?: boolean;
 }
@@ -416,6 +417,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   onStartExerciseDirectly,
   onOpenHospitalPortal,
   onOpenAbout,
+  onOpenReception,
   kioskStationName = 'Dr.Tech.Care (ตู้ Kiosk ประจำสถานี 1)',
   isActive = true,
 }) => {
@@ -582,14 +584,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<string | null>(null);
 
-  // New Patient Biometric Enrollment & Real-Time Dual-Channel Sync State
-  const [isEnrollmentFlow, setIsEnrollmentFlow] = useState<boolean>(false);
-  const [pendingEnrolledUser, setPendingEnrolledUser] = useState<UserAccount | null>(null);
-  const [isPendingRegistrationActive, setIsPendingRegistrationActive] = useState<boolean>(false);
-  const [isRegistrationSuccess, setIsRegistrationSuccess] = useState<boolean>(false);
-  const [completedUserData, setCompletedUserData] = useState<UserAccount | null>(null);
-  const [resetCountdown, setResetCountdown] = useState<number>(3);
-
   // No Account Found Warning Modal State ("ไม่พบข้อมูลบัญชีในระบบ โปรดลงทะเบียนผู้ป่วยใหม่")
   const [showNoAccountModal, setShowNoAccountModal] = useState<boolean>(false);
   const [lastMatchScore, setLastMatchScore] = useState<number>(0);
@@ -600,17 +594,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   const [foundAccountForLink, setFoundAccountForLink] = useState<any | null>(null);
   const [isLinkingAccount, setIsLinkingAccount] = useState<boolean>(false);
   const [linkSearchError, setLinkSearchError] = useState<string | null>(null);
-
-  // Kiosk Touch Form (ทางเลือก A) State
-  const [kioskFormTitle, setKioskFormTitle] = useState<string>('นาย');
-  const [kioskFormFirstName, setKioskFormFirstName] = useState<string>('');
-  const [kioskFormLastName, setKioskFormLastName] = useState<string>('');
-  const [kioskFormAge, setKioskFormAge] = useState<number>(65);
-  const [kioskFormGender, setKioskFormGender] = useState<'male' | 'female'>('male');
-  const [kioskFormPhone, setKioskFormPhone] = useState<string>('');
-  const [kioskFormComplaint, setKioskFormComplaint] = useState<string>('ปวดคอบ่าไหล่ (Office Syndrome)');
-  const [kioskFormSubmitting, setKioskFormSubmitting] = useState<boolean>(false);
-  const [kioskFormError, setKioskFormError] = useState<string | null>(null);
 
   // Step 6 Selected Therapy Mode
   const [selectedTherapyType, setSelectedTherapyType] = useState<'physio' | 'minigame'>('physio');
@@ -900,444 +883,11 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     }, 600);
   }, [isSlideUpAnimating, changeStep]);
 
-  // Handle successful registration and initiate auto-transition back to Step 4 (Face Scan)
-  const handleRegistrationCompleted = useCallback((completedUser: UserAccount) => {
-    setIsRegistrationSuccess(true);
-    setCompletedUserData(completedUser);
-    audioFeedback.playRepSuccess();
-    try {
-      confetti({
-        particleCount: 160,
-        spread: 90,
-        origin: { y: 0.6 },
-      });
-    } catch {}
-    try {
-      voiceAssistant.speak(
-        `ลงทะเบียนสำเร็จเรียบร้อยแล้วค่ะ ยินดีต้อนรับคุณ ${completedUser.name} ระบบกำลังนำท่านกลับสู่หน้าสแกนใบหน้าเพื่อเข้าสู่ระบบค่ะ`,
-        { level: 'system' }
-      );
-    } catch {}
-    setResetCountdown(2);
-  }, []);
 
-  // Countdown timer for 2-second auto-transition back to Step 4 (Face Scan HUD)
-  useEffect(() => {
-    if (!isRegistrationSuccess) return;
-    if (resetCountdown <= 0) {
-      // Auto-transition Kiosk cleanly back to Step 4 (Face Scan HUD)
-      setIsPendingRegistrationActive(false);
-      setIsRegistrationSuccess(false);
-      setPendingEnrolledUser(null);
-      setCompletedUserData(null);
-      setIsEnrollmentFlow(false);
-      setKioskFormFirstName('');
-      setKioskFormLastName('');
-      setKioskFormPhone('');
-      setKioskFormError(null);
-      handleResetFaceScan();
-      changeStep(4);
-      setCurrentStep(4);
-      setScanStatusMessage('✓ บันทึกข้อมูลสำเร็จเรียบร้อย! กรุณามองตรงเข้าหากล้องเพื่อสแกนใบหน้าเข้าใช้งาน');
-      startCamera();
-      return;
-    }
-    const timer = setTimeout(() => {
-      setResetCountdown((prev) => prev - 1);
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [isRegistrationSuccess, resetCountdown, changeStep, startCamera]);
 
-  // Real-Time Cross-Window / Cross-Tab Sync via patientSyncService (Same-Machine)
-  useEffect(() => {
-    if (!isPendingRegistrationActive || !pendingEnrolledUser || isRegistrationSuccess) return;
 
-    const unsubscribe = patientSyncService.subscribe((event) => {
-      if (event.type === 'INFO_COMPLETED' && event.user) {
-        if (
-          event.user.id === pendingEnrolledUser.id ||
-          event.user.code === pendingEnrolledUser.code
-        ) {
-          handleRegistrationCompleted(event.user);
-        }
-      }
-    });
 
-    return () => {
-      unsubscribe();
-    };
-  }, [isPendingRegistrationActive, pendingEnrolledUser, isRegistrationSuccess, handleRegistrationCompleted]);
 
-  // Real-Time In-Memory Store Check: when admin updates user in same tab or store sync
-  useEffect(() => {
-    if (!isPendingRegistrationActive || !pendingEnrolledUser || isRegistrationSuccess) return;
-    const foundUser = users.find(
-      (u) => u.id === pendingEnrolledUser.id || u.code === pendingEnrolledUser.code
-    );
-    if (foundUser) {
-      const isPending =
-        foundUser.status === 'pending_info' ||
-        (foundUser.name && (foundUser.name.startsWith('ผู้รับบริการใหม่') || foundUser.name.includes('รอลงข้อมูล'))) ||
-        (foundUser.chiefComplaint && foundUser.chiefComplaint.includes('[PENDING_INFO]')) ||
-        (foundUser.therapistNotes && foundUser.therapistNotes.includes('[PENDING_INFO]'));
-      if (!isPending) {
-        handleRegistrationCompleted(foundUser);
-      }
-    }
-  }, [users, isPendingRegistrationActive, pendingEnrolledUser, isRegistrationSuccess, handleRegistrationCompleted]);
-
-  // =========================================================================
-  // Cross-Device Real-Time Sync via Supabase (Physical Kiosk <-> Admin Laptop)
-  // When Kiosk is waiting for Admin to fill info (Option B: P-XXXX)
-  // =========================================================================
-  useEffect(() => {
-    if (!isPendingRegistrationActive || !pendingEnrolledUser || isRegistrationSuccess) return;
-
-    const targetCode = pendingEnrolledUser.code;
-    const targetId = pendingEnrolledUser.id;
-    let isFinished = false;
-
-    console.info(`[KIOSK REALTIME] 📡 Subscribing to cross-device updates for ${targetCode}...`);
-
-    const checkAndComplete = (data: any) => {
-      if (isFinished || isRegistrationSuccess) return;
-      if (!data) return;
-
-      const code = data.patient_code || data.code;
-      const id = data.id;
-      const isMatch = (code && code === targetCode) || (id && String(id) === String(targetId));
-      if (!isMatch) return;
-
-      const name = data.full_name || data.name || '';
-      const isPlaceholderName =
-        !name ||
-        name.startsWith('ผู้รับบริการใหม่') ||
-        name.includes('รอลงข้อมูล');
-
-      const hasPendingTag =
-        (typeof data.chief_complaint === 'string' && data.chief_complaint.includes('[PENDING_INFO]')) ||
-        (typeof data.therapist_notes === 'string' && data.therapist_notes.includes('[PENDING_INFO]'));
-
-      // If marked completed, or name updated from default placeholder, or pending tags removed
-      const isComplete =
-        data.isCompleted === true ||
-        (!isPlaceholderName && !hasPendingTag) ||
-        (Boolean(name) && !isPlaceholderName && (Boolean(data.phone) || Boolean(data.age)));
-
-      if (isComplete) {
-        console.info(`[KIOSK REALTIME] ✅ Detected registration completed by Admin for ${targetCode}:`, data);
-        isFinished = true;
-
-        const resolvedUser: UserAccount = {
-          ...pendingEnrolledUser,
-          id: data.id || pendingEnrolledUser.id,
-          code: targetCode,
-          name: name || pendingEnrolledUser.name,
-          age: Number(data.age) || pendingEnrolledUser.age,
-          gender: data.gender || pendingEnrolledUser.gender,
-          phone: data.phone || pendingEnrolledUser.phone,
-          status: 'active',
-          chiefComplaint: (data.chief_complaint || '').replace(/\[PENDING_INFO\]/g, '').trim(),
-          diagnosis: (data.chief_complaint || '').replace(/\[PENDING_INFO\]/g, '').trim(),
-        };
-
-        handleRegistrationCompleted(resolvedUser);
-      }
-    };
-
-    // 1. Supabase Realtime Listener (Dual Channel: broadcast + postgres_changes)
-    const channel = supabase
-      .channel(`kiosk_sub_${targetCode}_${Date.now()}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'patients' }, (payload) => {
-        console.info('[KIOSK REALTIME] postgres_changes UPDATE:', payload);
-        checkAndComplete(payload.new);
-      })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'patients' }, (payload) => {
-        console.info('[KIOSK REALTIME] postgres_changes INSERT:', payload);
-        checkAndComplete(payload.new);
-      })
-      .on('broadcast', { event: 'patient_completed' }, (payload) => {
-        console.info('[KIOSK REALTIME] broadcast patient_completed:', payload);
-        checkAndComplete(payload.payload);
-      })
-      .on('broadcast', { event: 'patient_registered' }, (payload) => {
-        console.info('[KIOSK REALTIME] broadcast patient_registered:', payload);
-        checkAndComplete(payload.payload);
-      })
-      .on('broadcast', { event: 'patient_update' }, (payload) => {
-        console.info('[KIOSK REALTIME] broadcast patient_update:', payload);
-        checkAndComplete(payload.payload);
-      })
-      .subscribe((status, err) => {
-        if (err) console.warn('[KIOSK REALTIME] Channel error:', err);
-        else console.info('[KIOSK REALTIME] Subscription status:', status);
-      });
-
-    // 2. High-Frequency Active Poller (Every 1.5s) to guarantee zero-fail detection across devices
-    const pollTimer = setInterval(async () => {
-      if (isFinished) return;
-      try {
-        const { data, error } = await supabase
-          .from('patients')
-          .select('*')
-          .eq('patient_code', targetCode)
-          .maybeSingle();
-
-        if (!error && data) {
-          checkAndComplete(data);
-        }
-      } catch (err) {
-        console.warn('[KIOSK REALTIME] Poller error:', err);
-      }
-    }, 1500);
-
-    return () => {
-      supabase.removeChannel(channel);
-      clearInterval(pollTimer);
-    };
-  }, [isPendingRegistrationActive, pendingEnrolledUser, isRegistrationSuccess, handleRegistrationCompleted]);
-
-  // Form submit for Choice A (กรอกข้อมูลที่หน้าตู้)
-  const handleKioskFormSubmit = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!pendingEnrolledUser) return;
-
-    if (!kioskFormFirstName.trim()) {
-      setKioskFormError('กรุณากรอกชื่อคนไข้');
-      audioFeedback.playHoldTick();
-      return;
-    }
-
-    setKioskFormSubmitting(true);
-    setKioskFormError(null);
-
-    try {
-      const fullPatientName = `${kioskFormTitle}${kioskFormFirstName.trim()} ${kioskFormLastName.trim()}`.trim();
-      const patientCode = pendingEnrolledUser.code;
-      const patientAge = Number(kioskFormAge) || 65;
-      const patientGender = (kioskFormGender as string) === 'female' || (kioskFormGender as string) === 'หญิง' ? 'female' : 'male';
-      const patientPhone = kioskFormPhone.trim() || undefined;
-      const patientComplaint = kioskFormComplaint.trim() || 'ตรวจประเมินกายภาพบำบัด';
-
-      const faceImg = pendingEnrolledUser.face_image_url || patientFaceStorageService.getProfileFaceImage(patientCode);
-      const faceVec = pendingEnrolledUser.face_vector || pendingEnrolledUser.biometricVector;
-      let medHistory = 'ลงทะเบียนผ่านหน้าตู้ Kiosk สำเร็จ';
-      if (faceVec && Array.isArray(faceVec)) {
-        medHistory += `\nFACE_EMB:${JSON.stringify(faceVec)}`;
-      }
-      if (faceImg) {
-        medHistory += `\nFACE_PHOTO:${faceImg}`;
-      }
-
-      // =====================================================================
-      // [CRITICAL SUPABASE INSERTION]: Async with safety timeout so UI never hangs
-      // (Uses only valid database schema columns: biometrics are stored in medical_history)
-      // =====================================================================
-      try {
-        console.info(`[SUPABASE] Saving patient ${patientCode} into table 'patients'...`);
-        const sbPayload = {
-          patient_code: patientCode,
-          full_name: fullPatientName,
-          age: patientAge,
-          gender: patientGender,
-          phone: patientPhone || null,
-          chief_complaint: patientComplaint,
-          medical_history: medHistory,
-          therapist_notes: 'ลงทะเบียนข้อมูลครบถ้วน',
-          status: 'active',
-        };
-
-        const executeSupabaseSync = async () => {
-          try {
-            // Try direct update first
-            const { data: updatedData, error: upErr } = await supabase
-              .from('patients')
-              .update(sbPayload)
-              .eq('patient_code', patientCode)
-              .select();
-
-            let insertedData = updatedData;
-            let sbError = upErr;
-
-            if (!updatedData || updatedData.length === 0) {
-              const { data: upsertData, error: upsertErr } = await supabase
-                .from('patients')
-                .upsert(sbPayload, { onConflict: 'patient_code' })
-                .select();
-              insertedData = upsertData;
-              sbError = upsertErr;
-            }
-
-            if (sbError) {
-              console.warn('[SUPABASE] Patient registration insert warning:', sbError);
-            } else {
-              console.info('[SUPABASE] Patient inserted successfully:', insertedData);
-              // Broadcast realtime notification to Admin Dashboard on shared channel
-              try {
-                const broadcastPayload = {
-                  patient_code: patientCode,
-                  full_name: fullPatientName,
-                  name: fullPatientName,
-                  age: patientAge,
-                  gender: patientGender,
-                  phone: patientPhone,
-                  chief_complaint: patientComplaint,
-                  status: 'active',
-                  isCompleted: true,
-                  face_image_url: faceImg,
-                  face_vector: faceVec,
-                };
-                const ch = supabase.channel(PATIENTS_REALTIME_CHANNEL);
-                ch.send({
-                  type: 'broadcast',
-                  event: 'patient_completed',
-                  payload: broadcastPayload,
-                }).catch(() => {});
-                ch.send({
-                  type: 'broadcast',
-                  event: 'patient_registered',
-                  payload: broadcastPayload,
-                }).catch(() => {});
-                ch.send({
-                  type: 'broadcast',
-                  event: 'patient_update',
-                  payload: broadcastPayload,
-                }).catch(() => {});
-              } catch (broadcastErr) {
-                console.warn('[SUPABASE] Broadcast channel notification error:', broadcastErr);
-              }
-            }
-          } catch (syncErr) {
-            console.warn('[SUPABASE] Sync operation warning:', syncErr);
-          }
-        };
-
-        // Guarantee max 6000ms before continuing to ensure Supabase Cloud write finishes cleanly
-        await Promise.race([
-          executeSupabaseSync(),
-          new Promise((resolve) => setTimeout(resolve, 6000)),
-        ]);
-      } catch (sbEx) {
-        console.error('[SUPABASE] Exception during patient insert:', sbEx);
-      }
-
-      // [ISOLATED PATIENT STORAGE]: Update patient_record.json
-      patientFaceStorageService.savePatientRecord(pendingEnrolledUser.code, {
-        patient_profile: {
-          patient_id: pendingEnrolledUser.code,
-          id: pendingEnrolledUser.id,
-          first_name: kioskFormFirstName.trim(),
-          last_name: kioskFormLastName.trim(),
-          full_name: fullPatientName,
-          age: patientAge,
-          gender: kioskFormGender,
-          contact: patientPhone,
-          phone: patientPhone,
-          status: 'active',
-          created_at: new Date().toISOString().split('T')[0],
-        },
-        biometric_data: {
-          face_vector: faceVec && Array.isArray(faceVec) ? faceVec : [],
-          registered_face_url: faceImg || `/uploads/patients/${pendingEnrolledUser.code}/profile_face.jpg`,
-          enrolled_at: new Date().toISOString(),
-          model_version: 'face-resnet34-v2',
-        },
-        medical_records: {
-          diagnosis: patientComplaint,
-          chief_complaint: patientComplaint,
-          assigned_exercises: [
-            { id: 'shoulder_raise', name: 'กางแขนด้านข้าง (Shoulder Abduction)', target_angle: 90, hold_seconds: 3, reps: 10 },
-            { id: 'overhead_reach', name: 'ยกแขนขึ้นเหนือศีรษะ (Overhead Reach)', target_angle: 120, hold_seconds: 3, reps: 10 },
-            { id: 'elbow_flexion', name: 'งอและเหยียดข้อศอก (Elbow Flexion)', target_angle: 140, hold_seconds: 2, reps: 12 },
-          ],
-        },
-      }, faceImg);
-
-      // Save to Face Registry Service
-      faceRegistryService.saveProfile({
-        patientId: Number(pendingEnrolledUser.id),
-        patientCode: patientCode,
-        name: fullPatientName,
-        age: patientAge,
-        gender: kioskFormGender,
-        embeddings: faceVec && Array.isArray(faceVec) ? [faceVec] : [],
-        face_image_url: faceImg || undefined,
-        enrolledAt: new Date().toISOString(),
-      });
-
-      // [CONSOLE LOGS & DEBUGGING]: Log patient_id, saved face_image_url, and vector length upon successful registration
-      console.log('[REGISTRATION] Success:', {
-        patient_id: patientCode,
-        patient_name: fullPatientName,
-        saved_face_image_url: faceImg,
-        vector_length: faceVec && Array.isArray(faceVec) ? faceVec.length : 0,
-      });
-
-      // Update local pending state with real name
-      setPendingEnrolledUser((prev) => prev ? {
-        ...prev,
-        name: fullPatientName,
-        code: patientCode,
-        age: patientAge,
-        gender: kioskFormGender,
-        phone: patientPhone,
-        chiefComplaint: patientComplaint,
-        diagnosis: patientComplaint,
-      } : null);
-
-      const updated = completePendingPatientInfo(patientCode || pendingEnrolledUser.id, {
-        name: fullPatientName,
-        code: patientCode,
-        age: patientAge,
-        gender: kioskFormGender,
-        phone: patientPhone,
-        chiefComplaint: patientComplaint,
-        diagnosis: patientComplaint,
-      });
-
-      // Synchronize completed profile with Central Database
-      patientSyncService.syncPatientToBackend({
-        patient_code: pendingEnrolledUser.code,
-        code: pendingEnrolledUser.code,
-        id: pendingEnrolledUser.id,
-        name: fullPatientName,
-        first_name: kioskFormFirstName.trim(),
-        last_name: kioskFormLastName.trim(),
-        age: patientAge,
-        gender: kioskFormGender,
-        phone: patientPhone,
-        status: 'active',
-        diagnosis: patientComplaint,
-        chief_complaint: patientComplaint,
-        face_vector: faceVec,
-        image_data_url: faceImg,
-      }).catch(() => {});
-
-      const finalCompletedUser: UserAccount = updated || {
-        ...pendingEnrolledUser,
-        name: fullPatientName,
-        code: patientCode,
-        age: patientAge,
-        gender: kioskFormGender,
-        phone: patientPhone,
-        status: 'active',
-        chiefComplaint: patientComplaint,
-        diagnosis: patientComplaint,
-      };
-
-      handleRegistrationCompleted({
-        ...finalCompletedUser,
-        face_vector: Array.isArray(faceVec) ? faceVec : undefined,
-        biometricVector: Array.isArray(faceVec) ? faceVec : undefined,
-        face_image_url: faceImg || undefined,
-      });
-    } catch (err) {
-      console.error('Kiosk form submit error:', err);
-      setKioskFormError('เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง');
-    } finally {
-      setKioskFormSubmitting(false);
-    }
-  };
 
   // 3. Step 1: Automatic Face Presence (3s Hold) + Prolonged No-Face Inquiry Loop
   // Optimized for 60 FPS buttery smoothness, 100% accurate time-synced countdown, and zero lag.
@@ -1575,7 +1125,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 setIsPersonDetected(false);
                 setPresenceProgress(100);
                 audioFeedback.playRepSuccess();
-                setIsEnrollmentFlow(false);
                 try {
                   voiceAssistant.speak('ตรวจพบใบหน้าเรียบร้อยแล้วค่ะ กำลังเข้าสู่ระบบ', { level: 'system' });
                 } catch {}
@@ -1731,196 +1280,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     onStartExerciseDirectly(activePatient, activePlan || undefined, mode, customQueue, customHoldTimes);
   };
 
-  // =========================================================================
-  // Helper: Create pending temporary account & broadcast to Admin Dashboard
-  // Automatically called whenever a face is scanned without an existing account
-  // =========================================================================
-  const createPendingAccountAndNotify = async (finalVector128: number[], liveJpg: string | null) => {
-    // Generate a unique patient code, e.g. P-6022
-    let autoCode = `P-${Math.floor(1000 + Math.random() * 9000)}`;
-    while (users.some((u) => u.code?.toUpperCase() === autoCode)) {
-      autoCode = `P-${Math.floor(1000 + Math.random() * 9000)}`;
-    }
-    const autoName = `ผู้รับบริการใหม่ (${autoCode})`;
-    const newTime = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-    const timestamp = Date.now();
-    const photoFileName = `face_${autoCode}_${timestamp}.jpg`;
-    const facePhotoUrl = liveJpg || `/uploads/faces/${photoFileName}`;
 
-    // 1. Create dedicated isolated directory: /public/uploads/patients/{patient_id}/
-    patientFaceStorageService.createPatientDirectory(autoCode);
-
-    // 2. Save profile_face.jpg and patient_record.json
-    const savedRecord = patientFaceStorageService.savePatientRecord(
-      autoCode,
-      {
-        patient_profile: {
-          patient_id: autoCode,
-          id: autoCode,
-          first_name: 'ผู้รับบริการใหม่',
-          last_name: `(${autoCode})`,
-          full_name: autoName,
-          age: 65,
-          gender: 'male',
-          created_at: new Date().toISOString().split('T')[0],
-          status: 'pending_info',
-        },
-        biometric_data: {
-          face_vector: finalVector128,
-          registered_face_url: facePhotoUrl,
-          enrolled_at: new Date().toISOString(),
-          model_version: 'face-resnet34-v2',
-        },
-        medical_records: {
-          diagnosis: 'รอตรวจประเมินกายภาพบำบัด',
-          assigned_exercises: [
-            { id: 'shoulder_raise', name: 'กางแขนด้านข้าง (Shoulder Abduction)', target_angle: 90, hold_seconds: 3, reps: 10 },
-            { id: 'overhead_reach', name: 'ยกแขนขึ้นเหนือศีรษะ (Overhead Reach)', target_angle: 120, hold_seconds: 3, reps: 10 },
-            { id: 'elbow_flexion', name: 'งอและเหยียดข้อศอก (Elbow Flexion)', target_angle: 140, hold_seconds: 2, reps: 12 },
-          ],
-        },
-      },
-      liveJpg
-    );
-
-    console.log('[REGISTRATION] Success: Temporary account generated:', {
-      patient_id: autoCode,
-      saved_face_image_url: facePhotoUrl,
-      vector_length: finalVector128.length,
-    });
-
-    const createdUser = addUser({
-      username: `kiosk_${autoCode.toLowerCase()}`,
-      name: autoName,
-      role: 'patient',
-      status: 'pending_info',
-      code: autoCode,
-      age: 65,
-      gender: 'male',
-      pendingInfoNote: 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว',
-      biometricVector: finalVector128,
-      face_vector: finalVector128,
-      face_image_url: facePhotoUrl,
-      faceRegisteredAt: newTime,
-    });
-
-    // Re-save with assigned numeric ID for complete dual indexing
-    patientFaceStorageService.savePatientRecord(
-      createdUser.code,
-      {
-        patient_profile: {
-          ...savedRecord.patient_profile,
-          id: createdUser.id,
-        },
-      },
-      liveJpg
-    );
-
-    faceRegistryService.saveProfile({
-      patientId: Number(createdUser.id),
-      patientCode: createdUser.code,
-      name: createdUser.name,
-      age: 65,
-      gender: 'male',
-      embeddings: [finalVector128],
-      face_image_url: facePhotoUrl,
-      enrolledAt: new Date().toISOString(),
-    });
-
-    // Central Database direct sync
-    patientSyncService.syncPatientToBackend({
-      patient_code: createdUser.code,
-      code: createdUser.code,
-      id: createdUser.id,
-      name: createdUser.name,
-      first_name: 'ผู้รับบริการใหม่',
-      last_name: `(${createdUser.code})`,
-      age: 65,
-      gender: 'male',
-      status: 'pending_info',
-      pendingInfoNote: 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว',
-      face_vector: finalVector128,
-      image_data_url: facePhotoUrl,
-      diagnosis: 'รอตรวจประเมินกายภาพบำบัด',
-      chief_complaint: 'รอตรวจประเมินกายภาพบำบัด',
-      created_at: new Date().toISOString().split('T')[0],
-    }).catch((err) => {
-      console.warn('⚠️ Kiosk direct central DB sync error:', err);
-    });
-
-    // Supabase Immediate Upsert + Broadcast so Admin Dashboard sees it instantly
-    try {
-      let medHist = '[PENDING_INFO] รอลงข้อมูลส่วนตัว';
-      if (finalVector128 && Array.isArray(finalVector128)) {
-        medHist += `\nFACE_EMB:${JSON.stringify(finalVector128)}`;
-      }
-      if (facePhotoUrl) {
-        medHist += `\nFACE_PHOTO:${facePhotoUrl}`;
-      }
-
-      await supabase.from('patients').upsert({
-        patient_code: createdUser.code,
-        full_name: `ผู้รับบริการใหม่ (${createdUser.code})`,
-        age: 65,
-        gender: 'male',
-        chief_complaint: '[PENDING_INFO] รอลงข้อมูลส่วนตัว',
-        medical_history: medHist,
-        therapist_notes: '[PENDING_INFO] บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว',
-        status: 'active',
-      }, { onConflict: 'patient_code' });
-
-      await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
-        type: 'broadcast',
-        event: 'new_patient',
-        payload: {
-          patient_code: createdUser.code,
-          full_name: `ผู้รับบริการใหม่ (${createdUser.code})`,
-          name: `ผู้รับบริการใหม่ (${createdUser.code})`,
-          age: 65,
-          gender: 'male',
-          status: 'pending_info',
-          face_image_url: facePhotoUrl,
-          chief_complaint: 'รอลงข้อมูลส่วนตัว',
-          therapist_notes: 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว',
-          face_vector: finalVector128,
-        },
-      });
-
-      await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
-        type: 'broadcast',
-        event: 'patient_registered',
-        payload: {
-          patient_code: createdUser.code,
-          full_name: `ผู้รับบริการใหม่ (${createdUser.code})`,
-          name: `ผู้รับบริการใหม่ (${createdUser.code})`,
-          age: 65,
-          gender: 'male',
-          status: 'pending_info',
-          face_image_url: facePhotoUrl,
-          chief_complaint: 'รอลงข้อมูลส่วนตัว',
-          therapist_notes: 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว',
-          face_vector: finalVector128,
-        },
-      });
-    } catch (err) {
-      console.error('[SUPABASE] Exception inserting pending patient:', err);
-    }
-
-    setPendingEnrolledUser(createdUser);
-    setIsPendingRegistrationActive(true);
-    setIsScanning(false);
-    setBiometricPhase(0);
-    setScanStep('done');
-    setScanStatusMessage(`สแกนใบหน้าสำเร็จ! สร้างบัญชีชั่วคราวรหัส ${createdUser.code} เรียบร้อยแล้ว`);
-
-    audioFeedback.playRepSuccess();
-    try {
-      voiceAssistant.speak(
-        `สแกนใบหน้าสำเร็จแล้วค่ะ ระบบสร้างบัญชีชั่วคราวรหัส ${createdUser.code} เรียบร้อยแล้ว ท่านสามารถกรอกข้อมูลที่หน้าตู้ หรือติดต่อเจ้าหน้าที่ที่เคาน์เตอร์ได้ค่ะ`,
-        { level: 'system' }
-      );
-    } catch {}
-  };
 
   // Step 4: Real Biometric Face Verification (128-D Vector Extraction, Strict PDPA - No Photos)
   const handlePerformFaceScan = async (bypassChallengeCheck = false) => {
@@ -1969,12 +1329,11 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       // (Max dimensions 800x800px, JPEG quality 80% ~100-150 KB)
       const liveJpg = patientFaceStorageService.captureFrameAsJpg(videoRef.current, 0.80, 800, 800);
 
-      if (!isEnrollmentFlow) {
-        // =========================================================================
-        // FLOW 1: "มีบัญชีแล้ว" (Existing Account Login - Strict Matching Engine)
-        // =========================================================================
-        // a) Fetch all valid patient records from Supabase Cloud + Local Store
-        const candidateMap = new Map<string, PatientFaceBinding>();
+      // =========================================================================
+      // Strict Biometric Matching Engine (Cross-Device Single Source of Truth)
+      // =========================================================================
+      // a) Fetch all valid patient records from Supabase Cloud + Local Store
+      const candidateMap = new Map<string, PatientFaceBinding>();
 
         // 1. Fetch live from Supabase patients table (Cross-Device Single Source of Truth)
         try {
@@ -2348,24 +1707,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             );
           } catch {}
         }
-      } else {
-        // =========================================================================
-        // FLOW 2: "ยังไม่มีบัญชี" (New Patient Enrollment Flow - Capture & Save)
-        // =========================================================================
-        // [10-SNAP QUALITY CAPTURE & AVERAGE VECTOR STORAGE]:
-        setScanStatusMessage('📸 กำลังบันทึกภาพและสกัดเวกเตอร์ชีวมิติความแม่นยำสูง (10 ช็อต)...');
-        const snapResult = await livenessEngine.captureTenSnapAveragedEmbedding(
-          videoRef.current,
-          10,
-          0.85,
-          (captured, total) => {
-            setScanStatusMessage(`📸 บันทึกภาพใบหน้าความแม่นยำสูง ${captured}/${total} ช็อต...`);
-            setBiometricProgress(70 + Math.round((captured / total) * 25));
-          }
-        );
-        const finalVector128 = snapResult?.vector || vector128;
-        await createPendingAccountAndNotify(finalVector128, liveJpg);
-      }
     } catch (err) {
       console.warn('Biometric scan error:', err);
       setIsScanning(false);
@@ -2404,7 +1745,6 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   // Step 1: Direct Face Login (เมื่อตรวจพบใบหน้า หรือแตะหน้าจอ)
   const handleStartFaceLogin = useCallback(() => {
     if (!isActive) return;
-    setIsEnrollmentFlow(false);
     audioFeedback.playRepSuccess();
     try {
       voiceAssistant.speak('ตรวจพบใบหน้าเรียบร้อยแล้วค่ะ กำลังเข้าสู่ระบบ', { level: 'system' });
@@ -2624,11 +1964,13 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         handleStartFaceLogin();
         break;
       case 'step1-register':
-        setIsEnrollmentFlow(true);
-        setScanStatusMessage('กรุณามองตรงเข้าหากล้อง เพื่อบันทึกใบหน้าสำหรับสมัครบัญชีใหม่');
-        changeStep(4);
+        if (onOpenReception) {
+          onOpenReception();
+        } else {
+          onOpenHospitalPortal();
+        }
         try {
-          voiceAssistant.speak('ยินดีต้อนรับผู้ป่วยใหม่ค่ะ กรุณามองตรงเข้าหากล้องเพื่อเริ่มลงทะเบียนนะคะ', { level: 'system' });
+          voiceAssistant.speak('กรุณาติดต่อเจ้าหน้าที่เคาน์เตอร์เพื่อเปิดประวัติคนไข้ใหม่ค่ะ', { level: 'system' });
         } catch {}
         break;
       case 'step1-pin':
@@ -3112,12 +2454,8 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       {/* กรอบ Card หลักสีขาว ขอบมนตามภาพวาด (The Main Kiosk White Card) */}
       {/* ======================================================== */}
       <div
-        className={`w-full ${
-          isPendingRegistrationActive
-            ? 'max-w-[780px] sm:max-w-[820px]'
-            : 'max-w-[440px] sm:max-w-[480px]'
-        } bg-white rounded-[36px] sm:rounded-[44px] border-2 sm:border-[2.5px] border-black/85 shadow-2xl relative overflow-hidden flex flex-col items-center ${
-          currentStep === 3 ? 'p-2 sm:p-2.5' : isPendingRegistrationActive ? 'p-3.5 sm:p-5' : 'p-5 sm:p-7'
+        className={`w-full max-w-[440px] sm:max-w-[480px] bg-white rounded-[36px] sm:rounded-[44px] border-2 sm:border-[2.5px] border-black/85 shadow-2xl relative overflow-hidden flex flex-col items-center ${
+          currentStep === 3 ? 'p-2 sm:p-2.5' : 'p-5 sm:p-7'
         } min-h-[620px] sm:min-h-[680px] justify-between transition-all duration-500 my-auto`}
       >
         
@@ -3277,12 +2615,11 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setIsEnrollmentFlow(true);
-                    setScanStatusMessage('กรุณามองตรงเข้าหากล้อง เพื่อบันทึกใบหน้าสำหรับสมัครบัญชีใหม่');
-                    changeStep(4);
-                    try {
-                      voiceAssistant.speak('เข้าสู่ขั้นตอนสมัครบัญชีใหม่ค่ะ กรุณามองตรงเข้าหากล้องนะคะ', { level: 'system' });
-                    } catch {}
+                    if (onOpenReception) {
+                      onOpenReception();
+                    } else {
+                      onOpenHospitalPortal();
+                    }
                   }}
                   className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] sm:text-xs shadow-sm transition active:scale-95 cursor-pointer pointer-events-auto flex items-center gap-1 border border-emerald-400/40"
                 >
@@ -3537,18 +2874,17 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   type="button"
                   data-kiosk-target="step1-register"
                   onClick={() => {
-                    setIsEnrollmentFlow(true);
-                    setScanStatusMessage('กรุณามองตรงเข้าหากล้อง เพื่อบันทึกใบหน้าสำหรับสมัครบัญชีใหม่');
-                    changeStep(4);
-                    try {
-                      voiceAssistant.speak('ยินดีต้อนรับผู้ป่วยใหม่ค่ะ กรุณามองตรงเข้าหากล้องเพื่อเริ่มลงทะเบียนนะคะ', { level: 'system' });
-                    } catch {}
+                    if (onOpenReception) {
+                      onOpenReception();
+                    } else {
+                      onOpenHospitalPortal();
+                    }
                   }}
                   className="w-full min-h-[46px] py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-600 text-white font-extrabold text-xs sm:text-sm shadow-md hover:shadow-lg transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 border border-emerald-400/40"
                   id="btnKioskRegisterNewPatient"
                 >
                   <Plus className="w-4 h-4 text-white" />
-                  <span>📝 สมัครบัญชีผู้ป่วยใหม่ (ลงทะเบียนที่นี่)</span>
+                  <span>📝 สมัครบัญชีผู้ป่วยใหม่ (เปิดประวัติที่เคาน์เตอร์)</span>
                 </button>
 
                 <button
@@ -3573,7 +2909,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         {/* ---------------------------------------------------- */}
         {/* ภาพที่ 4: หน้าต่างสแกนใบหน้า + AI Head Pose Tracker  */}
         {/* ---------------------------------------------------- */}
-        {currentStep === 4 && !isPendingRegistrationActive && (
+        {currentStep === 4 && (
           <LivenessScanHUD
             videoRef={videoRef}
             stream={streamRef.current}
@@ -3603,442 +2939,16 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             onRetryCamera={startCamera}
             onFallbackToPin={() => setShowPinModal(true)}
             onRegisterNewPatient={() => {
-              setIsEnrollmentFlow(true);
-              setScanStatusMessage('กรุณามองตรงเข้าหากล้อง เพื่อบันทึกใบหน้าสำหรับสมัครบัญชีใหม่');
-              handlePerformFaceScan(true);
+              if (onOpenReception) {
+                onOpenReception();
+              } else {
+                onOpenHospitalPortal();
+              }
             }}
           />
         )}
 
-        {/* ---------------------------------------------------- */}
-        {/* หน้าต่างลงทะเบียนคนไข้ใหม่ & ซิงค์ข้อมูล Real-Time (Dual Channel) */}
-        {/* ---------------------------------------------------- */}
-        {isPendingRegistrationActive && (
-          isRegistrationSuccess ? (
-            /* Success & Auto-Reset Screen */
-            <div className="w-full flex-1 flex flex-col items-center justify-center p-6 sm:p-8 text-center animate-fadeIn my-auto">
-              <div className="w-24 h-24 rounded-full bg-emerald-50 border-4 border-emerald-400 text-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/20 mb-4 animate-bounce">
-                <CheckCircle2 className="w-14 h-14 stroke-[2.5]" />
-              </div>
 
-              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 font-extrabold text-xs mb-3 shadow-xs">
-                <Sparkles className="w-4 h-4 text-emerald-700" />
-                <span>บันทึกเข้าฐานข้อมูลกลางเรียบร้อยแล้ว</span>
-              </div>
-
-              <h2 className="text-2xl sm:text-3xl font-black text-[#0B2B2B] tracking-tight mb-2">
-                ลงทะเบียน/สมัครบัญชีสำเร็จ
-              </h2>
-
-              <div className="w-full max-w-md bg-stone-50 border border-emerald-200 rounded-3xl p-4 sm:p-5 shadow-sm text-center my-3">
-                <p className="text-base sm:text-lg font-black text-emerald-900">
-                  ยินดีต้อนรับ {completedUserData?.name || 'ผู้รับบริการ'}
-                </p>
-                <div className="flex items-center justify-center gap-2 mt-1">
-                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-200 text-emerald-950 font-mono text-xs font-bold">
-                    {completedUserData?.code || pendingEnrolledUser?.code}
-                  </span>
-                  <span className="text-xs text-slate-500 font-semibold">
-                    อายุ {completedUserData?.age || 65} ปี • {completedUserData?.gender === 'female' ? 'หญิง' : 'ชาย'}
-                  </span>
-                </div>
-                <p className="text-xs text-emerald-700 font-medium mt-2">
-                  อัตลักษณ์ใบหน้าถูกเชื่อมโยงกับบัญชีเรียบร้อยแล้ว
-                </p>
-              </div>
-
-              {/* Countdown Alert */}
-              <div className="w-full max-w-md bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-2 border-emerald-400/80 rounded-2xl p-3 text-center my-2 shadow-xs">
-                <div className="flex items-center justify-center gap-2 text-emerald-950 font-extrabold text-xs sm:text-sm">
-                  <Clock className="w-4 h-4 text-emerald-700 animate-spin" />
-                  <span>ระบบกำลังพาท่านกลับสู่หน้าสแกนใบหน้าใน:</span>
-                  <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-emerald-600 text-white font-mono font-black text-sm">
-                    {resetCountdown}
-                  </span>
-                  <span>วินาที</span>
-                </div>
-                <p className="text-[11px] text-slate-500 mt-1 font-medium">
-                  เตรียมพร้อมมองตรงเข้าหากล้องเพื่อสแกนใบหน้าเข้าใช้งานได้ทันที
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setIsPendingRegistrationActive(false);
-                  setIsRegistrationSuccess(false);
-                  setPendingEnrolledUser(null);
-                  setCompletedUserData(null);
-                  setIsEnrollmentFlow(false);
-                  handleResetFaceScan();
-                  changeStep(4);
-                  setCurrentStep(4);
-                  setScanStatusMessage('✓ บันทึกข้อมูลสำเร็จเรียบร้อย! กรุณามองตรงเข้าหากล้องเพื่อสแกนใบหน้าเข้าใช้งาน');
-                  startCamera();
-                }}
-                className="mt-3 px-6 py-3 rounded-full bg-slate-900 hover:bg-black text-emerald-300 font-bold text-xs transition cursor-pointer active:scale-95 shadow-md flex items-center gap-2"
-              >
-                <ArrowRight className="w-4 h-4" />
-                <span>ไปหน้าสแกนใบหน้าทันที (ไม่ต้องรอ)</span>
-              </button>
-            </div>
-          ) : (
-            /* Dual-Channel Registration View */
-            <div className="w-full flex-1 flex flex-col items-center justify-start p-1 sm:p-2 text-center animate-fadeIn">
-              {/* Notification Banner */}
-              <div className="w-full bg-gradient-to-r from-emerald-50 via-teal-50 to-amber-50 border-2 border-emerald-400 rounded-3xl p-3.5 sm:p-4 mb-4 shadow-sm text-left flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white flex items-center justify-center font-black text-xl shadow-md shrink-0">
-                    <UserPlus className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-emerald-200 text-emerald-950 font-extrabold text-xs">
-                        <Sparkles className="w-3.5 h-3.5 text-emerald-700" />
-                        <span>สมัครบัญชีผู้ป่วยใหม่ (เปิดประวัติการรักษา)</span>
-                      </span>
-                      <span className="px-2.5 py-0.5 rounded-full bg-white border border-emerald-300 font-mono text-xs font-black text-slate-800">
-                        รหัส HN: {pendingEnrolledUser?.code}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-700 font-bold mt-1">
-                      📸 สแกนใบหน้าและบันทึกเวกเตอร์ชีวมิติเรียบร้อยแล้ว กรุณากรอกข้อมูลเพื่อเปิดประวัติคนไข้ใหม่ค่ะ
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={handleRetryScan}
-                    className="py-1.5 px-3 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold text-xs flex items-center gap-1 cursor-pointer transition shadow-2xs"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>ลองสแกนใหม่</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowLinkAccountModal(true);
-                      setFoundAccountForLink(null);
-                      setLinkSearchError(null);
-                      setLinkSearchQuery('');
-                    }}
-                    className="py-1.5 px-3 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 font-bold text-xs flex items-center gap-1 cursor-pointer transition shadow-2xs"
-                  >
-                    <UserCheck className="w-3.5 h-3.5 text-emerald-700" />
-                    <span>มีประวัติเดิมแล้ว</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Dual Columns: Choice A and Choice B */}
-              <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
-                {/* CHOICE A: กรอกข้อมูลที่หน้าตู้เลย */}
-                <div className="bg-white border-2 border-emerald-300 rounded-3xl p-4 sm:p-5 shadow-md flex flex-col justify-between relative overflow-hidden">
-                  <div className="absolute top-0 right-0 bg-emerald-600 text-white font-extrabold text-[10px] px-3 py-1 rounded-bl-2xl uppercase tracking-wider">
-                    ทางเลือก A
-                  </div>
-
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
-                        <Pencil className="w-4 h-4 text-emerald-700" />
-                      </div>
-                      <div>
-                        <h3 className="font-black text-base text-[#0B2B2B]">
-                          กรอกข้อมูลคาไว้ที่หน้าตู้เลย
-                        </h3>
-                        <p className="text-[11px] text-slate-500 font-semibold">
-                          สะดวกแตะหน้าจอ กรอกข้อมูลส่วนตัวเบื้องต้นได้ทันที
-                        </p>
-                      </div>
-                    </div>
-
-                    <form onSubmit={handleKioskFormSubmit} className="space-y-3 mt-3 text-xs">
-                      {kioskFormError && (
-                        <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-300 text-rose-700 text-xs font-bold flex items-center gap-2">
-                          <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-                          <span>{kioskFormError}</span>
-                        </div>
-                      )}
-
-                      {/* คำนำหน้า */}
-                      <div>
-                        <label className="block text-slate-700 font-extrabold mb-1">
-                          คำนำหน้าชื่อ <span className="text-rose-500">*</span>
-                        </label>
-                        <div className="grid grid-cols-4 gap-1.5">
-                          {(['นาย', 'นาง', 'นางสาว', 'เด็กชาย'] as const).map((t) => (
-                            <button
-                              key={t}
-                              type="button"
-                              onClick={() => setKioskFormTitle(t)}
-                              className={`py-1.5 px-2 rounded-xl border text-xs font-bold transition cursor-pointer text-center ${
-                                kioskFormTitle === t
-                                  ? 'bg-emerald-600 border-emerald-700 text-white shadow-xs'
-                                  : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                              }`}
-                            >
-                              {t}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* ชื่อ - นามสกุล */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-slate-700 font-extrabold mb-1">
-                            ชื่อ <span className="text-rose-500">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={kioskFormFirstName}
-                            onChange={(e) => {
-                              setKioskFormFirstName(e.target.value);
-                              if (kioskFormError) setKioskFormError(null);
-                            }}
-                            placeholder="เช่น สมชาย"
-                            className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 font-bold text-xs outline-none bg-slate-50 focus:bg-white"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-slate-700 font-extrabold mb-1">
-                            นามสกุล
-                          </label>
-                          <input
-                            type="text"
-                            value={kioskFormLastName}
-                            onChange={(e) => setKioskFormLastName(e.target.value)}
-                            placeholder="เช่น ใจดี"
-                            className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 font-bold text-xs outline-none bg-slate-50 focus:bg-white"
-                          />
-                        </div>
-                      </div>
-
-                      {/* อายุ & เพศ */}
-                      <div className="grid grid-cols-2 gap-4 sm:gap-5">
-                        <div>
-                          <label className="block text-slate-700 font-extrabold mb-1">
-                            อายุ (ปี)
-                          </label>
-                          <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-xl p-1 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-200 shadow-2xs">
-                            <button
-                              type="button"
-                              onClick={() => setKioskFormAge((a) => Math.max(1, a - 1))}
-                              className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-sm flex items-center justify-center cursor-pointer active:scale-95 transition"
-                              title="ลดอายุ"
-                            >
-                              -
-                            </button>
-                            <input
-                              type="number"
-                              min={1}
-                              max={120}
-                              value={kioskFormAge}
-                              onChange={(e) => setKioskFormAge(Number(e.target.value) || 65)}
-                              className="w-full min-w-0 py-0.5 px-1 text-center font-black text-xs sm:text-sm text-slate-800 outline-none bg-transparent [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setKioskFormAge((a) => Math.min(120, a + 1))}
-                              className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-sm flex items-center justify-center cursor-pointer active:scale-95 transition"
-                              title="เพิ่มอายุ"
-                            >
-                              +
-                            </button>
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-slate-700 font-extrabold mb-1">
-                            เพศ
-                          </label>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setKioskFormGender('male')}
-                              className={`py-2 px-1.5 rounded-xl border text-xs font-bold transition cursor-pointer text-center flex items-center justify-center gap-1 shadow-2xs active:scale-95 ${
-                                kioskFormGender === 'male'
-                                  ? 'bg-emerald-600 border-emerald-700 text-white shadow-emerald-600/25'
-                                  : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                              }`}
-                            >
-                              👨 ชาย
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setKioskFormGender('female')}
-                              className={`py-2 px-1.5 rounded-xl border text-xs font-bold transition cursor-pointer text-center flex items-center justify-center gap-1 shadow-2xs active:scale-95 ${
-                                kioskFormGender === 'female'
-                                  ? 'bg-emerald-600 border-emerald-700 text-white shadow-emerald-600/25'
-                                  : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                              }`}
-                            >
-                              👩 หญิง
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* เบอร์โทร */}
-                      <div>
-                        <label className="block text-slate-700 font-extrabold mb-1">
-                          เบอร์โทรศัพท์ (ถ้ามี)
-                        </label>
-                        <input
-                          type="tel"
-                          value={kioskFormPhone}
-                          onChange={(e) => setKioskFormPhone(e.target.value)}
-                          placeholder="เช่น 081-234-5678"
-                          className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 font-bold text-xs outline-none bg-slate-50 focus:bg-white"
-                        />
-                      </div>
-
-                      {/* อาการเบื้องต้น */}
-                      <div>
-                        <label className="block text-slate-700 font-extrabold mb-1">
-                          อาการ / วัตถุประสงค์
-                        </label>
-                        <div className="flex flex-wrap gap-1.5">
-                          {[
-                            'ปวดคอบ่าไหล่ (Office Syndrome)',
-                            'ข้อไหล่ติด (Frozen Shoulder)',
-                            'ปวดหลัง/เอว',
-                            'ข้อเข่าเสื่อม',
-                            'ฟื้นฟูอ่อนแรง/สโตรก',
-                          ].map((symptom) => (
-                            <button
-                              key={symptom}
-                              type="button"
-                              onClick={() => setKioskFormComplaint(symptom)}
-                              className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold transition cursor-pointer ${
-                                kioskFormComplaint === symptom
-                                  ? 'bg-emerald-100 border-emerald-500 text-emerald-900 font-black'
-                                  : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                              }`}
-                            >
-                              {symptom}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <button
-                        type="submit"
-                        disabled={kioskFormSubmitting}
-                        className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] hover:opacity-95 text-white font-black text-sm shadow-md shadow-cyan-500/25 active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2"
-                      >
-                        {kioskFormSubmitting ? (
-                          <>
-                            <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            <span>กำลังบันทึก...</span>
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle2 className="w-5 h-5 text-emerald-200" />
-                            <span>บันทึกข้อมูลและลงทะเบียนสำเร็จ</span>
-                          </>
-                        )}
-                      </button>
-                    </form>
-                  </div>
-                </div>
-
-                {/* CHOICE B: ไปเปิดคอมพิวเตอร์ที่เคาน์เตอร์ */}
-                <div className="bg-gradient-to-br from-slate-50 to-amber-50/40 border-2 border-amber-300 rounded-3xl p-4 sm:p-5 shadow-md flex flex-col justify-between relative overflow-hidden">
-                  <div className="absolute top-0 right-0 bg-amber-600 text-white font-extrabold text-[10px] px-3 py-1 rounded-bl-2xl uppercase tracking-wider">
-                    ทางเลือก B
-                  </div>
-
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
-                        <Laptop className="w-4 h-4 text-amber-700" />
-                      </div>
-                      <div>
-                        <h3 className="font-black text-base text-[#0B2B2B]">
-                          ไปเปิดคอมพิวเตอร์ที่เคาน์เตอร์
-                        </h3>
-                        <p className="text-[11px] text-slate-500 font-semibold">
-                          เจ้าหน้าที่เปิดหน้าแอดมินกรอกข้อมูลลงระบบ
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Large Patient Code Callout */}
-                    <div className="w-full bg-white border-2 border-amber-200 rounded-2xl p-4 my-3 text-center shadow-xs">
-                      <span className="text-[11px] font-bold text-slate-500 block uppercase">
-                        แจ้งรหัสคนไข้นี้แก่เจ้าหน้าที่
-                      </span>
-                      <div className="text-3xl font-black font-mono text-[#0B2B2B] tracking-wider my-1">
-                        {pendingEnrolledUser?.code}
-                      </div>
-                      <p className="text-[11px] text-amber-800 font-bold bg-amber-100/70 py-1 px-2.5 rounded-lg inline-block">
-                        สถานะ: บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว
-                      </p>
-                    </div>
-
-                    {/* Real-time Sync Radar Animation */}
-                    <div className="w-full bg-amber-50/80 border border-amber-200 rounded-2xl p-3.5 my-2 space-y-2">
-                      <div className="flex items-center gap-2 text-amber-900 font-black text-xs">
-                        <span className="relative flex h-3 w-3">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-600"></span>
-                        </span>
-                        <span>กำลังรอสัญญาณซิงค์ข้อมูลจากเคาน์เตอร์...</span>
-                      </div>
-                      <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
-                        เมื่อเจ้าหน้าที่ที่เคาน์เตอร์กด <strong>&quot;บันทึกข้อมูลคนไข้ (ซิงค์ตู้ Kiosk)&quot;</strong> ผ่านหน้าคอมพิวเตอร์หลังบ้าน ตู้ Kiosk นี้จะตรวจพบข้อมูลและยืนยันการสมัครสำเร็จให้อัตโนมัติทันที
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Demo / Shortcut Action Button */}
-                  <div className="mt-4 pt-3 border-t border-amber-200/60 space-y-2">
-                    <button
-                      type="button"
-                      onClick={onOpenHospitalPortal}
-                      className="w-full py-2.5 px-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs shadow-sm transition flex items-center justify-center gap-2 cursor-pointer active:scale-95"
-                    >
-                      <Laptop className="w-4 h-4 text-white" />
-                      <span>เปิดหน้าแอดมินเคาน์เตอร์ (Admin Portal) ทันที</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowLinkAccountModal(true);
-                        setFoundAccountForLink(null);
-                        setLinkSearchError(null);
-                        setLinkSearchQuery('');
-                      }}
-                      className="w-full py-2 px-3 rounded-xl bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition shadow-2xs"
-                    >
-                      <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>🔗 หากมีประวัติเดิมในระบบแล้ว (ผูกใบหน้านี้เข้ากับ HN เดิม)</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsPendingRegistrationActive(false);
-                        setPendingEnrolledUser(null);
-                        setIsEnrollmentFlow(false);
-                        handleResetFaceScan();
-                        setCurrentStep(1);
-                      }}
-                      className="w-full py-2 px-3 text-slate-500 hover:text-slate-800 font-bold text-[11px] text-center cursor-pointer"
-                    >
-                      ยกเลิกและกลับสู่หน้าต้อนรับ
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )
-        )}
 
         {/* ---------------------------------------------------- */}
         {/* Step 5: ล็อกอินสำเร็จและแสดงข้อมูลคนไข้               */}
@@ -4673,22 +3583,21 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
             {/* Action Buttons */}
             <div className="w-full space-y-2.5">
-              {/* PRIMARY CTA: สมัครบัญชีผู้ป่วยใหม่ (ลงทะเบียนทันที) */}
+              {/* PRIMARY CTA: สมัครบัญชีผู้ป่วยใหม่ (เปิดประวัติที่เคาน์เตอร์) */}
               <button
                 type="button"
-                onClick={async () => {
+                onClick={() => {
                   setShowNoAccountModal(false);
-                  if (lastLiveVectorRef.current) {
-                    await createPendingAccountAndNotify(lastLiveVectorRef.current, lastLiveJpgRef.current);
+                  if (onOpenReception) {
+                    onOpenReception();
                   } else {
-                    setIsEnrollmentFlow(true);
-                    handlePerformFaceScan(true);
+                    onOpenHospitalPortal();
                   }
                 }}
                 className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-600 text-white font-black text-sm shadow-md hover:shadow-lg active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer border border-emerald-400/40"
               >
                 <Plus className="w-5 h-5 text-white" />
-                <span>📝 สมัครบัญชีผู้ป่วยใหม่ (ลงทะเบียนทันที)</span>
+                <span>📝 สมัครบัญชีผู้ป่วยใหม่ (เปิดประวัติที่เคาน์เตอร์)</span>
               </button>
 
               {/* SECONDARY: ผูกใบหน้ากับบัญชีที่มีอยู่แล้วในระบบ (ค้นหาด้วย HN / เบอร์โทร) */}

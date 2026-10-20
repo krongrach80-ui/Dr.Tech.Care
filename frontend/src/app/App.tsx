@@ -622,6 +622,14 @@ export const App: React.FC = () => {
               } catch {}
               setIsAboutOpen(true);
             }}
+            onOpenReception={() => {
+              try {
+                if (typeof window !== 'undefined' && window.speechSynthesis) {
+                  window.speechSynthesis.cancel();
+                }
+              } catch {}
+              setIsReceptionOpen(true);
+            }}
           />
         )}
 
