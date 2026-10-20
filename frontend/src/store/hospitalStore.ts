@@ -17,7 +17,7 @@ import { supabaseService } from '../services/supabaseService';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../lib/supabase';
 import { faceRegistryService } from '../services/faceRegistryService';
 import { patientSyncService } from '../services/patientSyncService';
-import { patientFaceStorageService } from '../services/patientFaceStorageService';
+import { patientFaceStorageService, isPlaceholderPatientName } from '../services/patientFaceStorageService';
 import { api } from '../services/api';
 import { usePatientStore } from './patientStore';
 import initialExercisesData from '../data/exercises.json';
@@ -1177,10 +1177,9 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
               .map((p: any) => {
                 const isPending =
                   p.status === 'pending_info' ||
+                  isPlaceholderPatientName(p.full_name, p.status) ||
                   (p.chief_complaint && p.chief_complaint.includes('[PENDING_INFO]')) ||
-                  (p.therapist_notes && p.therapist_notes.includes('[PENDING_INFO]')) ||
-                  (p.full_name && p.full_name.includes('รอลงข้อมูล')) ||
-                  (p.full_name && p.full_name.startsWith('ผู้รับบริการใหม่'));
+                  (p.therapist_notes && p.therapist_notes.includes('[PENDING_INFO]'));
 
                 let rawGender = p.gender || 'male';
                 let normGender: 'male' | 'female' = 'male';

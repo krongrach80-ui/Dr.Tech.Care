@@ -61,7 +61,7 @@ import { PDPAConsentModal } from '../Biometrics/PDPAConsentModal';
 import { LivenessScanHUD } from '../Biometrics/LivenessScanHUD';
 import { LivenessFrameData, LivenessChallenge } from '../../types/biometrics';
 import { patientSyncService } from '../../services/patientSyncService';
-import { patientFaceStorageService, PatientFaceBinding } from '../../services/patientFaceStorageService';
+import { patientFaceStorageService, PatientFaceBinding, isPlaceholderPatientName } from '../../services/patientFaceStorageService';
 import { cameraOrientationService, CameraOrientation, CameraRotation } from '../../services/cameraOrientationService';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 import { asset } from '../../utils/asset';
@@ -2053,9 +2053,12 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         });
 
         const candidates = Array.from(candidateMap.values());
+        // STRICT: Only pass genuine registered patients to biometric matching
+        // (Excludes any placeholder accounts like "ผู้ป่วยใหม่" or "ผู้รับบริการใหม่")
+        const realCandidates = candidates.filter((c) => !isPlaceholderPatientName(c.name, c.status));
 
         // b & c) Cosine Similarity (threshold >= 80% / 0.80) Matching Logic
-        const evaluation = patientFaceStorageService.matchLiveFaceAgainstDatabase(vector128, candidates, 0.80);
+        const evaluation = patientFaceStorageService.matchLiveFaceAgainstDatabase(vector128, realCandidates, 0.80);
 
         // Required Console Logging
         console.log('[BIOMETRIC LOGIN MATCH RESULT]:', {
@@ -2066,8 +2069,8 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           isPassed: Boolean(evaluation.matched && evaluation.bestScorePercent >= 80),
         });
 
-        // d) If matched successfully (Cosine Similarity >= 80%):
-        if (evaluation.matched && evaluation.bestScorePercent >= 80) {
+        // d) If matched successfully (Cosine Similarity >= 80% and NOT a placeholder):
+        if (evaluation.matched && evaluation.bestScorePercent >= 80 && !isPlaceholderPatientName(evaluation.matched.name, evaluation.matched.status)) {
           const matchedCandidate = evaluation.matched;
           const targetHN = matchedCandidate.patientCode;
 
@@ -2104,47 +2107,45 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           // [DATA FETCHING & RESOLUTION]: Resolve real First Name and Surname, never placeholder
           let realName = '';
           // 1. Check Supabase full_name
-          if (dbExactPatient?.full_name && !dbExactPatient.full_name.startsWith('ผู้รับบริการใหม่') && !dbExactPatient.full_name.includes('รอลงข้อมูล')) {
+          if (dbExactPatient?.full_name && !isPlaceholderPatientName(dbExactPatient.full_name)) {
             realName = dbExactPatient.full_name.trim();
           }
           // 2. Check hospitalStore user name
-          if (!realName && matchedUser?.name && !matchedUser.name.startsWith('ผู้รับบริการใหม่') && !matchedUser.name.includes('รอลงข้อมูล')) {
+          if (!realName && matchedUser?.name && !isPlaceholderPatientName(matchedUser.name)) {
             realName = matchedUser.name.trim();
           }
           // 3. Check isolated patient dossier
-          if (!realName && patientDossier?.patient_profile?.full_name && !patientDossier.patient_profile.full_name.startsWith('ผู้รับบริการใหม่')) {
+          if (!realName && patientDossier?.patient_profile?.full_name && !isPlaceholderPatientName(patientDossier.patient_profile.full_name)) {
             realName = patientDossier.patient_profile.full_name.trim();
           }
-          if (!realName && patientDossier?.patient_profile?.first_name && !patientDossier.patient_profile.first_name.startsWith('ผู้รับบริการใหม่') && patientDossier.patient_profile.first_name !== 'ผู้รับบริการ') {
+          if (!realName && patientDossier?.patient_profile?.first_name && !isPlaceholderPatientName(patientDossier.patient_profile.first_name)) {
             realName = `${patientDossier.patient_profile.first_name} ${patientDossier.patient_profile.last_name || ''}`.trim();
           }
           // 4. Check matchedPatientRecord
-          if (!realName && matchedPatientRecord?.name && !matchedPatientRecord.name.startsWith('ผู้รับบริการใหม่')) {
+          if (!realName && matchedPatientRecord?.name && !isPlaceholderPatientName(matchedPatientRecord.name)) {
             realName = matchedPatientRecord.name.trim();
           }
           // 5. Match by phone if linked
           if (!realName && dbExactPatient?.phone) {
-            const byPhone = users.find((u) => u.phone && u.phone === dbExactPatient.phone && !u.name.startsWith('ผู้รับบริการใหม่'));
+            const byPhone = users.find((u) => u.phone && u.phone === dbExactPatient.phone && !isPlaceholderPatientName(u.name));
             if (byPhone) realName = byPhone.name.trim();
           }
           // 6. Look up in users by code
           if (!realName) {
-            const userByCode = users.find((u) => u.code && u.code.toLowerCase() === targetHN.toLowerCase() && !u.name.startsWith('ผู้รับบริการใหม่') && !u.name.includes('รอลงข้อมูล'));
+            const userByCode = users.find((u) => u.code && u.code.toLowerCase() === targetHN.toLowerCase() && !isPlaceholderPatientName(u.name));
             if (userByCode) realName = userByCode.name.trim();
           }
           // 7. Look up in faceRegistryService
           if (!realName) {
-            const regProf = faceRegistryService.getAllProfiles().find((p) => p.patientCode.toLowerCase() === targetHN.toLowerCase() && !p.name.startsWith('ผู้รับบริการใหม่') && !p.name.includes('รอลงข้อมูล'));
+            const regProf = faceRegistryService.getAllProfiles().find((p) => p.patientCode.toLowerCase() === targetHN.toLowerCase() && !isPlaceholderPatientName(p.name));
             if (regProf) realName = regProf.name.trim();
           }
-          // Fallback if no real name was ever entered anywhere: never show "ผู้รับบริการใหม่" if a face match was confirmed
+          // Fallback if candidate has valid name
+          if (!realName && matchedCandidate.name && !isPlaceholderPatientName(matchedCandidate.name)) {
+            realName = matchedCandidate.name.trim();
+          }
           if (!realName) {
-            const candName = dbExactPatient?.full_name || matchedCandidate.name || matchedUser?.name || '';
-            if (candName && !candName.startsWith('ผู้รับบริการใหม่') && !candName.includes('รอลงข้อมูล')) {
-              realName = candName.trim();
-            } else {
-              realName = `ผู้รับบริการ (${targetHN})`;
-            }
+            realName = `ผู้รับบริการ (${targetHN})`;
           }
 
           const realAge = Number(dbExactPatient?.age || matchedUser?.age || patientDossier?.patient_profile?.age || matchedCandidate.age || 65);
@@ -2283,7 +2284,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           setBiometricPhase(0);
           setShowNoAccountModal(true);
           try {
-            voiceAssistant.speak('ไม่พบบัญชี โปรดติดต่อเจ้าหน้าที่ หรือลองสแกนอีกครั้งค่ะ', { level: 'system' });
+            voiceAssistant.speak('ไม่พบข้อมูลบัญชีในระบบ หากยังไม่มีบัญชี สามารถกดสมัครบัญชีใหม่ได้ค่ะ', { level: 'system' });
           } catch {}
         }
       } else {
@@ -4515,10 +4516,10 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             </div>
 
             <h3 className="text-xl sm:text-2xl font-black text-[#0B2B2B] tracking-tight">
-              ไม่พบบัญชี โปรดติดต่อเจ้าหน้าที่ หรือลองสแกนอีกครั้ง
+              ไม่พบข้อมูลบัญชีในระบบ
             </h3>
             <p className="text-xs sm:text-sm font-extrabold text-amber-800 mt-1">
-              ระบบไม่พบเวชระเบียนที่ผูกกับใบหน้านี้ในฐานข้อมูลโรงพยาบาล
+              ระบบไม่พบบัญชีผู้ป่วยที่ตรงกับใบหน้านี้ หากยังไม่มีบัญชี สามารถสมัครบัญชีใหม่ได้ทันที
             </p>
 
             {/* Description Card */}
@@ -4530,30 +4531,13 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 </p>
               </div>
               <p className="text-[11px] text-slate-500 font-medium pl-6">
-                หากท่านเป็นผู้ป่วยใหม่ กรุณาติดต่อ <span className="font-bold text-emerald-700">"เคาน์เตอร์ต้อนรับ / จุดลงทะเบียน"</span> เพื่อให้เจ้าหน้าที่เปิดประวัติและบันทึกใบหน้าเข้าสู่ระบบ
+                หากท่านยังไม่เคยลงทะเบียน กรุณากดปุ่ม <span className="font-bold text-emerald-700">"สมัครบัญชีผู้ป่วยใหม่"</span> ด้านล่าง เพื่อกรอกข้อมูลเปิดประวัติ หรือติดต่อเคาน์เตอร์ต้อนรับ
               </p>
             </div>
 
             {/* Action Buttons */}
-            <div className="w-full space-y-2">
-
-              {/* Button: ผูกใบหน้ากับบัญชีที่มีอยู่แล้วในระบบ (เช่น กรอกในแอดมินไว้แล้ว) */}
-              <button
-                type="button"
-                onClick={() => {
-                  setShowNoAccountModal(false);
-                  setShowLinkAccountModal(true);
-                  setFoundAccountForLink(null);
-                  setLinkSearchError(null);
-                  setLinkSearchQuery('');
-                }}
-                className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 hover:bg-emerald-100 text-emerald-900 border-2 border-emerald-300 font-extrabold text-xs shadow-xs active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <UserCheck className="w-4 h-4 text-emerald-700" />
-                <span>🔗 ผูกใบหน้ากับบัญชีในระบบ (ค้นหาด้วย HN / เบอร์โทร)</span>
-              </button>
-
-              {/* Button: เปิดประวัติ/ลงทะเบียนคนไข้ใหม่ที่ตู้ (สร้างบัญชีชั่วคราว) */}
+            <div className="w-full space-y-2.5">
+              {/* PRIMARY CTA: สมัครบัญชีผู้ป่วยใหม่ (ลงทะเบียนทันที) */}
               <button
                 type="button"
                 onClick={async () => {
@@ -4565,10 +4549,26 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                     handlePerformFaceScan(true);
                   }
                 }}
-                className="w-full py-2.5 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-900 font-extrabold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-600 text-white font-black text-sm shadow-md hover:shadow-lg active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer border border-emerald-400/40"
               >
-                <Plus className="w-4 h-4 text-emerald-700" />
-                <span>📝 ลงทะเบียนผู้ป่วยใหม่ที่ตู้ (สร้างบัญชีชั่วคราว)</span>
+                <Plus className="w-5 h-5 text-white" />
+                <span>📝 สมัครบัญชีผู้ป่วยใหม่ (ลงทะเบียนทันที)</span>
+              </button>
+
+              {/* SECONDARY: ผูกใบหน้ากับบัญชีที่มีอยู่แล้วในระบบ (ค้นหาด้วย HN / เบอร์โทร) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNoAccountModal(false);
+                  setShowLinkAccountModal(true);
+                  setFoundAccountForLink(null);
+                  setLinkSearchError(null);
+                  setLinkSearchQuery('');
+                }}
+                className="w-full py-2.5 px-4 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold text-xs shadow-2xs active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <UserCheck className="w-4 h-4 text-emerald-600" />
+                <span>🔗 มีประวัติเดิมแล้ว (ค้นหา HN / เบอร์โทร เพื่อผูกใบหน้านี้)</span>
               </button>
 
               {/* Secondary Options: ลองสแกนอีกครั้ง & ใช้ PIN */}

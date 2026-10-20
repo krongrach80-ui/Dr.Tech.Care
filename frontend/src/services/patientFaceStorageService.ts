@@ -159,6 +159,42 @@ export interface MatchEvaluation {
   comparisons: FaceMatchComparisonResult[];
 }
 
+/**
+ * Check if a patient name or status indicates a placeholder / temporary draft account
+ * (e.g. "ผู้ป่วยใหม่", "ผู้รับบริการใหม่", "ผู้ลงทะเบียนใหม่", "รอลงข้อมูล", "pending_info")
+ * Such accounts must never be matched for face login.
+ */
+export function isPlaceholderPatientName(name?: string, status?: string): boolean {
+  if (!name || typeof name !== 'string') return true;
+  const trimmed = name.trim();
+  if (!trimmed) return true;
+
+  const lower = trimmed.toLowerCase();
+  if (
+    lower.includes('ผู้ป่วยใหม่') ||
+    lower.includes('ผู้รับบริการใหม่') ||
+    lower.includes('ผู้ลงทะเบียนใหม่') ||
+    lower.includes('รอลงข้อมูล') ||
+    lower.includes('pending_info') ||
+    lower.includes('[pending_info]') ||
+    lower.includes('โหมดสาธิต') ||
+    lower.includes('[โหมดสาธิต]')
+  ) {
+    return true;
+  }
+
+  // Generic titles without actual patient identity: "ผู้รับบริการ", "ผู้ป่วย (P-xxxx)", "ผู้รับบริการ (P-xxxx)"
+  if (/^ผู้รับบริการ(\s*\(P-\d+\))?$/i.test(trimmed) || /^ผู้ป่วย(\s*\(P-\d+\))?$/i.test(trimmed)) {
+    return true;
+  }
+
+  if (status === 'pending_info') {
+    return true;
+  }
+
+  return false;
+}
+
 class PatientFaceStorageService {
   private static instance: PatientFaceStorageService;
   private memoryRecords: Map<string, CompletePatientRecord> = new Map();
@@ -953,23 +989,18 @@ class PatientFaceStorageService {
     // Filter valid matches meeting threshold (>= 80% / 0.80)
     const validMatches = comparisons.filter((c) => c.similarity >= similarityThreshold);
 
-    if (validMatches.length > 0) {
-      // STRICT REQUIREMENT: Prioritize actual registered patient profiles over placeholder accounts
-      // ("ผู้รับบริการใหม่" or "รอลงข้อมูล") so users never get placeholder profiles if an actual profile exists
-      const realPatientMatches = validMatches.filter(
-        (c) =>
-          c.name &&
-          !c.name.startsWith('ผู้รับบริการใหม่') &&
-          !c.name.includes('ผู้รับบริการใหม่') &&
-          !c.name.includes('รอลงข้อมูล') &&
-          !c.name.includes('ผู้ลงทะเบียนใหม่')
-      );
+    // STRICT REQUIREMENT: Only actual registered patient profiles are allowed to match for login
+    // NEVER match placeholder or unfinalized accounts ("ผู้ป่วยใหม่", "ผู้รับบริการใหม่", "รอลงข้อมูล")
+    const realPatientMatches = validMatches.filter((c) => {
+      const candObj = candidates.find((cand) => cand.patientCode.toUpperCase() === c.patient_code.toUpperCase());
+      return !isPlaceholderPatientName(c.name, candObj?.status);
+    });
 
-      const chosenMatchResult = realPatientMatches.length > 0 ? realPatientMatches[0] : validMatches[0];
-      const matchedCand =
-        candidates.find(
-          (c) => c.patientCode.toUpperCase() === chosenMatchResult.patient_code.toUpperCase()
-        ) || bestMatch;
+    if (realPatientMatches.length > 0) {
+      const chosenMatchResult = realPatientMatches[0];
+      const matchedCand = candidates.find(
+        (c) => c.patientCode.toUpperCase() === chosenMatchResult.patient_code.toUpperCase()
+      );
 
       if (matchedCand) {
         const finalScore = chosenMatchResult.similarity;
@@ -982,7 +1013,7 @@ class PatientFaceStorageService {
           calculatedDistance: chosenMatchResult.distance,
           similarity: `${finalPercent}%`,
           threshold: `${Math.round(similarityThreshold * 100)}%`,
-          isRealPatient: realPatientMatches.length > 0,
+          isRealPatient: true,
         });
 
         return {
@@ -994,6 +1025,9 @@ class PatientFaceStorageService {
         };
       }
     }
+
+    // [STRICT FALLBACK]: If no REAL registered account matched, NEVER fall back to placeholder/draft accounts!
+    // Return matched: null so the system prompts the user to register an account if they haven't yet.
 
     const highestPercent = Math.max(0, Math.min(100, Math.round(highestSimilarity * 100)));
 
