@@ -404,10 +404,15 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
         setVerifySuccess(false);
         setVerifyMessage(res.message || '❌ ไม่พบใบหน้าที่ลงทะเบียนในระบบ (ความคล้ายคลึงไม่ถึงเกณฑ์ 90%)');
         audioFeedback.playSafetyAlert();
-        voiceAssistant.speakSystem('ไม่พบใบหน้าที่ลงทะเบียนในระบบครับ กรุณาสมัครสมาชิกก่อน หรือใช้รหัส PIN ครับ', {
+        voiceAssistant.speakSystem('ไม่พบใบหน้าที่ลงทะเบียนในระบบครับ กำลังพาท่านไปสมัครสมาชิกใหม่ครับ', {
           priority: 'warning',
           force: true,
         });
+        setTimeout(() => {
+          setMode('enroll');
+          setEnrollStep(1);
+          setVerifyMessage('กรุณามองตรงเข้าหากล้องเพื่อเริ่มต้นสมัครสมาชิก');
+        }, 1200);
       }
     } catch (err) {
       console.warn('Verify error:', err);

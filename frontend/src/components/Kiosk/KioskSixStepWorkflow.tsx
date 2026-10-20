@@ -44,6 +44,7 @@ import {
   RotateCw,
   FlipHorizontal,
   Plus,
+  UserPlus,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Patient } from '../../types/patient';
@@ -2270,22 +2271,27 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           }, 1200);
           biometricTimersRef.current.push(t4);
         } else {
-          // [NO MATCH FOUND IN DATABASE - MASTER PROMPT SPECIFICATION]:
-          // Straight-Face Authentication: Captures straight-face snapshot and queries Supabase.
-          // If not found, show alert: "ไม่พบบัญชี โปรดติดต่อเจ้าหน้าที่ หรือลองสแกนอีกครั้ง"
-          // (Staff can bypass via bottom-right staff button [🛡️ ระบบบุคลากร / รพ.])
+          // [NO MATCH FOUND IN DATABASE / UNRECOGNIZED FACE]:
+          // Requirement: "ถ้าไม่มีหน้าในอยู่ในระบบ หน้าไม่ตรงกับที่มีอยู่ในระบบ ให้ไปสมัครบัญชีผู้ใช้ใหม่"
           console.info(
-            `[KIOSK] No matching account found for live face (Similarity: ${evaluation.bestScorePercent}%). Showing alert: 'ไม่พบบัญชี โปรดติดต่อเจ้าหน้าที่ หรือลองสแกนอีกครั้ง'`
+            `[KIOSK] No matching registered account found (Similarity: ${evaluation.bestScorePercent}%). Directing to new patient registration.`
           );
           setLastMatchScore(evaluation.bestScorePercent);
           lastLiveVectorRef.current = vector128;
           lastLiveJpgRef.current = liveJpg;
           setIsScanning(false);
           setBiometricPhase(0);
-          setShowNoAccountModal(true);
+          setShowNoAccountModal(false);
+
           try {
-            voiceAssistant.speak('ไม่พบข้อมูลบัญชีในระบบ หากยังไม่มีบัญชี สามารถกดสมัครบัญชีใหม่ได้ค่ะ', { level: 'system' });
+            voiceAssistant.speak(
+              'ไม่พบข้อมูลใบหน้าในระบบ กำลังพาท่านไปสมัครบัญชีผู้ป่วยใหม่นะคะ',
+              { level: 'system' }
+            );
           } catch {}
+
+          // Automatically proceed to register new patient account with captured face
+          await createPendingAccountAndNotify(vector128, liveJpg);
         }
       } else {
         // =========================================================================
@@ -2561,6 +2567,14 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     switch (targetId) {
       case 'step1-start':
         handleStartFaceLogin();
+        break;
+      case 'step1-register':
+        setIsEnrollmentFlow(true);
+        setScanStatusMessage('กรุณามองตรงเข้าหากล้อง เพื่อบันทึกใบหน้าสำหรับสมัครบัญชีใหม่');
+        changeStep(4);
+        try {
+          voiceAssistant.speak('ยินดีต้อนรับผู้ป่วยใหม่ค่ะ กรุณามองตรงเข้าหากล้องเพื่อเริ่มลงทะเบียนนะคะ', { level: 'system' });
+        } catch {}
         break;
       case 'step1-pin':
       case 'step4-pin':
@@ -3199,11 +3213,27 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 </div>
               </div>
 
-              {/* ข้อความแนะนำด้านล่างกล้อง */}
-              <div className="absolute bottom-3.5 inset-x-3.5 z-20 bg-black/80 backdrop-blur-md rounded-2xl py-2 px-3 text-center border border-emerald-400/40 shadow-xl pointer-events-none">
-                <p className="text-xs sm:text-sm text-emerald-300 font-extrabold flex items-center justify-center gap-1.5">
+              {/* ข้อความแนะนำด้านล่างกล้อง พร้อมปุ่มสมัครใหม่สำหรับผู้ป่วยใหม่ */}
+              <div className="absolute bottom-3.5 inset-x-3.5 z-20 bg-black/85 backdrop-blur-md rounded-2xl py-2 px-3.5 border border-emerald-400/40 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-1.5">
+                <p className="text-xs text-emerald-300 font-extrabold flex items-center justify-center gap-1.5 pointer-events-none">
                   <span>✋ แตะปุ่มบนจอ หรือยกแขน ซ้าย/ขวา เพื่อเลือก</span>
                 </p>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsEnrollmentFlow(true);
+                    setScanStatusMessage('กรุณามองตรงเข้าหากล้อง เพื่อบันทึกใบหน้าสำหรับสมัครบัญชีใหม่');
+                    changeStep(4);
+                    try {
+                      voiceAssistant.speak('เข้าสู่ขั้นตอนสมัครบัญชีใหม่ค่ะ กรุณามองตรงเข้าหากล้องนะคะ', { level: 'system' });
+                    } catch {}
+                  }}
+                  className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] sm:text-xs shadow-sm transition active:scale-95 cursor-pointer pointer-events-auto flex items-center gap-1 border border-emerald-400/40"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>ยังไม่มีบัญชี? สมัครใหม่</span>
+                </button>
               </div>
             </>
           )}
@@ -3445,13 +3475,31 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               </p>
             </div>
 
-            {/* ตัวเลือกสำรอง: เข้าสู่ระบบด้วยรหัส PIN */}
+            {/* ตัวเลือก: สมัครบัญชีผู้ป่วยใหม่ & เข้าสู่ระบบด้วยรหัส PIN */}
             {!cameraError && (
-              <div className="mt-4 sm:mt-5 w-full max-w-xs">
+              <div className="mt-3 sm:mt-4 w-full max-w-xs space-y-2">
+                <button
+                  type="button"
+                  data-kiosk-target="step1-register"
+                  onClick={() => {
+                    setIsEnrollmentFlow(true);
+                    setScanStatusMessage('กรุณามองตรงเข้าหากล้อง เพื่อบันทึกใบหน้าสำหรับสมัครบัญชีใหม่');
+                    changeStep(4);
+                    try {
+                      voiceAssistant.speak('ยินดีต้อนรับผู้ป่วยใหม่ค่ะ กรุณามองตรงเข้าหากล้องเพื่อเริ่มลงทะเบียนนะคะ', { level: 'system' });
+                    } catch {}
+                  }}
+                  className="w-full min-h-[46px] py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-600 text-white font-extrabold text-xs sm:text-sm shadow-md hover:shadow-lg transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 border border-emerald-400/40"
+                  id="btnKioskRegisterNewPatient"
+                >
+                  <Plus className="w-4 h-4 text-white" />
+                  <span>📝 สมัครบัญชีผู้ป่วยใหม่ (ลงทะเบียนที่นี่)</span>
+                </button>
+
                 <button
                   data-kiosk-target="step1-pin"
                   onClick={() => setShowPinModal(true)}
-                  className="w-full min-h-[44px] py-2 px-4 rounded-xl bg-slate-100/90 hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 font-bold text-xs sm:text-sm border border-slate-300 hover:border-emerald-400 flex items-center justify-center gap-2 transition cursor-pointer active:scale-95 shadow-2xs"
+                  className="w-full min-h-[40px] py-2 px-4 rounded-xl bg-slate-100/90 hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 font-bold text-xs sm:text-sm border border-slate-300 hover:border-emerald-400 flex items-center justify-center gap-2 transition cursor-pointer active:scale-95 shadow-2xs"
                   id="btnKioskPinFallbackMain"
                 >
                   <Key className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -3499,6 +3547,11 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             biometricMatchMessage={scanStatusMessage}
             onRetryCamera={startCamera}
             onFallbackToPin={() => setShowPinModal(true)}
+            onRegisterNewPatient={() => {
+              setIsEnrollmentFlow(true);
+              setScanStatusMessage('กรุณามองตรงเข้าหากล้อง เพื่อบันทึกใบหน้าสำหรับสมัครบัญชีใหม่');
+              handlePerformFaceScan(true);
+            }}
           />
         )}
 
@@ -3575,31 +3628,49 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             /* Dual-Channel Registration View */
             <div className="w-full flex-1 flex flex-col items-center justify-start p-1 sm:p-2 text-center animate-fadeIn">
               {/* Notification Banner */}
-              <div className="w-full bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 border-2 border-amber-400 rounded-3xl p-3.5 sm:p-4 mb-4 shadow-sm text-left flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="w-full bg-gradient-to-r from-emerald-50 via-teal-50 to-amber-50 border-2 border-emerald-400 rounded-3xl p-3.5 sm:p-4 mb-4 shadow-sm text-left flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 text-white flex items-center justify-center font-black text-xl shadow-md shrink-0">
-                    <Clock className="w-6 h-6 animate-pulse" />
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white flex items-center justify-center font-black text-xl shadow-md shrink-0">
+                    <UserPlus className="w-6 h-6" />
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-amber-200 text-amber-950 font-extrabold text-xs">
-                        <span className="w-2 h-2 rounded-full bg-amber-600 animate-ping" />
-                        <span>บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว</span>
+                      <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-emerald-200 text-emerald-950 font-extrabold text-xs">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>สมัครบัญชีผู้ป่วยใหม่ (เปิดประวัติการรักษา)</span>
                       </span>
-                      <span className="px-2.5 py-0.5 rounded-full bg-white border border-amber-300 font-mono text-xs font-black text-slate-800">
-                        รหัสคนไข้: {pendingEnrolledUser?.code}
+                      <span className="px-2.5 py-0.5 rounded-full bg-white border border-emerald-300 font-mono text-xs font-black text-slate-800">
+                        รหัส HN: {pendingEnrolledUser?.code}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-600 font-bold mt-1">
-                      สแกนใบหน้าและบันทึกเวกเตอร์ชีวมิติ 128 มิติเรียบร้อยแล้ว (เวลา: {pendingEnrolledUser?.faceRegisteredAt || 'เมื่อสักครู่'})
+                    <p className="text-xs text-slate-700 font-bold mt-1">
+                      📸 สแกนใบหน้าและบันทึกเวกเตอร์ชีวมิติเรียบร้อยแล้ว กรุณากรอกข้อมูลเพื่อเปิดประวัติคนไข้ใหม่ค่ะ
                     </p>
                   </div>
                 </div>
 
-                <div className="text-right shrink-0">
-                  <span className="text-[11px] font-bold text-amber-900 bg-amber-100/80 px-2.5 py-1 rounded-xl border border-amber-200">
-                    ทำเสร็จช่องทางใดช่องทางหนึ่ง ระบบซิงค์ทันที
-                  </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleRetryScan}
+                    className="py-1.5 px-3 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold text-xs flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>ลองสแกนใหม่</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowLinkAccountModal(true);
+                      setFoundAccountForLink(null);
+                      setLinkSearchError(null);
+                      setLinkSearchQuery('');
+                    }}
+                    className="py-1.5 px-3 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 font-bold text-xs flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                  >
+                    <UserCheck className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>มีประวัติเดิมแล้ว</span>
+                  </button>
                 </div>
               </div>
 

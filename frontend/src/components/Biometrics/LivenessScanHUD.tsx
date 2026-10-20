@@ -19,6 +19,7 @@ import {
   FlipVertical,
   RotateCw,
   FlipHorizontal,
+  UserPlus,
 } from 'lucide-react';
 import {
   CameraState,
@@ -44,6 +45,7 @@ interface LivenessScanHUDProps {
   biometricMatchMessage: string | null;
   onRetryCamera: () => void;
   onFallbackToPin: () => void;
+  onRegisterNewPatient?: () => void;
 }
 
 export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
@@ -62,6 +64,7 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
   biometricMatchMessage,
   onRetryCamera,
   onFallbackToPin,
+  onRegisterNewPatient,
 }) => {
   const qg = frameData?.qualityGate;
   const yaw = Math.round(frameData?.yawDeg || 0);
@@ -433,14 +436,28 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
       </div>
 
       {/* 3. Bottom Quick Actions for Elderly */}
-      <div className="w-full flex items-center gap-2 mt-1">
+      <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+        {onRegisterNewPatient && (
+          <button
+            type="button"
+            onClick={onRegisterNewPatient}
+            className="w-full min-h-[48px] py-2 px-3 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-600 text-white font-black text-xs sm:text-sm shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 border border-emerald-400/40"
+            id="btnRegisterFromHUD"
+          >
+            <UserPlus className="w-4 h-4 text-white" />
+            <span>📝 ยังไม่มีบัญชี? สมัครผู้ป่วยใหม่</span>
+          </button>
+        )}
         <button
+          type="button"
           onClick={onFallbackToPin}
-          className="w-full min-h-[50px] sm:min-h-[58px] py-2.5 px-4 rounded-2xl bg-white hover:bg-slate-50 border-2 border-slate-300 text-slate-700 font-black text-sm sm:text-base shadow-sm transition flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+          className={`w-full min-h-[48px] py-2 px-3 rounded-2xl bg-white hover:bg-slate-50 border-2 border-slate-300 text-slate-700 font-bold text-xs sm:text-sm shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 ${
+            !onRegisterNewPatient ? 'col-span-full' : ''
+          }`}
           id="btnFallbackPinFromHUD"
         >
-          <Key className="w-5 h-5 text-emerald-600" />
-          <span>หรือ สลับไปเข้าสู่ระบบด้วยรหัส PIN 6 หลัก</span>
+          <Key className="w-4 h-4 text-emerald-600" />
+          <span>หรือ สลับไปใช้รหัส PIN</span>
         </button>
       </div>
     </div>
