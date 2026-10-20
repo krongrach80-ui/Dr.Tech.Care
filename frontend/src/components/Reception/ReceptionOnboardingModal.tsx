@@ -24,7 +24,7 @@ import { useHospitalStore } from '../../store/hospitalStore';
 import { audioFeedback } from '../../services/audioService';
 import { voiceAssistant } from '../../services/voiceAssistantService';
 import confetti from 'canvas-confetti';
-import { patientFaceStorageService } from '../../services/patientFaceStorageService';
+import { patientFaceStorageService, isPlaceholderPatientName } from '../../services/patientFaceStorageService';
 import { faceRegistryService } from '../../services/faceRegistryService';
 
 interface ReceptionOnboardingModalProps {
@@ -205,8 +205,8 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
   // Proceed from Step 1 (Form) to Step 2 (Scan)
   const handleProceedToScan = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fullName.trim()) {
-      setFormError('กรุณากรอกชื่อ-นามสกุลของคนไข้');
+    if (!fullName.trim() || isPlaceholderPatientName(fullName.trim())) {
+      setFormError('กรุณากรอกชื่อ-นามสกุลจริงของคนไข้ (ไม่อนุญาตให้ใช้ชื่อทั่วไป เช่น ผู้ป่วยใหม่)');
       return;
     }
     if (!hasPdpaConsent) {

@@ -38,6 +38,8 @@ const STORAGE_KEY = 'strongcare_enrolled_faces';
 export const STRICT_COSINE_THRESHOLD = 0.88;
 export const STRICT_DISTANCE_THRESHOLD = 0.45;
 
+import { isPlaceholderPatientName } from './patientFaceStorageService';
+
 export class FaceRegistryService {
   private static instance: FaceRegistryService;
   private cache: EnrolledFaceProfile[] | null = null;
@@ -69,10 +71,18 @@ export class FaceRegistryService {
       }
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        this.cache = parsed.map((p) => ({
-          ...p,
-          face_image_url: p.face_image_url || p.photo || p.avatar_url,
-        }));
+        const cleaned = parsed
+          .filter((p) => p && p.name && !isPlaceholderPatientName(p.name))
+          .map((p) => ({
+            ...p,
+            face_image_url: p.face_image_url || p.photo || p.avatar_url,
+          }));
+        if (cleaned.length !== parsed.length) {
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
+          } catch {}
+        }
+        this.cache = cleaned;
         return this.cache;
       }
     } catch (e) {
@@ -87,6 +97,11 @@ export class FaceRegistryService {
    * บันทึกหรืออัปเดตโปรไฟล์ใบหน้า (เวกเตอร์ 128 มิติ + รูปถ่ายใบหน้าประจำตัวคนไข้)
    */
   public saveProfile(profile: EnrolledFaceProfile): void {
+    if (!profile.name || isPlaceholderPatientName(profile.name)) {
+      console.warn('FaceRegistryService: Disallowing saving of placeholder profile:', profile.name);
+      return;
+    }
+
     const list = this.getAllProfiles();
     const cleanEmbeddings = (profile.embeddings || []).filter(
       (v) => Array.isArray(v) && v.length === 128

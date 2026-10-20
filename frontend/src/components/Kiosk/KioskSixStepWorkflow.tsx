@@ -634,6 +634,13 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     }
   }, [selectedPatient]);
 
+  // Purge any lingering placeholder accounts on component mount so they never clash with face login
+  useEffect(() => {
+    try {
+      patientFaceStorageService.purgeAllPlaceholderRecords();
+    } catch {}
+  }, []);
+
   // Synchronize and enrich registered patients in faceRegistryService and users store
   useEffect(() => {
     try {
@@ -648,7 +655,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         );
         if (u) {
           let modified = false;
-          if (u.name && u.name !== p.name && !u.name.includes('ผู้รับบริการใหม่') && !u.name.includes('ผู้ลงทะเบียนใหม่')) {
+          if (u.name && u.name !== p.name && !isPlaceholderPatientName(u.name, u.status)) {
             p.name = u.name;
             modified = true;
           }
@@ -674,11 +681,11 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
       // 2. Ensure active patients from users have a profile in faceRegistryService
       const activePatients = users.filter(
-        (u) => u.role === 'patient' && u.status === 'active' && !u.name.includes('ผู้รับบริการใหม่') && !u.name.includes('ผู้ลงทะเบียนใหม่')
+        (u) => u.role === 'patient' && u.status === 'active' && !isPlaceholderPatientName(u.name, u.status)
       );
 
       for (const ap of activePatients) {
-        if (!ap.code) continue;
+        if (!ap.code || isPlaceholderPatientName(ap.name, ap.status)) continue;
         const exists = allProfiles.some(
           (p) => p.patientCode?.toLowerCase() === ap.code.toLowerCase() || String(p.patientId) === String(ap.id)
         );
@@ -1344,6 +1351,8 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           if (!sbErr && dbPatients && Array.isArray(dbPatients)) {
             for (const p of dbPatients) {
               if (!p.patient_code) continue;
+              // NEVER include placeholder patients like 'ผู้ป่วยใหม่' into the biometric matching pool
+              if (isPlaceholderPatientName(p.full_name || p.name, p.status)) continue;
               const code = p.patient_code.toUpperCase();
 
               // Extract 128-d vector using robust parseVector
@@ -1383,6 +1392,9 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         // 2. Scan patientFaceStorageService local isolated records
         const localRecords = patientFaceStorageService.getAllPatientRecords();
         localRecords.forEach((r) => {
+          if (!r.patient_profile?.patient_id) return;
+          // Skip any placeholder/draft accounts
+          if (isPlaceholderPatientName(r.patient_profile.full_name, r.patient_profile.status)) return;
           const code = r.patient_profile.patient_id.toUpperCase();
           const parsed = patientFaceStorageService.parseVector(r.biometric_data.face_vector);
           if (parsed) {
@@ -1405,7 +1417,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             } else {
               // If already in map with placeholder name, prioritize real name from dossier
               const existing = candidateMap.get(code)!;
-              if (existing.name.startsWith('ผู้รับบริการใหม่') && !r.patient_profile.full_name.startsWith('ผู้รับบริการใหม่')) {
+              if (isPlaceholderPatientName(existing.name) && !isPlaceholderPatientName(r.patient_profile.full_name)) {
                 existing.name = r.patient_profile.full_name;
               }
             }
@@ -1415,6 +1427,9 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         // 3. Scan users in hospitalStore
         users.forEach((u) => {
           if (u.role === 'patient') {
+            // Strictly skip any placeholder patient names
+            if (isPlaceholderPatientName(u.name, u.status)) return;
+
             const rawVec = u.face_vector || u.biometricVector;
             const parsed = patientFaceStorageService.parseVector(rawVec);
             const savedImg =
@@ -1439,7 +1454,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               } else {
                 // If candidate has placeholder name, update with real name from store
                 const existing = candidateMap.get(code)!;
-                if (existing.name.startsWith('ผู้รับบริการใหม่') && u.name && !u.name.startsWith('ผู้รับบริการใหม่')) {
+                if (isPlaceholderPatientName(existing.name) && !isPlaceholderPatientName(u.name)) {
                   existing.name = u.name;
                 }
               }
@@ -1450,7 +1465,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         // 4. Scan faceRegistryService profiles
         const registryProfiles = faceRegistryService.getAllProfiles();
         registryProfiles.forEach((p) => {
-          if (!p.patientCode) return;
+          if (!p.patientCode || isPlaceholderPatientName(p.name)) return;
           const key = p.patientCode.toUpperCase();
           const parsed = patientFaceStorageService.parseVector(p.embeddings?.[0]);
           if (parsed && !candidateMap.has(key)) {
@@ -1471,7 +1486,9 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           }
         });
 
-        const candidates = Array.from(candidateMap.values()).filter((c) => c.status !== 'disabled' && c.status !== 'suspended');
+        const candidates = Array.from(candidateMap.values()).filter(
+          (c) => c.status !== 'disabled' && c.status !== 'suspended' && !isPlaceholderPatientName(c.name, c.status)
+        );
 
         // b & c) Cosine Similarity (threshold >= 80% / 0.80) Matching Logic
         const evaluation = patientFaceStorageService.matchLiveFaceAgainstDatabase(vector128, candidates, 0.80);
@@ -1889,6 +1906,19 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         face_image_url: livePhoto,
         status: 'active',
       });
+
+      try {
+        faceRegistryService.saveProfile({
+          patientId: foundAccountForLink.id,
+          patientCode: hn,
+          name: foundAccountForLink.name,
+          age: Number(foundAccountForLink.age) || 65,
+          gender: foundAccountForLink.gender || 'male',
+          embeddings: [vec],
+          face_image_url: livePhoto,
+          enrolledAt: new Date().toISOString(),
+        });
+      } catch {}
 
       // Target Patient
       const targetPatient: Patient = {

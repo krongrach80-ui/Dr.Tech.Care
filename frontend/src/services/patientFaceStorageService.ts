@@ -945,7 +945,12 @@ class PatientFaceStorageService {
     let lowestDistance = 999.0;
     let highestSimilarity = -1;
 
-    for (const cand of candidates) {
+    // Strictly evaluate ONLY genuine registered patient accounts (exclude any placeholder accounts like 'ผู้ป่วยใหม่')
+    const eligibleCandidates = candidates.filter(
+      (cand) => !isPlaceholderPatientName(cand.name, cand.status)
+    );
+
+    for (const cand of eligibleCandidates) {
       const normCand = this.normalizeVector(cand.vector);
       const dist = this.computeEuclideanDistance(normLive, normCand);
       const cosSim = this.computeCosineSimilarity(normLive, normCand);
@@ -989,16 +994,11 @@ class PatientFaceStorageService {
     // Filter valid matches meeting threshold (>= 80% / 0.80)
     const validMatches = comparisons.filter((c) => c.similarity >= similarityThreshold);
 
-    // Prioritize accounts with genuine patient names, but allow any valid account in the system meeting the threshold to match
-    const realPatientMatches = validMatches.filter((c) => {
-      const candObj = candidates.find((cand) => cand.patientCode.toUpperCase() === c.patient_code.toUpperCase());
-      return !isPlaceholderPatientName(c.name, candObj?.status);
-    });
-
-    const chosenMatchResult = realPatientMatches.length > 0 ? realPatientMatches[0] : validMatches[0];
+    // Chosen match must be a genuine real patient match meeting threshold - NEVER fall back to placeholder
+    const chosenMatchResult = validMatches.length > 0 ? validMatches[0] : null;
 
     if (chosenMatchResult) {
-      const matchedCand = candidates.find(
+      const matchedCand = eligibleCandidates.find(
         (c) => c.patientCode.toUpperCase() === chosenMatchResult.patient_code.toUpperCase()
       );
 
@@ -1380,6 +1380,15 @@ class PatientFaceStorageService {
             try {
               const record: CompletePatientRecord = JSON.parse(raw);
               const pId = record?.patient_profile?.patient_id;
+              const pName = record?.patient_profile?.full_name || record?.patient_profile?.first_name;
+              const pStatus = record?.patient_profile?.status;
+
+              // Skip and purge placeholder/draft accounts lingering in storage
+              if (isPlaceholderPatientName(pName, pStatus)) {
+                localStorage.removeItem(key);
+                continue;
+              }
+
               if (pId) {
                 const norm = this.normalizePatientId(pId);
                 if (deletedSet.has(norm) || deletedSet.has(String(pId).toUpperCase()) || (record.patient_profile.id && deletedSet.has(String(record.patient_profile.id)))) {
@@ -1394,6 +1403,77 @@ class PatientFaceStorageService {
         }
       }
     } catch {}
+  }
+
+  /**
+   * Purge all placeholder/draft records (such as 'ผู้ป่วยใหม่') across localStorage and memory
+   */
+  public purgeAllPlaceholderRecords(): number {
+    if (typeof window === 'undefined' || !window.localStorage) return 0;
+    let purgedCount = 0;
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith('patient_record_') || k.endsWith('patient_record.json'))) {
+          try {
+            const raw = localStorage.getItem(k);
+            if (raw) {
+              const record: CompletePatientRecord = JSON.parse(raw);
+              const name = record?.patient_profile?.full_name || record?.patient_profile?.first_name;
+              const status = record?.patient_profile?.status;
+              if (isPlaceholderPatientName(name, status)) {
+                keysToRemove.push(k);
+                const pId = record?.patient_profile?.patient_id;
+                if (pId) {
+                  this.memoryRecords.delete(this.normalizePatientId(pId));
+                  this.memoryRecords.delete(String(pId).toUpperCase());
+                }
+              }
+            }
+          } catch {}
+        }
+      }
+      keysToRemove.forEach((k) => {
+        localStorage.removeItem(k);
+        purgedCount++;
+      });
+
+      // Also clean strongcare_enrolled_faces from FaceRegistry
+      const rawFaces = localStorage.getItem('strongcare_enrolled_faces');
+      if (rawFaces) {
+        try {
+          const list = JSON.parse(rawFaces);
+          if (Array.isArray(list)) {
+            const cleaned = list.filter((p: any) => !isPlaceholderPatientName(p.name));
+            if (cleaned.length !== list.length) {
+              localStorage.setItem('strongcare_enrolled_faces', JSON.stringify(cleaned));
+              purgedCount += (list.length - cleaned.length);
+            }
+          }
+        } catch {}
+      }
+
+      // Also clean strongcare_hospital_users
+      const rawUsers = localStorage.getItem('strongcare_hospital_users');
+      if (rawUsers) {
+        try {
+          const uList = JSON.parse(rawUsers);
+          if (Array.isArray(uList)) {
+            const cleaned = uList.filter((u: any) => u.role !== 'patient' || !isPlaceholderPatientName(u.name, u.status));
+            if (cleaned.length !== uList.length) {
+              localStorage.setItem('strongcare_hospital_users', JSON.stringify(cleaned));
+              purgedCount += (uList.length - cleaned.length);
+            }
+          }
+        } catch {}
+      }
+
+      if (purgedCount > 0) {
+        console.log(`[STORAGE] Purged ${purgedCount} legacy placeholder records (e.g. ผู้ป่วยใหม่)`);
+      }
+    } catch {}
+    return purgedCount;
   }
 }
 
