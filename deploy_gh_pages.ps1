@@ -8,7 +8,7 @@ Remove-Item -Force $gitIndex
 Remove-Item Env:\GIT_INDEX_FILE
 
 $parent = (git rev-parse origin/gh-pages).Trim()
-$commit = (git commit-tree $tree -p $parent -m "fix(schedule): therapy-schedule calendar visibility, RBAC safe delete, and cloud sync").Trim()
+$commit = (git commit-tree $tree -p $parent -m "fix(face-auth): sync registration patient name and prevent infinite registration loop on unrecognized face").Trim()
 git update-ref refs/heads/gh-pages $commit
 Write-Host "gh-pages branch successfully updated to commit: $commit"
 git push origin gh-pages
