@@ -5,6 +5,7 @@ import { resolveDefaultApiUrl, IS_STATIC_MODE } from '../config/apiConfig';
 import { IndexedDbService } from './indexedDbService';
 import { supabaseService } from './supabaseService';
 import { faceRegistryService } from './faceRegistryService';
+import { patientFaceStorageService } from './patientFaceStorageService';
 
 function getApiBase(): string {
   return resolveDefaultApiUrl() || '/api';
@@ -428,9 +429,11 @@ export const api = {
           }
         } else {
           const pCode = payload.patient_code || `P-${Math.floor(1000 + Math.random() * 9000)}`;
+          const cleanName = (payload.full_name || payload.name || '').trim() || 'ผู้ลงทะเบียนใหม่';
           const created = await supabaseService.createPatient({
             patient_code: pCode,
-            name: payload.name,
+            name: cleanName,
+            full_name: cleanName,
             age: payload.age || 60,
             gender: payload.gender || 'ชาย',
             phone: payload.phone || null,
@@ -446,6 +449,7 @@ export const api = {
               id: created.id,
               patient_code: created.patient_code,
               name: created.full_name,
+              full_name: created.full_name,
               age: created.age,
               gender: created.gender,
               photo: payload.photo || null,
@@ -462,10 +466,12 @@ export const api = {
 
     const pCode = enrolledPatient?.patient_code || payload.patient_code || `P-${Math.floor(1000 + Math.random() * 9000)}`;
     if (!enrolledPatient) {
+      const cleanName = (payload.full_name || payload.name || '').trim() || 'ผู้ลงทะเบียนใหม่';
       enrolledPatient = {
         id: `local-${Date.now()}`,
         patient_code: pCode,
-        name: payload.name || 'ผู้ลงทะเบียนใหม่',
+        name: cleanName,
+        full_name: cleanName,
         age: payload.age || 60,
         gender: payload.gender || 'ชาย',
         photo: payload.photo || null,
@@ -481,6 +487,7 @@ export const api = {
           patient_code: pCode,
           code: pCode,
           name: enrolledPatient.name,
+          full_name: enrolledPatient.name,
           age: enrolledPatient.age,
           gender: enrolledPatient.gender,
           phone: payload.phone || null,
@@ -512,6 +519,31 @@ export const api = {
         embeddings: rawVectors,
         enrolledAt: new Date().toISOString(),
       });
+    }
+
+    // 4. Isolated Patient Face Storage Service
+    try {
+      patientFaceStorageService.savePatientRecord(pCode, {
+        patient_profile: {
+          patient_id: pCode,
+          id: enrolledPatient.id,
+          full_name: enrolledPatient.name,
+          first_name: enrolledPatient.name.split(' ')[0] || enrolledPatient.name,
+          last_name: enrolledPatient.name.split(' ').slice(1).join(' ') || '',
+          age: enrolledPatient.age,
+          gender: enrolledPatient.gender,
+          status: 'active',
+          created_at: new Date().toISOString().split('T')[0],
+        },
+        biometric_data: {
+          face_vector: rawVectors.length > 0 ? rawVectors[0] : [],
+          registered_face_url: payload.photo || '',
+          enrolled_at: new Date().toISOString(),
+          model_version: 'face-resnet34-v2',
+        },
+      }, payload.photo || undefined);
+    } catch (fsErr) {
+      console.warn('⚠️ patientFaceStorageService savePatientRecord warning in enrollFace:', fsErr);
     }
 
     return {

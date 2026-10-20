@@ -15,6 +15,8 @@ import { supabase, isSupabaseConfigured, PATIENTS_REALTIME_CHANNEL } from '../li
 import { UserAccount, UserRole, PhysicalTherapist, HospitalExercise, ActivityLog, AiSystemSettings, TemporaryCaseDelegation, MedicalNoteItem } from '../types/hospital';
 import { Patient } from '../types/patient';
 import { Session } from '../types/session';
+import { patientFaceStorageService, isPlaceholderPatientName } from './patientFaceStorageService';
+import { faceRegistryService } from './faceRegistryService';
 
 /**
  * Hash PIN using SHA-256 for secure patient authentication
@@ -577,7 +579,22 @@ export const supabaseService = {
     if (!isSupabaseConfigured()) return null;
     const pinH = patientData.pin || patientData.pin_hash ? String(patientData.pin || patientData.pin_hash).trim() : '1234';
     const patientCode = patientData.patient_code || patientData.code || `P-${Math.floor(1000 + Math.random() * 9000)}`;
-    const fullName = (patientData.full_name || patientData.name || 'ผู้ป่วยใหม่').trim();
+    let fullName = (patientData.full_name || patientData.name || '').trim();
+    if (!fullName || isPlaceholderPatientName(fullName)) {
+      const localRec = patientFaceStorageService.getPatientRecord(patientCode);
+      const dossierName = localRec?.patient_profile?.full_name || (localRec?.patient_profile?.first_name ? `${localRec.patient_profile.first_name} ${localRec.patient_profile.last_name || ''}`.trim() : '');
+      if (dossierName && !isPlaceholderPatientName(dossierName)) {
+        fullName = dossierName.trim();
+      } else {
+        const regProfile = faceRegistryService.getAllProfiles().find((p) => p.patientCode && p.patientCode.toUpperCase() === String(patientCode).toUpperCase());
+        if (regProfile?.name && !isPlaceholderPatientName(regProfile.name)) {
+          fullName = regProfile.name.trim();
+        }
+      }
+    }
+    if (!fullName) {
+      fullName = 'ผู้ป่วยใหม่';
+    }
 
     // Resolve valid UUID for profiles foreign key to avoid 23503 constraint error
     const respTherapist = await this.resolveTherapistProfileId(patientData.responsible_therapist_id);
@@ -658,6 +675,24 @@ export const supabaseService = {
       console.warn('Realtime broadcast new_patient warning:', bcErr);
     }
 
+    if (data.full_name && !isPlaceholderPatientName(data.full_name)) {
+      patientFaceStorageService.savePatientRecord(data.patient_code, {
+        patient_profile: {
+          patient_id: data.patient_code,
+          full_name: data.full_name,
+          first_name: data.full_name.split(' ')[0] || data.full_name,
+          last_name: data.full_name.split(' ').slice(1).join(' ') || '',
+        },
+      });
+      const existingProf = faceRegistryService.getAllProfiles().find((p) => p.patientCode && p.patientCode.toUpperCase() === String(data.patient_code).toUpperCase());
+      if (existingProf) {
+        faceRegistryService.saveProfile({
+          ...existingProf,
+          name: data.full_name,
+        });
+      }
+    }
+
     await this.logActivity(
       'CREATE_PATIENT',
       `ลงทะเบียนคนไข้ใหม่: ${data.full_name} (${data.patient_code})`,
@@ -728,7 +763,14 @@ export const supabaseService = {
       }
 
       const payload: any = {};
-      if (updates.name || updates.full_name) payload.full_name = (updates.name || updates.full_name).trim();
+      if (updates.name || updates.full_name) {
+        const newName = (updates.name || updates.full_name).trim();
+        if (isPlaceholderPatientName(newName) && existing?.full_name && !isPlaceholderPatientName(existing.full_name)) {
+          payload.full_name = existing.full_name;
+        } else {
+          payload.full_name = newName;
+        }
+      }
       if (updates.age) payload.age = Number(updates.age);
       if (updates.gender) {
         payload.gender = (updates.gender === 'female' || updates.gender === 'หญิง') ? 'หญิง' : 'ชาย';
@@ -813,6 +855,23 @@ export const supabaseService = {
         throw error;
       }
       if (data) {
+        if (data.full_name && !isPlaceholderPatientName(data.full_name)) {
+          patientFaceStorageService.savePatientRecord(data.patient_code, {
+            patient_profile: {
+              patient_id: data.patient_code,
+              full_name: data.full_name,
+              first_name: data.full_name.split(' ')[0] || data.full_name,
+              last_name: data.full_name.split(' ').slice(1).join(' ') || '',
+            },
+          });
+          const existingProf = faceRegistryService.getAllProfiles().find((p) => p.patientCode && p.patientCode.toUpperCase() === String(data.patient_code).toUpperCase());
+          if (existingProf) {
+            faceRegistryService.saveProfile({
+              ...existingProf,
+              name: data.full_name,
+            });
+          }
+        }
         await this.logActivity(
           'UPDATE_PATIENT',
           `อัปเดตเวชระเบียนคนไข้: ${data.full_name} (${data.patient_code})`,

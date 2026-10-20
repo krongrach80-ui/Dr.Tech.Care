@@ -25,6 +25,8 @@ import {
 import { UserAccount, UserRole, PhysicalTherapist, MedicalNoteItem } from '../../types/hospital';
 import { useHospitalStore } from '../../store/hospitalStore';
 import { defaultDash, formatThaiDate, formatThaiDateTime } from '../../utils/dashboardUtils';
+import { patientFaceStorageService, isPlaceholderPatientName } from '../../services/patientFaceStorageService';
+import { faceRegistryService } from '../../services/faceRegistryService';
 
 interface EditPatientModalProps {
   isOpen: boolean;
@@ -84,7 +86,20 @@ export const EditPatientModal: React.FC<EditPatientModalProps> = ({
   useEffect(() => {
     if (isOpen && patient) {
       setActiveTab('personal');
-      setName(patient.name || '');
+      let resolvedName = patient.name || '';
+      if (isPlaceholderPatientName(resolvedName, patient.status) && patient.code) {
+        const dossier = patientFaceStorageService.getPatientRecord(patient.code);
+        const dName = dossier?.patient_profile?.full_name || (dossier?.patient_profile?.first_name ? `${dossier.patient_profile.first_name} ${dossier.patient_profile.last_name || ''}`.trim() : '');
+        if (dName && !isPlaceholderPatientName(dName)) {
+          resolvedName = dName;
+        } else {
+          const prof = faceRegistryService.getAllProfiles().find((p) => p.patientCode && p.patientCode.toUpperCase() === patient.code.toUpperCase());
+          if (prof?.name && !isPlaceholderPatientName(prof.name)) {
+            resolvedName = prof.name;
+          }
+        }
+      }
+      setName(resolvedName);
       setAge(patient.age || 65);
       setGender(patient.gender || 'male');
       setPhone(patient.phone || '');

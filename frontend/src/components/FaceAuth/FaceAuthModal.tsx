@@ -25,6 +25,9 @@ import { audioFeedback } from '../../services/audioService';
 import { voiceAssistant } from '../../services/voiceAssistantService';
 import confetti from 'canvas-confetti';
 import { cameraOrientationService, CameraOrientation, CameraRotation } from '../../services/cameraOrientationService';
+import { useHospitalStore } from '../../store/hospitalStore';
+import { patientFaceStorageService } from '../../services/patientFaceStorageService';
+import { faceRegistryService } from '../../services/faceRegistryService';
 
 interface FaceAuthModalProps {
   isOpen: boolean;
@@ -628,8 +631,10 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
     }
 
     try {
+      const realName = enrollName.trim();
       const res = await api.enrollFace({
-        name: enrollName.trim(),
+        name: realName,
+        full_name: realName,
         age: enrollAge,
         gender: enrollGender,
         photo: capturedPhoto || undefined,
@@ -641,13 +646,83 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
         audioFeedback.playWorkoutComplete();
         confetti({ particleCount: 100, spread: 70, origin: { y: 0.5 } });
 
+        const pCode = res.patient.patient_code || res.patient.code || `P-${Math.floor(1000 + Math.random() * 9000)}`;
+
+        // Sync to patientFaceStorageService so Kiosk and Admin have the genuine dossier
+        try {
+          patientFaceStorageService.savePatientRecord(pCode, {
+            patient_profile: {
+              patient_id: pCode,
+              id: res.patient.id,
+              full_name: realName,
+              first_name: realName.split(' ')[0] || realName,
+              last_name: realName.split(' ').slice(1).join(' ') || '',
+              age: enrollAge,
+              gender: enrollGender,
+              status: 'active',
+              created_at: new Date().toISOString().split('T')[0],
+            },
+            biometric_data: {
+              face_vector: embeddingsList?.[0]?.embedding || [],
+              registered_face_url: capturedPhoto || '',
+              enrolled_at: new Date().toISOString(),
+              model_version: 'face-resnet34-v2',
+            },
+            medical_records: {
+              diagnosis: 'ลงทะเบียนด้วยใบหน้า Face Enrollment',
+              chief_complaint: 'ลงทะเบียนด้วยใบหน้า Face Enrollment',
+            },
+          }, capturedPhoto || undefined);
+        } catch (e) {
+          console.warn('[FaceAuthModal] savePatientRecord warning:', e);
+        }
+
+        // Sync to faceRegistryService so face login matches with genuine name
+        try {
+          faceRegistryService.saveProfile({
+            patientId: res.patient.id,
+            patientCode: pCode,
+            name: realName,
+            age: enrollAge,
+            gender: enrollGender,
+            face_image_url: capturedPhoto || undefined,
+            embeddings: embeddingsList.map((e) => e.embedding).filter(Boolean),
+            enrolledAt: new Date().toISOString(),
+          });
+        } catch (e) {
+          console.warn('[FaceAuthModal] saveProfile warning:', e);
+        }
+
+        // Sync to HospitalStore so Admin User Management immediately shows the exact name entered during registration!
+        try {
+          useHospitalStore.getState().upsertPatientFromSupabase({
+            ...res.patient,
+            id: res.patient.id,
+            patient_code: pCode,
+            full_name: realName,
+            name: realName,
+            age: enrollAge,
+            gender: enrollGender,
+            photo: capturedPhoto,
+            face_image_url: capturedPhoto,
+            face_vector: embeddingsList?.[0]?.embedding,
+            status: 'active',
+          });
+        } catch (e) {
+          console.warn('[FaceAuthModal] upsertPatientFromSupabase warning:', e);
+        }
+
         await fetchPatients();
-        selectPatient(res.patient);
+        selectPatient({
+          ...res.patient,
+          name: realName,
+          full_name: realName,
+        });
 
         setVerifySuccess(true);
-        const codeMsg = res.patient.patient_code ? ` (รหัส: ${res.patient.patient_code} | PIN: 1234)` : '';
-        setVerifyMessage(`สมัครสมาชิกสำเร็จ! ยินดีต้อนรับคุณ ${res.patient.name}${codeMsg}`);
-        const pName = res.patient.name ? res.patient.name.split(' ')[0] : 'ท่าน';
+        const codeMsg = pCode ? ` (รหัส: ${pCode} | PIN: 1234)` : '';
+        setVerifyMessage(`สมัครสมาชิกสำเร็จ! ยินดีต้อนรับคุณ ${realName}${codeMsg}`);
+        const pName = realName.split(' ')[0] || 'ท่าน';
         voiceAssistant.speakSystem(`สมัครสมาชิกเรียบร้อยแล้วครับ ยินดีต้อนรับคุณ${pName}ครับ`, {
           priority: 'success',
           force: true,

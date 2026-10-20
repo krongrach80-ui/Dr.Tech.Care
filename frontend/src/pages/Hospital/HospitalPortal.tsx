@@ -75,7 +75,7 @@ import { BannedManagementModal } from '../../components/Hospital/BannedManagemen
 import { EditTreatmentPlanModal } from '../../components/Hospital/EditTreatmentPlanModal';
 import { NetworkSyncModal } from '../../components/Hospital/NetworkSyncModal';
 import { PatientFaceEnrollModal } from '../../components/Hospital/PatientFaceEnrollModal';
-import { patientFaceStorageService } from '../../services/patientFaceStorageService';
+import { patientFaceStorageService, isPlaceholderPatientName } from '../../services/patientFaceStorageService';
 import { faceRegistryService } from '../../services/faceRegistryService';
 import { BiometricResetModal } from '../../components/Hospital/BiometricResetModal';
 import { PtAssignedPatientsModal } from '../../components/Hospital/PtAssignedPatientsModal';
@@ -654,6 +654,22 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     const start = (userPage - 1) * userPageSize;
     return filteredUsers.slice(start, start + userPageSize);
   }, [filteredUsers, userPage, userPageSize]);
+
+  // Helper: Resolve real patient name, never showing a placeholder if genuine name exists
+  const resolveUserDisplayName = (u: UserAccount): string => {
+    if (u.role === 'patient' && isPlaceholderPatientName(u.name, u.status) && u.code) {
+      try {
+        const dossier = patientFaceStorageService.getPatientRecord(u.code);
+        const dName = dossier?.patient_profile?.full_name || (dossier?.patient_profile?.first_name ? `${dossier.patient_profile.first_name} ${dossier.patient_profile.last_name || ''}`.trim() : '');
+        if (dName && !isPlaceholderPatientName(dName)) return dName;
+        const prof = faceRegistryService.getAllProfiles().find((p) => p.patientCode && p.patientCode.toUpperCase() === u.code.toUpperCase());
+        if (prof?.name && !isPlaceholderPatientName(prof.name)) return prof.name;
+        const matchStore = users.find((item) => item.code && item.code.toUpperCase() === u.code.toUpperCase());
+        if (matchStore?.name && !isPlaceholderPatientName(matchStore.name, matchStore.status)) return matchStore.name;
+      } catch {}
+    }
+    return u.name;
+  };
 
   // Add User Modal State
   const [isAddUserModalOpen, setIsAddUserModalOpen] = useState<boolean>(false);
@@ -2639,7 +2655,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                   )}
                                   <div className="min-w-0">
                                     <div className="font-bold text-[#0F2F2B] leading-tight text-xs sm:text-sm truncate max-w-[140px] sm:max-w-[180px]">
-                                      {user.name}
+                                      {resolveUserDisplayName(user)}
                                     </div>
                                     <div className="text-[10px] text-slate-500 font-mono truncate max-w-[140px] sm:max-w-[180px] mt-0.5">
                                       @{user.username}
@@ -2771,7 +2787,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                                       <button
                                         onClick={() => {
                                           if (canEdit) {
-                                            setEditingUser(user);
+                                            setEditingUser({ ...user, name: resolveUserDisplayName(user) });
                                           } else {
                                             showToast('สิทธิ์ไม่เพียงพอ: นักกายภาพสามารถแก้ไขได้เฉพาะคนไข้เท่านั้น');
                                           }
@@ -2983,7 +2999,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                           })()}
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-extrabold text-base text-[#0F2F2B] truncate">{patient.name}</span>
+                              <span className="font-extrabold text-base text-[#0F2F2B] truncate">{resolveUserDisplayName(patient)}</span>
                               <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 font-mono text-xs font-bold text-emerald-800">
                                 {patient.code}
                               </span>
@@ -3038,7 +3054,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                           </button>
                           {patient.status === 'pending_info' ? (
                             <button
-                              onClick={() => setPatientDetailModal({ ...patient })}
+                              onClick={() => setPatientDetailModal({ ...patient, name: resolveUserDisplayName(patient) })}
                               className="flex-1 sm:flex-none justify-center px-4 py-2 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-extrabold text-xs shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
                               title="กรอกข้อมูลคนไข้และซิงค์กลับตู้ Kiosk ทันที"
                             >
@@ -3047,7 +3063,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                             </button>
                           ) : (
                             <button
-                              onClick={() => setPatientDetailModal({ ...patient })}
+                              onClick={() => setPatientDetailModal({ ...patient, name: resolveUserDisplayName(patient) })}
                               className={`flex-1 sm:flex-none justify-center px-4 py-2 rounded-full border text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
                                 canEditUser(patient)
                                   ? 'border-emerald-200 text-emerald-800 hover:bg-emerald-50'
@@ -5308,9 +5324,13 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             .replace(/บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว/g, '')
             .trim();
 
+          const targetUser = users.find((u) => String(u.id) === String(patientId)) || patientDetailModal;
+          const targetCode = targetUser?.code || (targetUser as any)?.patient_code || (data as any)?.code || (data as any)?.patient_code || patientDetailModal?.code || (typeof patientId === 'string' && patientId.startsWith('P-') ? patientId : undefined);
+
           if (isPending) {
-            completePendingPatientInfo(patientId, {
+            completePendingPatientInfo(targetCode || patientId, {
               name: data.name || 'ผู้รับบริการ',
+              code: targetCode,
               age: data.age,
               gender: data.gender,
               phone: data.phone,
@@ -5320,7 +5340,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               assignedTherapistName: data.assignedTherapistName,
             });
           } else {
-            updateUser(patientId, {
+            updateUser(targetCode || patientId, {
               ...data,
               chiefComplaint: cleanComplaint,
               therapistNotes: cleanNotes,
@@ -5329,8 +5349,6 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
           }
 
           // Direct Supabase Update & Cross-Device Broadcast to Kiosk
-          const targetUser = users.find((u) => String(u.id) === String(patientId)) || patientDetailModal;
-          const targetCode = targetUser?.code || (targetUser as any)?.patient_code || (data as any)?.code || (data as any)?.patient_code || patientDetailModal?.code || (typeof patientId === 'string' && patientId.startsWith('P-') ? patientId : undefined);
           if (targetCode) {
             try {
               // 1. Fetch current row to preserve biometric face vectors/photos

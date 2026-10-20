@@ -24,6 +24,8 @@ import { useHospitalStore } from '../../store/hospitalStore';
 import { audioFeedback } from '../../services/audioService';
 import { voiceAssistant } from '../../services/voiceAssistantService';
 import confetti from 'canvas-confetti';
+import { patientFaceStorageService } from '../../services/patientFaceStorageService';
+import { faceRegistryService } from '../../services/faceRegistryService';
 
 interface ReceptionOnboardingModalProps {
   isOpen: boolean;
@@ -347,7 +349,52 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
         biometricVector: embeddingsList?.[0] || undefined,
       });
 
-      // 3. Refresh patient list in patientStore
+      // 3. Save to isolated patientFaceStorageService and faceRegistryService
+      try {
+        patientFaceStorageService.savePatientRecord(patientCode, {
+          patient_profile: {
+            patient_id: patientCode,
+            id: newAccount.id,
+            full_name: fullName.trim(),
+            first_name: fullName.trim().split(' ')[0] || fullName.trim(),
+            last_name: fullName.trim().split(' ').slice(1).join(' ') || '',
+            age,
+            gender,
+            phone,
+            status: 'active',
+            created_at: new Date().toISOString().split('T')[0],
+          },
+          biometric_data: {
+            face_vector: embeddingsList?.[0]?.embedding || [],
+            registered_face_url: capturedPhoto || '',
+            enrolled_at: new Date().toISOString(),
+            model_version: 'face-resnet34-v2',
+          },
+          medical_records: {
+            diagnosis,
+            chief_complaint: diagnosis,
+          },
+        }, capturedPhoto || undefined);
+      } catch (fsErr) {
+        console.warn('Reception savePatientRecord warning:', fsErr);
+      }
+
+      try {
+        faceRegistryService.saveProfile({
+          patientId: newAccount.id,
+          patientCode: patientCode,
+          name: fullName.trim(),
+          age,
+          gender,
+          face_image_url: capturedPhoto || undefined,
+          embeddings: embeddingsList.map((e) => e.embedding).filter(Boolean),
+          enrolledAt: new Date().toISOString(),
+        });
+      } catch (regErr) {
+        console.warn('Reception saveProfile warning:', regErr);
+      }
+
+      // 4. Refresh patient list in patientStore
       await fetchPatients();
 
       const createdObj = {

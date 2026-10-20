@@ -22,6 +22,8 @@ import {
 } from 'lucide-react';
 import { UserAccount, UserRole, PhysicalTherapist, UserStatus } from '../../types/hospital';
 import { generateSecureTemporaryPassword, validatePasswordStrength } from '../../services/authSecurityService';
+import { patientFaceStorageService, isPlaceholderPatientName } from '../../services/patientFaceStorageService';
+import { faceRegistryService } from '../../services/faceRegistryService';
 
 interface EditUserModalProps {
   isOpen: boolean;
@@ -102,7 +104,21 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
       }
       prevUserKeyRef.current = userKey;
 
-      setName(user.name || '');
+      let resolvedName = user.name || '';
+      if (user.role === 'patient' && isPlaceholderPatientName(resolvedName, user.status) && user.code) {
+        const dossier = patientFaceStorageService.getPatientRecord(user.code);
+        const dName = dossier?.patient_profile?.full_name || (dossier?.patient_profile?.first_name ? `${dossier.patient_profile.first_name} ${dossier.patient_profile.last_name || ''}`.trim() : '');
+        if (dName && !isPlaceholderPatientName(dName)) {
+          resolvedName = dName;
+        } else {
+          const prof = faceRegistryService.getAllProfiles().find((p) => p.patientCode && p.patientCode.toUpperCase() === user.code.toUpperCase());
+          if (prof?.name && !isPlaceholderPatientName(prof.name)) {
+            resolvedName = prof.name;
+          }
+        }
+      }
+
+      setName(resolvedName);
       setUsername(user.username || '');
       setRole(user.role);
       setStatus(user.status === 'disabled' ? 'disabled' : 'active');

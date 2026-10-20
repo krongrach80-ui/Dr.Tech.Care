@@ -989,15 +989,15 @@ class PatientFaceStorageService {
     // Filter valid matches meeting threshold (>= 80% / 0.80)
     const validMatches = comparisons.filter((c) => c.similarity >= similarityThreshold);
 
-    // STRICT REQUIREMENT: Only actual registered patient profiles are allowed to match for login
-    // NEVER match placeholder or unfinalized accounts ("ผู้ป่วยใหม่", "ผู้รับบริการใหม่", "รอลงข้อมูล")
+    // Prioritize accounts with genuine patient names, but allow any valid account in the system meeting the threshold to match
     const realPatientMatches = validMatches.filter((c) => {
       const candObj = candidates.find((cand) => cand.patientCode.toUpperCase() === c.patient_code.toUpperCase());
       return !isPlaceholderPatientName(c.name, candObj?.status);
     });
 
-    if (realPatientMatches.length > 0) {
-      const chosenMatchResult = realPatientMatches[0];
+    const chosenMatchResult = realPatientMatches.length > 0 ? realPatientMatches[0] : validMatches[0];
+
+    if (chosenMatchResult) {
       const matchedCand = candidates.find(
         (c) => c.patientCode.toUpperCase() === chosenMatchResult.patient_code.toUpperCase()
       );

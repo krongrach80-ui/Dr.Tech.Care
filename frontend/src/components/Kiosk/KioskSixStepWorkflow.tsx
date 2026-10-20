@@ -900,7 +900,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     }, 600);
   }, [isSlideUpAnimating, changeStep]);
 
-  // Handle successful registration and initiate 3-second auto-reset
+  // Handle successful registration and initiate auto-transition back to Step 4 (Face Scan)
   const handleRegistrationCompleted = useCallback((completedUser: UserAccount) => {
     setIsRegistrationSuccess(true);
     setCompletedUserData(completedUser);
@@ -914,18 +914,18 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     } catch {}
     try {
       voiceAssistant.speak(
-        `ลงทะเบียนและสมัครบัญชีสำเร็จเรียบร้อยแล้วค่ะ ยินดีต้อนรับ ${completedUser.name} ระบบจะรีเซ็ตกลับสู่หน้าต้อนรับ เพื่อให้ท่านสแกนหน้าเข้าใช้งานจริงค่ะ`,
+        `ลงทะเบียนสำเร็จเรียบร้อยแล้วค่ะ ยินดีต้อนรับคุณ ${completedUser.name} ระบบกำลังนำท่านกลับสู่หน้าสแกนใบหน้าเพื่อเข้าสู่ระบบค่ะ`,
         { level: 'system' }
       );
     } catch {}
-    setResetCountdown(3);
+    setResetCountdown(2);
   }, []);
 
-  // Countdown timer for 3-second auto-reset back to Step 1 (Welcome Screen)
+  // Countdown timer for 2-second auto-transition back to Step 4 (Face Scan HUD)
   useEffect(() => {
     if (!isRegistrationSuccess) return;
     if (resetCountdown <= 0) {
-      // Auto-reset Kiosk cleanly back to Step 1 (Welcome Screen)
+      // Auto-transition Kiosk cleanly back to Step 4 (Face Scan HUD)
       setIsPendingRegistrationActive(false);
       setIsRegistrationSuccess(false);
       setPendingEnrolledUser(null);
@@ -936,14 +936,17 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       setKioskFormPhone('');
       setKioskFormError(null);
       handleResetFaceScan();
-      setCurrentStep(1);
+      changeStep(4);
+      setCurrentStep(4);
+      setScanStatusMessage('✓ บันทึกข้อมูลสำเร็จเรียบร้อย! กรุณามองตรงเข้าหากล้องเพื่อสแกนใบหน้าเข้าใช้งาน');
+      startCamera();
       return;
     }
     const timer = setTimeout(() => {
       setResetCountdown((prev) => prev - 1);
     }, 1000);
     return () => clearTimeout(timer);
-  }, [isRegistrationSuccess, resetCountdown]);
+  }, [isRegistrationSuccess, resetCountdown, changeStep, startCamera]);
 
   // Real-Time Cross-Window / Cross-Tab Sync via patientSyncService (Same-Machine)
   useEffect(() => {
@@ -1127,61 +1130,93 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       }
 
       // =====================================================================
-      // [CRITICAL SUPABASE INSERTION]: Direct async await insert to 'patients' table
+      // [CRITICAL SUPABASE INSERTION]: Async with safety timeout so UI never hangs
+      // (Uses only valid database schema columns: biometrics are stored in medical_history)
       // =====================================================================
       try {
-        console.info(`[SUPABASE] Inserting patient ${patientCode} into table 'patients'...`);
-        const { data: insertedData, error: sbError } = await supabase
-          .from('patients')
-          .upsert({
-            patient_code: patientCode,
-            full_name: fullPatientName,
-            age: patientAge,
-            gender: patientGender,
-            phone: patientPhone || null,
-            chief_complaint: patientComplaint,
-            medical_history: medHistory,
-            therapist_notes: 'ลงทะเบียนข้อมูลครบถ้วน',
-            status: 'active',
-            face_vector: faceVec,
-            photo: faceImg,
-            face_image_url: faceImg,
-          }, { onConflict: 'patient_code' })
-          .select();
+        console.info(`[SUPABASE] Saving patient ${patientCode} into table 'patients'...`);
+        const sbPayload = {
+          patient_code: patientCode,
+          full_name: fullPatientName,
+          age: patientAge,
+          gender: patientGender,
+          phone: patientPhone || null,
+          chief_complaint: patientComplaint,
+          medical_history: medHistory,
+          therapist_notes: 'ลงทะเบียนข้อมูลครบถ้วน',
+          status: 'active',
+        };
 
-        if (sbError) {
-          console.error('[SUPABASE] Patient registration insert error:', sbError);
-        } else {
-          console.info('[SUPABASE] Patient inserted successfully:', insertedData);
-          // Broadcast realtime notification to Admin Dashboard on shared channel
+        const executeSupabaseSync = async () => {
           try {
-            const broadcastPayload = {
-              patient_code: patientCode,
-              full_name: fullPatientName,
-              name: fullPatientName,
-              age: patientAge,
-              gender: patientGender,
-              phone: patientPhone,
-              chief_complaint: patientComplaint,
-              status: 'active',
-              isCompleted: true,
-              face_image_url: faceImg,
-              face_vector: faceVec,
-            };
-            await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
-              type: 'broadcast',
-              event: 'patient_completed',
-              payload: broadcastPayload,
-            });
-            await supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
-              type: 'broadcast',
-              event: 'patient_registered',
-              payload: broadcastPayload,
-            });
-          } catch (broadcastErr) {
-            console.warn('[SUPABASE] Broadcast channel notification error:', broadcastErr);
+            // Try direct update first
+            const { data: updatedData, error: upErr } = await supabase
+              .from('patients')
+              .update(sbPayload)
+              .eq('patient_code', patientCode)
+              .select();
+
+            let insertedData = updatedData;
+            let sbError = upErr;
+
+            if (!updatedData || updatedData.length === 0) {
+              const { data: upsertData, error: upsertErr } = await supabase
+                .from('patients')
+                .upsert(sbPayload, { onConflict: 'patient_code' })
+                .select();
+              insertedData = upsertData;
+              sbError = upsertErr;
+            }
+
+            if (sbError) {
+              console.warn('[SUPABASE] Patient registration insert warning:', sbError);
+            } else {
+              console.info('[SUPABASE] Patient inserted successfully:', insertedData);
+              // Broadcast realtime notification to Admin Dashboard on shared channel
+              try {
+                const broadcastPayload = {
+                  patient_code: patientCode,
+                  full_name: fullPatientName,
+                  name: fullPatientName,
+                  age: patientAge,
+                  gender: patientGender,
+                  phone: patientPhone,
+                  chief_complaint: patientComplaint,
+                  status: 'active',
+                  isCompleted: true,
+                  face_image_url: faceImg,
+                  face_vector: faceVec,
+                };
+                const ch = supabase.channel(PATIENTS_REALTIME_CHANNEL);
+                ch.send({
+                  type: 'broadcast',
+                  event: 'patient_completed',
+                  payload: broadcastPayload,
+                }).catch(() => {});
+                ch.send({
+                  type: 'broadcast',
+                  event: 'patient_registered',
+                  payload: broadcastPayload,
+                }).catch(() => {});
+                ch.send({
+                  type: 'broadcast',
+                  event: 'patient_update',
+                  payload: broadcastPayload,
+                }).catch(() => {});
+              } catch (broadcastErr) {
+                console.warn('[SUPABASE] Broadcast channel notification error:', broadcastErr);
+              }
+            }
+          } catch (syncErr) {
+            console.warn('[SUPABASE] Sync operation warning:', syncErr);
           }
-        }
+        };
+
+        // Guarantee max 6000ms before continuing to ensure Supabase Cloud write finishes cleanly
+        await Promise.race([
+          executeSupabaseSync(),
+          new Promise((resolve) => setTimeout(resolve, 6000)),
+        ]);
       } catch (sbEx) {
         console.error('[SUPABASE] Exception during patient insert:', sbEx);
       }
@@ -1233,12 +1268,26 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       // [CONSOLE LOGS & DEBUGGING]: Log patient_id, saved face_image_url, and vector length upon successful registration
       console.log('[REGISTRATION] Success:', {
         patient_id: patientCode,
+        patient_name: fullPatientName,
         saved_face_image_url: faceImg,
         vector_length: faceVec && Array.isArray(faceVec) ? faceVec.length : 0,
       });
 
-      const updated = completePendingPatientInfo(pendingEnrolledUser.id, {
+      // Update local pending state with real name
+      setPendingEnrolledUser((prev) => prev ? {
+        ...prev,
         name: fullPatientName,
+        code: patientCode,
+        age: patientAge,
+        gender: kioskFormGender,
+        phone: patientPhone,
+        chiefComplaint: patientComplaint,
+        diagnosis: patientComplaint,
+      } : null);
+
+      const updated = completePendingPatientInfo(patientCode || pendingEnrolledUser.id, {
+        name: fullPatientName,
+        code: patientCode,
         age: patientAge,
         gender: kioskFormGender,
         phone: patientPhone,
@@ -1264,14 +1313,24 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         image_data_url: faceImg,
       }).catch(() => {});
 
-      if (updated) {
-        handleRegistrationCompleted({
-          ...updated,
-          face_vector: Array.isArray(faceVec) ? faceVec : undefined,
-          biometricVector: Array.isArray(faceVec) ? faceVec : undefined,
-          face_image_url: faceImg || undefined,
-        });
-      }
+      const finalCompletedUser: UserAccount = updated || {
+        ...pendingEnrolledUser,
+        name: fullPatientName,
+        code: patientCode,
+        age: patientAge,
+        gender: kioskFormGender,
+        phone: patientPhone,
+        status: 'active',
+        chiefComplaint: patientComplaint,
+        diagnosis: patientComplaint,
+      };
+
+      handleRegistrationCompleted({
+        ...finalCompletedUser,
+        face_vector: Array.isArray(faceVec) ? faceVec : undefined,
+        biometricVector: Array.isArray(faceVec) ? faceVec : undefined,
+        face_image_url: faceImg || undefined,
+      });
     } catch (err) {
       console.error('Kiosk form submit error:', err);
       setKioskFormError('เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง');
@@ -2053,13 +2112,10 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           }
         });
 
-        const candidates = Array.from(candidateMap.values());
-        // STRICT: Only pass genuine registered patients to biometric matching
-        // (Excludes any placeholder accounts like "ผู้ป่วยใหม่" or "ผู้รับบริการใหม่")
-        const realCandidates = candidates.filter((c) => !isPlaceholderPatientName(c.name, c.status));
+        const candidates = Array.from(candidateMap.values()).filter((c) => c.status !== 'disabled' && c.status !== 'suspended');
 
         // b & c) Cosine Similarity (threshold >= 80% / 0.80) Matching Logic
-        const evaluation = patientFaceStorageService.matchLiveFaceAgainstDatabase(vector128, realCandidates, 0.80);
+        const evaluation = patientFaceStorageService.matchLiveFaceAgainstDatabase(vector128, candidates, 0.80);
 
         // Required Console Logging
         console.log('[BIOMETRIC LOGIN MATCH RESULT]:', {
@@ -2070,8 +2126,8 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           isPassed: Boolean(evaluation.matched && evaluation.bestScorePercent >= 80),
         });
 
-        // d) If matched successfully (Cosine Similarity >= 80% and NOT a placeholder):
-        if (evaluation.matched && evaluation.bestScorePercent >= 80 && !isPlaceholderPatientName(evaluation.matched.name, evaluation.matched.status)) {
+        // d) If matched successfully (Cosine Similarity >= 80%):
+        if (evaluation.matched && evaluation.bestScorePercent >= 80) {
           const matchedCandidate = evaluation.matched;
           const targetHN = matchedCandidate.patientCode;
 
@@ -2272,26 +2328,25 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           biometricTimersRef.current.push(t4);
         } else {
           // [NO MATCH FOUND IN DATABASE / UNRECOGNIZED FACE]:
-          // Requirement: "ถ้าไม่มีหน้าในอยู่ในระบบ หน้าไม่ตรงกับที่มีอยู่ในระบบ ให้ไปสมัครบัญชีผู้ใช้ใหม่"
           console.info(
-            `[KIOSK] No matching registered account found (Similarity: ${evaluation.bestScorePercent}%). Directing to new patient registration.`
+            `[KIOSK] No matching registered account found (Similarity: ${evaluation.bestScorePercent}%).`
           );
           setLastMatchScore(evaluation.bestScorePercent);
           lastLiveVectorRef.current = vector128;
           lastLiveJpgRef.current = liveJpg;
           setIsScanning(false);
           setBiometricPhase(0);
-          setShowNoAccountModal(false);
+          setScanStep('front');
+          setScanStatusMessage(`❌ ไม่พบหน้าที่ตรงกับข้อมูลที่มีอยู่ในระบบ (ความคล้ายคลึงสูงสุด: ${evaluation.bestScorePercent}%)`);
+          setShowNoAccountModal(true);
 
+          audioFeedback.playHoldTick();
           try {
             voiceAssistant.speak(
-              'ไม่พบข้อมูลใบหน้าในระบบ กำลังพาท่านไปสมัครบัญชีผู้ป่วยใหม่นะคะ',
+              'ไม่พบหน้าที่ตรงกับข้อมูลที่มีอยู่ในระบบค่ะ กรุณาลองสแกนใหม่อีกครั้ง หรือเลือกใช้รหัส PIN นะคะ',
               { level: 'system' }
             );
           } catch {}
-
-          // Automatically proceed to register new patient account with captured face
-          await createPendingAccountAndNotify(vector128, liveJpg);
         }
       } else {
         // =========================================================================
@@ -3596,14 +3651,14 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               <div className="w-full max-w-md bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-2 border-emerald-400/80 rounded-2xl p-3 text-center my-2 shadow-xs">
                 <div className="flex items-center justify-center gap-2 text-emerald-950 font-extrabold text-xs sm:text-sm">
                   <Clock className="w-4 h-4 text-emerald-700 animate-spin" />
-                  <span>ตู้จะรีเซ็ตกลับสู่หน้าแรกอัตโนมัติใน:</span>
+                  <span>ระบบกำลังพาท่านกลับสู่หน้าสแกนใบหน้าใน:</span>
                   <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-emerald-600 text-white font-mono font-black text-sm">
                     {resetCountdown}
                   </span>
                   <span>วินาที</span>
                 </div>
                 <p className="text-[11px] text-slate-500 mt-1 font-medium">
-                  เพื่อรอให้ผู้ป่วยสแกนหน้าเข้าใช้งานจริงตามปกติ
+                  เตรียมพร้อมมองตรงเข้าหากล้องเพื่อสแกนใบหน้าเข้าใช้งานได้ทันที
                 </p>
               </div>
 
@@ -3616,12 +3671,15 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   setCompletedUserData(null);
                   setIsEnrollmentFlow(false);
                   handleResetFaceScan();
-                  setCurrentStep(1);
+                  changeStep(4);
+                  setCurrentStep(4);
+                  setScanStatusMessage('✓ บันทึกข้อมูลสำเร็จเรียบร้อย! กรุณามองตรงเข้าหากล้องเพื่อสแกนใบหน้าเข้าใช้งาน');
+                  startCamera();
                 }}
                 className="mt-3 px-6 py-3 rounded-full bg-slate-900 hover:bg-black text-emerald-300 font-bold text-xs transition cursor-pointer active:scale-95 shadow-md flex items-center gap-2"
               >
                 <ArrowRight className="w-4 h-4" />
-                <span>กลับสู่หน้าต้อนรับทันที (ไม่ต้องรอ)</span>
+                <span>ไปหน้าสแกนใบหน้าทันที (ไม่ต้องรอ)</span>
               </button>
             </div>
           ) : (
@@ -3760,29 +3818,33 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                       </div>
 
                       {/* อายุ & เพศ */}
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-2 gap-4 sm:gap-5">
                         <div>
                           <label className="block text-slate-700 font-extrabold mb-1">
                             อายุ (ปี)
                           </label>
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-xl p-1 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-200 shadow-2xs">
                             <button
                               type="button"
                               onClick={() => setKioskFormAge((a) => Math.max(1, a - 1))}
-                              className="w-8 h-8 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 font-black text-sm flex items-center justify-center cursor-pointer active:scale-95"
+                              className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-sm flex items-center justify-center cursor-pointer active:scale-95 transition"
+                              title="ลดอายุ"
                             >
                               -
                             </button>
                             <input
                               type="number"
+                              min={1}
+                              max={120}
                               value={kioskFormAge}
                               onChange={(e) => setKioskFormAge(Number(e.target.value) || 65)}
-                              className="flex-1 py-1 px-2 text-center rounded-lg border border-slate-300 font-black text-xs outline-none bg-white"
+                              className="w-full min-w-0 py-0.5 px-1 text-center font-black text-xs sm:text-sm text-slate-800 outline-none bg-transparent [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             />
                             <button
                               type="button"
                               onClick={() => setKioskFormAge((a) => Math.min(120, a + 1))}
-                              className="w-8 h-8 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 font-black text-sm flex items-center justify-center cursor-pointer active:scale-95"
+                              className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-sm flex items-center justify-center cursor-pointer active:scale-95 transition"
+                              title="เพิ่มอายุ"
                             >
                               +
                             </button>
@@ -3793,14 +3855,14 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                           <label className="block text-slate-700 font-extrabold mb-1">
                             เพศ
                           </label>
-                          <div className="grid grid-cols-2 gap-1">
+                          <div className="grid grid-cols-2 gap-1.5">
                             <button
                               type="button"
                               onClick={() => setKioskFormGender('male')}
-                              className={`py-1.5 px-2 rounded-xl border text-xs font-bold transition cursor-pointer text-center ${
+                              className={`py-2 px-1.5 rounded-xl border text-xs font-bold transition cursor-pointer text-center flex items-center justify-center gap-1 shadow-2xs active:scale-95 ${
                                 kioskFormGender === 'male'
-                                  ? 'bg-emerald-600 border-emerald-700 text-white'
-                                  : 'bg-slate-50 border-slate-200 text-slate-700'
+                                  ? 'bg-emerald-600 border-emerald-700 text-white shadow-emerald-600/25'
+                                  : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
                               }`}
                             >
                               👨 ชาย
@@ -3808,10 +3870,10 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                             <button
                               type="button"
                               onClick={() => setKioskFormGender('female')}
-                              className={`py-1.5 px-2 rounded-xl border text-xs font-bold transition cursor-pointer text-center ${
+                              className={`py-2 px-1.5 rounded-xl border text-xs font-bold transition cursor-pointer text-center flex items-center justify-center gap-1 shadow-2xs active:scale-95 ${
                                 kioskFormGender === 'female'
-                                  ? 'bg-emerald-600 border-emerald-700 text-white'
-                                  : 'bg-slate-50 border-slate-200 text-slate-700'
+                                  ? 'bg-emerald-600 border-emerald-700 text-white shadow-emerald-600/25'
+                                  : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
                               }`}
                             >
                               👩 หญิง
@@ -4567,7 +4629,10 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           <div className="w-full max-w-md bg-white rounded-[32px] p-6 shadow-2xl border-2 border-amber-400 relative flex flex-col items-center text-center animate-scaleUp">
             {/* Close button */}
             <button
-              onClick={() => setShowNoAccountModal(false)}
+              onClick={() => {
+                setShowNoAccountModal(false);
+                handleResetFaceScan();
+              }}
               className="absolute top-4 right-4 p-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition cursor-pointer"
             >
               <X className="w-5 h-5" />
@@ -4587,10 +4652,10 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             </div>
 
             <h3 className="text-xl sm:text-2xl font-black text-[#0B2B2B] tracking-tight">
-              ไม่พบข้อมูลบัญชีในระบบ
+              ไม่พบหน้าที่ตรงกับข้อมูลที่มีอยู่ในระบบ
             </h3>
             <p className="text-xs sm:text-sm font-extrabold text-amber-800 mt-1">
-              ระบบไม่พบบัญชีผู้ป่วยที่ตรงกับใบหน้านี้ หากยังไม่มีบัญชี สามารถสมัครบัญชีใหม่ได้ทันที
+              ระบบตรวจสอบแล้วไม่พบบัญชีผู้ป่วยที่ตรงกับใบหน้านี้
             </p>
 
             {/* Description Card */}

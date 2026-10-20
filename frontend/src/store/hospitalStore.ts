@@ -743,6 +743,23 @@ const getStoredUsers = (): UserAccount[] => {
       } else if (u.code === 'P-0013' && !u.face_image_url) {
         u.face_image_url = 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400&auto=format&fit=crop&q=80';
       }
+      // Auto-heal placeholder patient name from patient_record.json or face registry
+      if (u.role === 'patient' && isPlaceholderPatientName(u.name, u.status) && u.code) {
+        try {
+          const dossier = patientFaceStorageService.getPatientRecord(u.code);
+          const dName = dossier?.patient_profile?.full_name || (dossier?.patient_profile?.first_name ? `${dossier.patient_profile.first_name} ${dossier.patient_profile.last_name || ''}`.trim() : '');
+          if (dName && !isPlaceholderPatientName(dName)) {
+            u.name = dName;
+          } else {
+            const profile = faceRegistryService.getAllProfiles().find(
+              (p) => (p.patientCode && p.patientCode.toUpperCase() === u.code.toUpperCase()) || String(p.patientId) === String(u.id)
+            );
+            if (profile?.name && !isPlaceholderPatientName(profile.name)) {
+              u.name = profile.name;
+            }
+          }
+        } catch {}
+      }
       return u;
     });
 };
@@ -917,6 +934,7 @@ interface HospitalState {
     id: number | string,
     patientData: {
       name: string;
+      code?: string;
       age?: number;
       gender?: 'male' | 'female' | 'other';
       phone?: string;
@@ -1190,12 +1208,46 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
                   .replace(/\[PENDING_INFO\]/g, '')
                   .trim() || (isPending ? 'รอตรวจประเมินกายภาพบำบัด' : 'ตรวจประเมินกายภาพบำบัด');
 
+                let resolvedName = (p.full_name || p.name || '').trim();
+                const codeStr = String(p.patient_code || '').trim();
+                if (!resolvedName || isPlaceholderPatientName(resolvedName, p.status)) {
+                  try {
+                    if (codeStr) {
+                      const dossier = patientFaceStorageService.getPatientRecord(codeStr);
+                      const dName = dossier?.patient_profile?.full_name || (dossier?.patient_profile?.first_name ? `${dossier.patient_profile.first_name} ${dossier.patient_profile.last_name || ''}`.trim() : '');
+                      if (dName && !isPlaceholderPatientName(dName)) {
+                        resolvedName = dName;
+                      } else {
+                        const profile = faceRegistryService.getAllProfiles().find(
+                          (prof) => (prof.patientCode && prof.patientCode.toUpperCase() === codeStr.toUpperCase()) || String(prof.patientId) === String(p.id)
+                        );
+                        if (profile?.name && !isPlaceholderPatientName(profile.name)) {
+                          resolvedName = profile.name;
+                        } else {
+                          const existingLocal = get().users.find((u) => u.code && u.code.toUpperCase() === codeStr.toUpperCase());
+                          if (existingLocal?.name && !isPlaceholderPatientName(existingLocal.name, existingLocal.status)) {
+                            resolvedName = existingLocal.name;
+                          }
+                        }
+                      }
+                    }
+                  } catch {}
+                }
+                if (!resolvedName) resolvedName = `ผู้รับบริการ (${p.patient_code})`;
+
+                // Auto-heal Supabase patients table if we found a genuine name but the database has a placeholder
+                if (codeStr && resolvedName && !isPlaceholderPatientName(resolvedName) && isPlaceholderPatientName(p.full_name, p.status)) {
+                  Promise.resolve(
+                    supabase.from('patients').update({ full_name: resolvedName }).eq('patient_code', codeStr)
+                  ).catch(() => {});
+                }
+
                 return {
                   id: p.id,
                   code: p.patient_code,
                   patient_code: p.patient_code,
                   username: `user_${(p.patient_code || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`,
-                  name: p.full_name,
+                  name: resolvedName,
                   role: 'patient' as UserRole,
                   status: isPending ? 'pending_info' : (p.status === 'suspended' ? 'suspended' : 'active'),
                   pendingInfoNote: isPending ? 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว' : undefined,
@@ -1621,25 +1673,44 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   },
 
   completePendingPatientInfo: (id, patientData) => {
-    const existing = get().users.find((u) => u.id === id);
+    const target = String(id || patientData.code || '').trim().toUpperCase();
+    const existing = get().users.find((u) =>
+      String(u.id) === target ||
+      (u.code && String(u.code).trim().toUpperCase() === target) ||
+      (patientData.code && u.code && String(u.code).trim().toUpperCase() === String(patientData.code).trim().toUpperCase())
+    );
     if (!existing) return null;
+
+    const finalName = (patientData.name || existing.name).trim();
+    const targetCode = (existing.code || patientData.code || '').trim();
+    const targetIdStr = String(existing.id);
 
     const updatedUser: UserAccount = {
       ...existing,
       ...patientData,
+      name: finalName,
       status: 'active',
       pendingInfoNote: undefined,
       last_active: 'ลงทะเบียนข้อมูลครบถ้วนแล้ว',
     };
 
-    const updatedUsers = get().users.map((u) => (u.id === id ? updatedUser : u));
+    const updatedUsers = get().users.map((u) => {
+      const isMatch =
+        String(u.id) === targetIdStr ||
+        String(u.id) === target ||
+        (u.code && targetCode && String(u.code).trim().toUpperCase() === targetCode.toUpperCase());
+      return isMatch ? updatedUser : u;
+    });
     set({ users: updatedUsers });
     persistUsers(updatedUsers);
 
     // อัปเดตโปรไฟล์ใบหน้าใน Face Registry ให้ตรงกับชื่อและข้อมูลจริง
     try {
       const allProfiles = faceRegistryService.getAllProfiles();
-      const profile = allProfiles.find((p) => String(p.patientId) === String(id) || p.patientCode === existing.code);
+      const profile = allProfiles.find((p) =>
+        String(p.patientId) === targetIdStr ||
+        (p.patientCode && targetCode && p.patientCode.toUpperCase() === targetCode.toUpperCase())
+      );
       if (profile) {
         profile.name = updatedUser.name;
         if (updatedUser.age) profile.age = updatedUser.age;
@@ -1648,6 +1719,25 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
         faceRegistryService.saveProfile(profile);
       }
     } catch {}
+
+    // อัปเดต dossier ใน patientFaceStorageService ให้ตรงกับชื่อจริง
+    if (targetCode) {
+      try {
+        patientFaceStorageService.savePatientRecord(targetCode, {
+          patient_profile: {
+            patient_id: targetCode,
+            id: updatedUser.id,
+            full_name: updatedUser.name,
+            first_name: updatedUser.name.split(' ')[0] || updatedUser.name,
+            last_name: updatedUser.name.split(' ').slice(1).join(' ') || '',
+            age: updatedUser.age,
+            gender: updatedUser.gender,
+            phone: updatedUser.phone,
+            status: 'active',
+          },
+        }, updatedUser.face_image_url);
+      } catch {}
+    }
 
     // ส่งสัญญาณ Broadcast ทันที เพื่อให้หน้าจอ Kiosk และหน้าอื่นๆ รับทราบและเปลี่ยนสถานะทันที
     patientSyncService.broadcastInfoCompleted(updatedUser);
@@ -1670,8 +1760,33 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
     );
 
     if (supabaseService.isConfigured()) {
+      // 1. Direct clean update to Supabase public.patients table (valid columns only)
+      if (targetCode) {
+        Promise.resolve(
+          supabase
+            .from('patients')
+            .update({
+              full_name: updatedUser.name,
+              age: updatedUser.age,
+              gender: updatedUser.gender === 'female' || (updatedUser.gender as any) === 'หญิง' ? 'หญิง' : 'ชาย',
+              phone: updatedUser.phone ? String(updatedUser.phone).trim() : null,
+              chief_complaint: (updatedUser.chiefComplaint || updatedUser.diagnosis || '').replace(/\[PENDING_INFO\]/g, '').trim(),
+              therapist_notes: 'ลงทะเบียนข้อมูลครบถ้วน',
+              status: 'active',
+            })
+            .eq('patient_code', targetCode)
+        )
+          .then(({ error }: any) => {
+            if (error) console.warn('[SUPABASE] Direct patients update warning in completePendingPatientInfo:', error);
+            else console.info('[SUPABASE] Direct patients update success in completePendingPatientInfo for:', targetCode);
+          })
+          .catch(() => {});
+      }
+
+      // 2. Full service update preserving vectors in medical_history
       supabaseService.updatePatient(updatedUser.code || id, {
         name: updatedUser.name,
+        full_name: updatedUser.name,
         age: updatedUser.age,
         gender: updatedUser.gender,
         phone: updatedUser.phone,
@@ -1746,11 +1861,42 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       }
     }
 
+    let resolvedName = (p.full_name || p.name || '').trim();
+    if (!resolvedName || isPlaceholderPatientName(resolvedName, p.status)) {
+      try {
+        const dossier = patientFaceStorageService.getPatientRecord(patientCode);
+        const dName = dossier?.patient_profile?.full_name || (dossier?.patient_profile?.first_name ? `${dossier.patient_profile.first_name} ${dossier.patient_profile.last_name || ''}`.trim() : '');
+        if (dName && !isPlaceholderPatientName(dName)) {
+          resolvedName = dName;
+        } else {
+          const profile = faceRegistryService.getAllProfiles().find(
+            (prof) => (prof.patientCode && prof.patientCode.toUpperCase() === patientCode.toUpperCase()) || String(prof.patientId) === String(p.id)
+          );
+          if (profile?.name && !isPlaceholderPatientName(profile.name)) {
+            resolvedName = profile.name;
+          } else {
+            const existingLocal = get().users.find((u) => u.code && u.code.toUpperCase() === patientCode.toUpperCase());
+            if (existingLocal?.name && !isPlaceholderPatientName(existingLocal.name, existingLocal.status)) {
+              resolvedName = existingLocal.name;
+            }
+          }
+        }
+      } catch {}
+    }
+    if (!resolvedName) resolvedName = `ผู้รับบริการ (${patientCode})`;
+
+    // Auto-heal Supabase patients table if we found a genuine name but the database has a placeholder
+    if (patientCode && resolvedName && !isPlaceholderPatientName(resolvedName) && isPlaceholderPatientName(p.full_name, p.status)) {
+      Promise.resolve(
+        supabase.from('patients').update({ full_name: resolvedName }).eq('patient_code', patientCode)
+      ).catch(() => {});
+    }
+
     const patientUser: UserAccount = {
       id: p.id || patientCode,
       code: patientCode,
       username: `user_${patientCode.toLowerCase().replace(/[^a-z0-9]/g, '')}`,
-      name: p.full_name || p.name || `ผู้รับบริการ (${patientCode})`,
+      name: resolvedName,
       role: 'patient',
       status: isPending ? 'pending_info' : (p.status === 'suspended' ? 'suspended' : 'active'),
       pendingInfoNote: isPending ? 'บัญชีนี้สแกนหน้าแล้ว รอลงข้อมูลส่วนตัว' : undefined,
@@ -1816,11 +1962,74 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   },
 
   updateUser: (id, data) => {
-    const updatedUsers = get().users.map((u) => (u.id === id ? { ...u, ...data } : u));
+    const target = String(id || data.code || '').trim().toUpperCase();
+    const existing = get().users.find((u) =>
+      String(u.id) === target ||
+      (u.code && String(u.code).trim().toUpperCase() === target) ||
+      (data.code && u.code && String(u.code).trim().toUpperCase() === String(data.code).trim().toUpperCase())
+    );
+
+    const targetCode = (existing?.code || data.code || '').trim();
+    const targetIdStr = existing ? String(existing.id) : target;
+
+    const updatedUsers = get().users.map((u) => {
+      const isMatch =
+        String(u.id) === targetIdStr ||
+        String(u.id) === target ||
+        (u.code && targetCode && String(u.code).trim().toUpperCase() === targetCode.toUpperCase());
+      return isMatch ? { ...u, ...data } : u;
+    });
     set({ users: updatedUsers });
     persistUsers(updatedUsers);
 
-    const updatedUser = updatedUsers.find((u) => u.id === id);
+    const updatedUser = updatedUsers.find((u) =>
+      String(u.id) === targetIdStr ||
+      (u.code && targetCode && String(u.code).trim().toUpperCase() === targetCode.toUpperCase())
+    );
+
+    // Sync faceRegistryService and patientFaceStorageService with the updated real name
+    if (updatedUser && updatedUser.role === 'patient') {
+      const code = (updatedUser.code || targetCode || '').trim();
+      if (code) {
+        try {
+          patientFaceStorageService.savePatientRecord(code, {
+            patient_profile: {
+              patient_id: code,
+              id: updatedUser.id,
+              full_name: updatedUser.name,
+              first_name: updatedUser.name.split(' ')[0] || updatedUser.name,
+              last_name: updatedUser.name.split(' ').slice(1).join(' ') || '',
+              age: updatedUser.age,
+              gender: updatedUser.gender,
+              phone: updatedUser.phone,
+              status: (updatedUser.status === 'suspended' || updatedUser.status === 'pending_info') ? updatedUser.status : 'active',
+            },
+          }, updatedUser.face_image_url);
+        } catch (storageErr) {
+          console.warn('[STORE] patientFaceStorageService sync warning in updateUser:', storageErr);
+        }
+
+        try {
+          const allProfiles = faceRegistryService.getAllProfiles();
+          const existingProf = allProfiles.find(
+            (p) => (p.patientCode && p.patientCode.toUpperCase() === code.toUpperCase()) || String(p.patientId) === String(updatedUser.id)
+          );
+          faceRegistryService.saveProfile({
+            patientId: updatedUser.id,
+            patientCode: code,
+            name: updatedUser.name,
+            age: updatedUser.age || 65,
+            gender: updatedUser.gender || 'male',
+            face_image_url: updatedUser.face_image_url || existingProf?.face_image_url,
+            embeddings: existingProf?.embeddings || ((updatedUser as any).biometricVector ? [(updatedUser as any).biometricVector] : []),
+            enrolledAt: existingProf?.enrolledAt || new Date().toISOString(),
+          });
+        } catch (regErr) {
+          console.warn('[STORE] faceRegistryService sync warning in updateUser:', regErr);
+        }
+      }
+    }
+
     if (updatedUser && data.status === 'active' && updatedUser.role === 'patient') {
       patientSyncService.broadcastInfoCompleted(updatedUser);
     }
@@ -1834,8 +2043,31 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
 
     if (supabaseService.isConfigured()) {
       if (updatedUser && updatedUser.role === 'patient') {
+        // Direct clean update to Supabase public.patients
+        if (targetCode) {
+          Promise.resolve(
+            supabase
+              .from('patients')
+              .update({
+                full_name: updatedUser.name,
+                age: updatedUser.age,
+                gender: updatedUser.gender === 'female' || (updatedUser.gender as any) === 'หญิง' ? 'หญิง' : 'ชาย',
+                phone: updatedUser.phone ? String(updatedUser.phone).trim() : null,
+                chief_complaint: (updatedUser.chiefComplaint || '').replace(/\[PENDING_INFO\]/g, '').trim(),
+                therapist_notes: (updatedUser.therapistNotes || '').replace(/\[PENDING_INFO\]/g, '').trim(),
+                status: updatedUser.status === 'suspended' ? 'suspended' : 'active',
+              })
+              .eq('patient_code', targetCode)
+          )
+            .then(({ error }: any) => {
+              if (error) console.warn('[SUPABASE] Direct patients update warning in updateUser:', error);
+            })
+            .catch(() => {});
+        }
+
         supabaseService.updatePatient(updatedUser.code || id, {
           name: updatedUser.name,
+          full_name: updatedUser.name,
           age: updatedUser.age,
           gender: updatedUser.gender,
           phone: updatedUser.phone,
@@ -1878,8 +2110,21 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   },
 
   deleteUser: (id) => {
-    const user = get().users.find((u) => u.id === id);
-    const updatedUsers = get().users.filter((u) => u.id !== id);
+    const target = String(id).trim().toUpperCase();
+    const user = get().users.find((u) =>
+      String(u.id) === target ||
+      (u.code && String(u.code).trim().toUpperCase() === target)
+    );
+    const targetCode = (user?.code || '').trim().toUpperCase();
+    const targetIdStr = user ? String(user.id) : target;
+
+    const updatedUsers = get().users.filter((u) => {
+      const isMatch =
+        String(u.id) === targetIdStr ||
+        String(u.id) === target ||
+        (u.code && targetCode && String(u.code).trim().toUpperCase() === targetCode);
+      return !isMatch;
+    });
     set({ users: updatedUsers });
     persistUsers(updatedUsers);
 
