@@ -13,8 +13,8 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const DEFAULT_SUPABASE_URL = 'https://gdsgsnklmrmnhniykxau.supabase.co';
 const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_gCepzZHsUT6wnJwhOiWKWA_q7M0AOkq';
 
-const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL).trim();
-const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY).trim();
+const supabaseUrl = (import.meta?.env?.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL).trim();
+const supabaseAnonKey = (import.meta?.env?.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY).trim();
 
 /**
  * ตรวจสอบว่าได้กำหนด URL และ Anon Key ของ Supabase ถูกต้องหรือไม่

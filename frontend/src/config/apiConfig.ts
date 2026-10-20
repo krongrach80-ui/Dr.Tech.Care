@@ -39,7 +39,7 @@ export function resolveDefaultApiUrl(): string {
   if (custom) return custom;
 
   // 2. Vite environment variable
-  const envUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
+  const envUrl = (import.meta?.env?.VITE_API_BASE_URL || '').trim();
   if (envUrl) return envUrl;
 
   // 3. GitHub Pages static fallback
@@ -64,7 +64,7 @@ export const API_BASE_URL: string = resolveDefaultApiUrl();
 
 export const IS_STATIC_MODE: boolean =
   (typeof window !== 'undefined' && window.location.search.includes('demo=1')) ||
-  (import.meta.env.VITE_STATIC_DEMO === 'true' && !import.meta.env.VITE_API_BASE_URL);
+  (import.meta?.env?.VITE_STATIC_DEMO === 'true' && !import.meta?.env?.VITE_API_BASE_URL);
 
 /**
  * Returns the SSE stream URL corresponding to the current API base

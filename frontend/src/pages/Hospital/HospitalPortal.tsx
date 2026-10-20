@@ -54,6 +54,7 @@ import {
   Share2,
   Target,
   Gamepad2,
+  UserX,
 } from 'lucide-react';
 import { useHospitalStore } from '../../store/hospitalStore';
 import { validatePasswordStrength } from '../../services/authSecurityService';
@@ -87,6 +88,18 @@ import { PatientQuickInfoModal } from '../../components/Hospital/PatientQuickInf
 import { CourseModeSelectionModal } from '../../components/Hospital/CourseModeSelectionModal';
 import { MiniGameQuestionsManager } from '../../components/Hospital/MiniGameQuestionsManager';
 import { defaultDash, formatThaiDate, formatThaiDateTime } from '../../utils/dashboardUtils';
+import {
+  dateKey,
+  getBuddhistYear,
+  formatThaiDate as formatThaiDateBE,
+  normalizePatientName,
+  isSamePatient,
+  canWriteSchedule,
+  canDeleteAppointment,
+  getPatientOwnership,
+  groupAppointmentsByDay,
+  ScheduleAppointment,
+} from '../../utils/scheduleRules';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 import { supabaseService } from '../../services/supabaseService';
 
@@ -115,6 +128,26 @@ const TIMETABLE_PERIODS_CONFIG = [
   { id: 'p6', time: '15:00 - 16:00', periodNum: 6, label: 'คาบ 6 (บ่าย)', isBreak: false },
   { id: 'p7', time: '16:00 - 17:00', periodNum: 7, label: 'คาบ 7 (เย็น)', isBreak: false },
 ];
+
+export interface CalendarEffectiveAppointment extends ScheduleAppointment {
+  id: string | number;
+  time: string;
+  name: string;
+  cleanName: string;
+  type: 'green' | 'cyan' | 'purple' | 'dual';
+  status: 'active' | 'scheduled' | 'paused' | 'completed' | 'missed' | string;
+  planId?: string | number;
+  patientId?: string | number;
+  patientCode?: string;
+  patient?: UserAccount;
+  date: string;
+  dateStr: string;
+  day: number;
+  exerciseCount: number;
+  exerciseSummary: string;
+  therapistId?: string | number;
+  therapistName?: string;
+}
 
 interface HospitalPortalProps {
   onClose: () => void;
@@ -163,6 +196,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     deleteModpack,
     saveTreatmentPlan,
     deleteTreatmentPlan,
+    deleteAppointmentForPatient,
     kickSession,
     banDevice,
     unbanDevice,
@@ -1020,7 +1054,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   // Synthesize and derive all calendar appointments for the current month
   // from BOTH treatmentPlans (authoritative source) and calendarAppointments (manual/overrides)
   const effectiveAppointments = useMemo(() => {
-    const result: Record<number, Array<{ time: string; name: string; type: 'green' | 'cyan' | 'purple' | 'dual'; planId?: string | number }>> = {};
+    const result: Record<number, Array<CalendarEffectiveAppointment>> = {};
     const cancelledSet = new Set(cancelledAppointmentKeys);
 
     const currentMonthNum = scheduleSelectedMonth + 1; // 1-12
@@ -1031,8 +1065,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     // 1. Derive from active treatmentPlans
     (treatmentPlans || []).forEach((plan) => {
       if (plan.status !== 'active') return;
-      const cleanPatName = (plan.patientName || '').replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').trim();
+      const cleanPatName = normalizePatientName(plan.patientName || '');
       if (!cleanPatName) return;
+
+      const patUser = users.find((u) =>
+        (plan.patientId && String(u.id) === String(plan.patientId)) ||
+        (plan.patientCode && String(u.code).toLowerCase() === String(plan.patientCode).toLowerCase()) ||
+        isSamePatient({ id: plan.patientId, code: plan.patientCode, name: plan.patientName }, u)
+      );
 
       const timeOnly = plan.startTime || plan.timeSlot?.split(' - ')[0]?.trim() || '09:30';
       const hasPhysio = (plan.assignedExercises && plan.assignedExercises.length > 0) || plan.trainingModes?.rom?.enabled !== false;
@@ -1050,6 +1090,16 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         chipType = 'green';
         chipName = cleanPatName;
       }
+
+      const exerciseCount = (plan.assignedExercises?.length || 0) + (hasMinigame ? 1 : 0);
+      const exNames = (plan.assignedExercises || []).map((e: any) => e.exerciseName || e.name || '').filter(Boolean);
+      if (hasMinigame) {
+        const qCount = plan.minigameQuestionCount || 20;
+        exNames.push(`มินิเกม ${qCount} ข้อ`);
+      }
+      const exerciseSummary = exNames.length > 0 ? exNames.join(', ') : 'โปรแกรมกายภาพพื้นฐาน';
+
+      const planCodeClean = (plan.patientCode || patUser?.code || cleanPatName).replace(/[^a-zA-Z0-9ก-๙]/g, '').toLowerCase();
 
       // Check dates
       const planDates: string[] = [];
@@ -1069,19 +1119,32 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
           if (dStr.startsWith(yearMonthPrefix)) {
             const dayNum = parseInt(dStr.split('-')[2], 10);
             if (dayNum >= 1 && dayNum <= daysInCurrentMonth) {
-              const cancelKeyApt = `${dStr}-${cleanPatName.toLowerCase()}-${timeOnly}`;
-              const cancelKeyDay = `${dStr}-all`;
-              if (!cancelledSet.has(cancelKeyApt) && !cancelledSet.has(cancelKeyDay)) {
+              const cancelKeyApt = `${dStr}-${planCodeClean}`;
+              const legacyCancelApt = `${dStr}-${cleanPatName.toLowerCase()}-${timeOnly}`;
+              if (!cancelledSet.has(cancelKeyApt) && !cancelledSet.has(legacyCancelApt)) {
                 if (!result[dayNum]) result[dayNum] = [];
                 const already = result[dayNum].some(
-                  (a) => a.time === timeOnly && a.name.toLowerCase().replace(/🎮/g, '').trim() === cleanPatName.toLowerCase()
+                  (a) => a.time === timeOnly && isSamePatient(a, { id: plan.patientId, code: plan.patientCode, name: plan.patientName })
                 );
                 if (!already) {
                   result[dayNum].push({
+                    id: `plan-${plan.id}-${dStr}`,
                     time: timeOnly,
                     name: chipName,
+                    cleanName: cleanPatName,
                     type: chipType,
+                    status: 'scheduled',
                     planId: plan.id,
+                    patientId: plan.patientId || patUser?.id,
+                    patientCode: plan.patientCode || patUser?.code,
+                    patient: patUser,
+                    date: dStr,
+                    dateStr: dStr,
+                    day: dayNum,
+                    exerciseCount: exerciseCount || 1,
+                    exerciseSummary,
+                    therapistId: plan.therapistId,
+                    therapistName: plan.therapistName || patUser?.assignedTherapistName,
                   });
                 }
               }
@@ -1106,19 +1169,32 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             );
 
             if (isMatch) {
-              const cancelKeyApt = `${fullDateStr}-${cleanPatName.toLowerCase()}-${timeOnly}`;
-              const cancelKeyDay = `${fullDateStr}-all`;
-              if (!cancelledSet.has(cancelKeyApt) && !cancelledSet.has(cancelKeyDay)) {
+              const cancelKeyApt = `${fullDateStr}-${planCodeClean}`;
+              const legacyCancelApt = `${fullDateStr}-${cleanPatName.toLowerCase()}-${timeOnly}`;
+              if (!cancelledSet.has(cancelKeyApt) && !cancelledSet.has(legacyCancelApt)) {
                 if (!result[day]) result[day] = [];
                 const already = result[day].some(
-                  (a) => a.time === timeOnly && a.name.toLowerCase().replace(/🎮/g, '').trim() === cleanPatName.toLowerCase()
+                  (a) => a.time === timeOnly && isSamePatient(a, { id: plan.patientId, code: plan.patientCode, name: plan.patientName })
                 );
                 if (!already) {
                   result[day].push({
+                    id: `plan-${plan.id}-${fullDateStr}`,
                     time: timeOnly,
                     name: chipName,
+                    cleanName: cleanPatName,
                     type: chipType,
+                    status: 'scheduled',
                     planId: plan.id,
+                    patientId: plan.patientId || patUser?.id,
+                    patientCode: plan.patientCode || patUser?.code,
+                    patient: patUser,
+                    date: fullDateStr,
+                    dateStr: fullDateStr,
+                    day,
+                    exerciseCount: exerciseCount || 1,
+                    exerciseSummary,
+                    therapistId: plan.therapistId,
+                    therapistName: plan.therapistName || patUser?.assignedTherapistName,
                   });
                 }
               }
@@ -1134,109 +1210,179 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       if (dayNum >= 1 && dayNum <= daysInCurrentMonth) {
         const dayStr = String(dayNum).padStart(2, '0');
         const fullDateStr = `${yearMonthPrefix}-${dayStr}`;
-        const cancelKeyDay = `${fullDateStr}-all`;
 
-        if (!cancelledSet.has(cancelKeyDay)) {
-          (calendarAppointments[dayNum] || []).forEach((apt) => {
-            const cleanAptName = (apt.name || '').replace(/🎮/g, '').trim().toLowerCase();
-            const cancelKeyApt = `${fullDateStr}-${cleanAptName}-${apt.time}`;
-            if (!cancelledSet.has(cancelKeyApt)) {
-              if (!result[dayNum]) result[dayNum] = [];
-              const already = result[dayNum].some(
-                (a) => a.time === apt.time && a.name.toLowerCase().replace(/🎮/g, '').trim() === cleanAptName
-              );
-              if (!already) {
-                result[dayNum].push(apt);
-              }
+        (calendarAppointments[dayNum] || []).forEach((apt: any) => {
+          const cleanAptName = normalizePatientName(apt.name || '');
+          const patUser = users.find((u) => isSamePatient({ name: cleanAptName }, u));
+          const planCodeClean = (patUser?.code || cleanAptName).replace(/[^a-zA-Z0-9ก-๙]/g, '').toLowerCase();
+          const cancelKeyApt = `${fullDateStr}-${planCodeClean}`;
+          const legacyCancelApt = `${fullDateStr}-${cleanAptName.toLowerCase()}-${apt.time}`;
+
+          if (!cancelledSet.has(cancelKeyApt) && !cancelledSet.has(legacyCancelApt)) {
+            if (!result[dayNum]) result[dayNum] = [];
+            const already = result[dayNum].some(
+              (a) => a.time === apt.time && isSamePatient(a, patUser || { name: cleanAptName })
+            );
+            if (!already) {
+              result[dayNum].push({
+                id: `manual-${dayNum}-${apt.time}-${cleanAptName}`,
+                time: apt.time,
+                name: apt.name,
+                cleanName: cleanAptName,
+                type: apt.type || 'green',
+                status: 'scheduled',
+                patientId: patUser?.id,
+                patientCode: patUser?.code,
+                patient: patUser,
+                date: fullDateStr,
+                dateStr: fullDateStr,
+                day: dayNum,
+                exerciseCount: 1,
+                exerciseSummary: 'นัดหมายกายภาพรายวัน',
+                therapistId: patUser?.assignedTherapistId,
+                therapistName: patUser?.assignedTherapistName,
+              });
             }
-          });
-        }
+          }
+        });
       }
     });
 
     return result;
-  }, [treatmentPlans, calendarAppointments, cancelledAppointmentKeys, scheduleSelectedMonth, scheduleSelectedYear]);
+  }, [treatmentPlans, calendarAppointments, cancelledAppointmentKeys, scheduleSelectedMonth, scheduleSelectedYear, users]);
 
-  // Handler: Delete single appointment on a specific date
-  const handleDeleteAppointment = (day: number, aptIndex: number, e?: React.MouseEvent) => {
+  // Current authenticated user object for schedule permission checks
+  const currentUserObj = useMemo(() => {
+    return users.find((u) => u.id === currentUserId) || {
+      id: currentUserId,
+      role: currentRole,
+    };
+  }, [users, currentUserId, currentRole]);
+
+  // Scheduled days this month for the selected patient (R2 summary chips)
+  const monthScheduledDays = useMemo(() => {
+    if (!selectedCalendarPatient) return [];
+    const days: number[] = [];
+    Object.keys(effectiveAppointments).forEach((d) => {
+      const dayNum = Number(d);
+      const dayApts = effectiveAppointments[dayNum] || [];
+      if (dayApts.some((apt) => isSamePatient(apt, selectedCalendarPatient))) {
+        days.push(dayNum);
+      }
+    });
+    return days.sort((a, b) => a - b);
+  }, [effectiveAppointments, selectedCalendarPatient]);
+
+  // Single selector for deletable appointment and guard status on selectedCalendarDay (R5 & R7)
+  const deleteActionState = useMemo(() => {
+    if (scheduleViewMode !== 'individual' || !selectedCalendarPatient) return null;
+    const dayApts = effectiveAppointments[selectedCalendarDay] || [];
+    const targetApt = dayApts.find((apt) => isSamePatient(apt, selectedCalendarPatient));
+    if (!targetApt) return null;
+
+    const canWrite = canWriteSchedule(currentUserObj, selectedCalendarPatient, delegations, dateKey());
+    if (!canWrite) return null; // No delete button for unauthorized users (R6)
+
+    const check = canDeleteAppointment(
+      currentUserObj,
+      targetApt.patient || selectedCalendarPatient,
+      { id: targetApt.id, date: targetApt.dateStr, status: targetApt.status },
+      delegations,
+      activityLogs as any,
+      dateKey()
+    );
+
+    return {
+      targetApt,
+      allowed: check.allowed,
+      reason: check.reason,
+    };
+  }, [effectiveAppointments, selectedCalendarDay, scheduleViewMode, selectedCalendarPatient, currentUserObj, delegations, activityLogs]);
+
+  const deletableAppointmentForSelectedDay = deleteActionState?.allowed ? deleteActionState.targetApt : null;
+
+  // Flattened appointments and grouped day schedule (R3 & R4)
+  const allEffectiveAppointmentsList = useMemo(() => {
+    const list: CalendarEffectiveAppointment[] = [];
+    Object.values(effectiveAppointments).forEach((dayList) => {
+      dayList.forEach((apt) => list.push(apt));
+    });
+    return list;
+  }, [effectiveAppointments]);
+
+  const groupedMonthSchedule = useMemo(() => {
+    return groupAppointmentsByDay(
+      allEffectiveAppointmentsList,
+      users,
+      currentUserObj,
+      delegations,
+      activityLogs as any,
+      dateKey()
+    );
+  }, [allEffectiveAppointmentsList, users, currentUserObj, delegations, activityLogs]);
+
+  const selectedDaySchedule = groupedMonthSchedule[selectedCalendarDay];
+
+  // Handler: Safe, single-appointment delete (R8)
+  const handleDeleteSelectedPatientAppointment = (targetApt: CalendarEffectiveAppointment, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    const targetApt = (effectiveAppointments[day] || [])[aptIndex] || calendarAppointments[day]?.[aptIndex];
     if (!targetApt) return;
 
-    if (!window.confirm(`ยืนยันการลบนัดหมาย "${targetApt.time} ${targetApt.name}" ในวันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]} ใช่หรือไม่?`)) {
+    const pat = targetApt.patient || selectedCalendarPatient || users.find((u) => isSamePatient(u, targetApt));
+    const patName = pat?.name || targetApt.cleanName;
+    const hn = pat?.code || (pat as any)?.patient_code || '-';
+    const thaiDateText = formatThaiDateBE(targetApt.dateStr);
+    const exCountText = targetApt.exerciseCount > 0 ? `${targetApt.exerciseCount} รายการฝึก` : '1 รายการ';
+
+    const confirmMsg = `ยืนยันการลบวันนัดหมายในวันที่ ${thaiDateText} (${patName}, HN: ${hn}, ${exCountText}) ใช่หรือไม่?`;
+    if (!window.confirm(confirmMsg)) {
       return;
     }
 
-    const currentMonthNum = scheduleSelectedMonth + 1;
-    const monthStr = String(currentMonthNum).padStart(2, '0');
-    const dayStr = String(day).padStart(2, '0');
-    const fullDateStr = `${scheduleSelectedYear}-${monthStr}-${dayStr}`;
-    const cleanAptName = (targetApt.name || '').replace(/🎮/g, '').trim().toLowerCase();
-    const cancelKeyApt = `${fullDateStr}-${cleanAptName}-${targetApt.time}`;
-
-    setCancelledAppointmentKeys((prev) => Array.from(new Set([...prev, cancelKeyApt])));
-
-    setCalendarAppointments((prev) => {
-      const next = { ...prev };
-      if (next[day]) {
-        const updatedList = next[day].filter((_, idx) => idx !== aptIndex);
-        if (updatedList.length === 0) {
-          delete next[day];
-        } else {
-          next[day] = updatedList;
-        }
-      }
-      try {
-        localStorage.setItem('strongcare_calendar_appointments', JSON.stringify(next));
-      } catch {}
-      return next;
+    const res = deleteAppointmentForPatient({
+      patientId: pat?.id || targetApt.patientId || targetApt.patientCode || patName,
+      dateStr: targetApt.dateStr,
+      appointmentId: targetApt.id,
+      planId: targetApt.planId,
     });
 
-    addActivityLog(
-      'CANCEL_APPOINTMENT',
-      'TREATMENT',
-      `ลบนัดหมายวันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]} ของคนไข้ ${targetApt.name} (${targetApt.time})`
-    );
-    showToast(`🗑️ ลบนัดหมายของ ${targetApt.name} วันที่ ${day} เรียบร้อยแล้ว`);
+    if (res.success) {
+      const patCodeClean = (hn || patName).replace(/[^a-zA-Z0-9ก-๙]/g, '').toLowerCase();
+      const cancelKey = `${targetApt.dateStr}-${patCodeClean}`;
+      setCancelledAppointmentKeys((prev) => Array.from(new Set([...prev, cancelKey])));
+
+      setCalendarAppointments((prev) => {
+        const next = { ...prev };
+        if (next[targetApt.day]) {
+          next[targetApt.day] = next[targetApt.day].filter((a: any) => !isSamePatient({ name: a.name }, pat || { name: patName }));
+          if (next[targetApt.day].length === 0) delete next[targetApt.day];
+        }
+        return next;
+      });
+
+      showToast(`🗑️ ลบวันนัดหมายวันที่ ${targetApt.day} ของ ${patName} เรียบร้อยแล้ว`);
+    } else {
+      showToast(`⚠️ ${res.error || 'ไม่สามารถลบนัดหมายได้'}`);
+    }
   };
 
-  // Handler: Delete all appointments on a specific day (ลบวันนัด)
+  // Deprecated wrapper maintained for backwards compatibility
+  const handleDeleteAppointment = (day: number, aptIndex: number, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const apt = (effectiveAppointments[day] || [])[aptIndex];
+    if (apt) {
+      handleDeleteSelectedPatientAppointment(apt, e);
+    }
+  };
+
+  // Deprecated wrapper for day deletion (now delegates strictly to single selected appointment)
   const handleDeleteDayAppointments = (day: number, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    const dayApts = effectiveAppointments[day] || calendarAppointments[day] || [];
-    if (dayApts.length === 0) {
-      showToast(`วันที่ ${day} ยังไม่มีรายการนัดหมาย`);
-      return;
+    if (deletableAppointmentForSelectedDay) {
+      handleDeleteSelectedPatientAppointment(deletableAppointmentForSelectedDay, e);
+    } else {
+      showToast(`ไม่มีสิทธิ์ลบหรือไม่มีนัดหมายสำหรับคนไข้ที่เลือกในวันที่ ${day}`);
     }
-
-    const names = dayApts.map((a) => a.name).join(', ');
-    if (!window.confirm(`ยืนยันการลบวันนัดหมายในวันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]} (${names}) ใช่หรือไม่?`)) {
-      return;
-    }
-
-    const currentMonthNum = scheduleSelectedMonth + 1;
-    const monthStr = String(currentMonthNum).padStart(2, '0');
-    const dayStr = String(day).padStart(2, '0');
-    const fullDateStr = `${scheduleSelectedYear}-${monthStr}-${dayStr}`;
-    const cancelKeyDay = `${fullDateStr}-all`;
-
-    setCancelledAppointmentKeys((prev) => Array.from(new Set([...prev, cancelKeyDay])));
-
-    setCalendarAppointments((prev) => {
-      const next = { ...prev };
-      delete next[day];
-      try {
-        localStorage.setItem('strongcare_calendar_appointments', JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-
-    addActivityLog(
-      'CANCEL_APPOINTMENT_DATE',
-      'TREATMENT',
-      `ลบวันนัดหมายวันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]} (${names}) ทั้งหมด`
-    );
-    showToast(`🗑️ ลบวันนัดหมายวันที่ ${day} เรียบร้อยแล้ว`);
   };
 
   // Default selected calendar patient to first available real patient if none selected
@@ -3365,21 +3511,30 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                           )}
                         </div>
 
-                        {/* Selected Day Quick Action: Delete Date button */}
-                        {((effectiveAppointments[selectedCalendarDay]?.length || 0) > 0 || (calendarAppointments[selectedCalendarDay]?.length || 0) > 0) && (
+                        {/* Selected Day Quick Action: Delete Date button (R5: only if assigned to selected patient and user may delete) */}
+                        {deleteActionState && (
                           <button
                             type="button"
-                            onClick={(e) => handleDeleteDayAppointments(selectedCalendarDay, e)}
-                            className="px-3 py-1 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-black border border-rose-300 transition flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95"
-                            title={`ลบวันนัดหมายวันที่ ${selectedCalendarDay} ${THAI_MONTH_NAMES[scheduleSelectedMonth]}`}
+                            disabled={!deleteActionState.allowed}
+                            onClick={(e) => {
+                              if (deleteActionState.allowed) {
+                                handleDeleteSelectedPatientAppointment(deleteActionState.targetApt, e);
+                              }
+                            }}
+                            className={`px-3 py-1 rounded-full text-xs font-black border transition flex items-center gap-1.5 shadow-2xs ${
+                              deleteActionState.allowed
+                                ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-300 cursor-pointer active:scale-95'
+                                : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-60'
+                            }`}
+                            title={deleteActionState.allowed ? `ลบวันนัดหมายวันที่ ${selectedCalendarDay} ${THAI_MONTH_NAMES[scheduleSelectedMonth]}` : deleteActionState.reason}
                           >
                             <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-                            <span>ลบวันนัด ({selectedCalendarDay})</span>
+                            <span>ลบวันนัด (วันที่ {selectedCalendarDay})</span>
                           </button>
                         )}
                       </div>
 
-                      {/* Status Legends matching Image 2 */}
+                      {/* Status Legends matching Image 2 + Missed (R1) */}
                       <div className="flex items-center gap-2.5 sm:gap-4 flex-wrap text-[11px] sm:text-xs">
                         <div className="flex items-center gap-1.5">
                           <span className="w-2 sm:w-2.5 h-2 sm:h-2.5 rounded-full bg-[#10B981]" />
@@ -3393,7 +3548,41 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                           <span className="w-2 sm:w-2.5 h-2 sm:h-2.5 rounded-full bg-[#3B82F6]" />
                           <span className="font-bold text-slate-600">สำเร็จครบโปรแกรม</span>
                         </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 sm:w-2.5 h-2 sm:h-2.5 rounded-full bg-[#EF4444]" />
+                          <span className="font-bold text-slate-600">ขาดการฝึก</span>
+                        </div>
                       </div>
+                    </div>
+
+                    {/* Summary Chip Row for Selected Patient (R2) */}
+                    <div className="flex items-center gap-2 flex-wrap py-2 px-3.5 bg-emerald-50/80 border border-emerald-200/80 rounded-2xl text-xs mb-3 shadow-2xs">
+                      <span className="font-black text-emerald-900 flex items-center gap-1.5">
+                        <CalendarDays className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>วันที่ลงโปรแกรมเดือนนี้ ({normalizePatientName(selectedCalendarPatient?.name) || 'คนไข้ที่เลือก'}):</span>
+                      </span>
+                      {monthScheduledDays.length > 0 ? (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {monthScheduledDays.map((dayNum) => (
+                            <button
+                              key={dayNum}
+                              type="button"
+                              onClick={() => setSelectedCalendarDay(dayNum)}
+                              className={`px-2.5 py-0.5 rounded-full text-xs font-black transition cursor-pointer ${
+                                selectedCalendarDay === dayNum
+                                  ? 'bg-[#0097A7] text-white shadow-xs scale-105'
+                                  : 'bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-300'
+                              }`}
+                              title={`เลือกวันที่ ${dayNum}`}
+                              aria-label={`เลือกวันที่ ${dayNum}`}
+                            >
+                              {dayNum}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 italic text-[11px]">ไม่มีนัดหมายในเดือนนี้</span>
+                      )}
                     </div>
 
                     {/* Weekday Columns Header (7 Columns) with colored dots matching Image 2 */}
@@ -3437,49 +3626,33 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
                       {/* Days 1 to 31 */}
                       {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => {
-                        const isToday = day === 14;
+                        const nowKeyStr = dateKey();
+                        const [nowY, nowM, nowD] = nowKeyStr.split('-').map(Number);
+                        const isToday = scheduleSelectedYear === nowY && (scheduleSelectedMonth + 1) === nowM && day === nowD;
                         const isSelected = day === selectedCalendarDay;
-                        // Strictly filter out non-patients and only show real patients currently in users
-                        const rawApts = effectiveAppointments[day] || calendarAppointments[day] || [];
-                        const dayAppointments = rawApts.filter((apt) => {
-                          const n = (apt.name || '').toLowerCase().trim();
-                          if (!n) return false;
-                          const cleanName = n.replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').replace(/🎮/g, '').trim().toLowerCase();
-                          if (users.length <= 4) return true;
-                          return users.some(
-                            (u) =>
-                              u.role === 'patient' &&
-                              (((u.name || '').toLowerCase().replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').trim() === cleanName) ||
-                                (u.name || '').toLowerCase().includes(cleanName) ||
-                                cleanName.includes((u.name || '').toLowerCase().replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '').trim()) ||
-                                (u.username && u.username.toLowerCase() === cleanName) ||
-                                (u.code && u.code.toLowerCase() === cleanName))
-                          );
-                        });
 
-                        const activePatName = selectedCalendarPatient?.name || users.find((u) => u.role === 'patient')?.name || '';
-                        const cleanSelectedPatientName = activePatName
-                          .replace(/^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง)\s*/, '')
-                          .trim()
-                          .split(' ')[0]
-                          .toLowerCase();
+                        const rawDayApts = effectiveAppointments[day] || [];
+                        const daySchedule = groupedMonthSchedule[day];
+
+                        // Individual mode: strictly appointments for the selected patient (R1)
                         const displayedAppointments = scheduleViewMode === 'individual'
-                          ? dayAppointments.filter(
-                              (apt) => {
-                                const aptClean = (apt.name || '').toLowerCase().replace(/🎮/g, '').trim();
-                                return (
-                                  cleanSelectedPatientName &&
-                                  (aptClean.includes(cleanSelectedPatientName) || cleanSelectedPatientName.includes(aptClean))
-                                );
-                              }
-                            )
-                          : dayAppointments;
+                          ? rawDayApts.filter((apt) => isSamePatient(apt, selectedCalendarPatient))
+                          : rawDayApts;
 
                         return (
                           <div
                             key={day}
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`วันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]} ${scheduleSelectedYear + 543}`}
                             onClick={() => setSelectedCalendarDay(day)}
-                            className={`rounded-xl sm:rounded-2xl min-h-[58px] sm:min-h-[82px] lg:min-h-[92px] p-1 sm:p-2.5 flex flex-col justify-between transition cursor-pointer select-none relative ${
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setSelectedCalendarDay(day);
+                              }
+                            }}
+                            className={`rounded-xl sm:rounded-2xl min-h-[58px] sm:min-h-[82px] lg:min-h-[92px] p-1 sm:p-2.5 flex flex-col justify-between transition cursor-pointer select-none relative outline-none focus:ring-2 focus:ring-cyan-400 ${
                               isSelected
                                 ? 'border-2 border-[#00A8E8] bg-white shadow-md shadow-cyan-100/80 ring-2 ring-cyan-200/50'
                                 : isToday
@@ -3508,84 +3681,138 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                               )}
                             </div>
 
-                            {/* Middle: Appointment Pills or Action Button */}
-                            <div className="space-y-0.5 sm:space-y-1 my-0.5 sm:my-1">
-                              {displayedAppointments.map((apt, aIdx) => (
-                                <div
-                                  key={aIdx}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setQuickInfoSelectedDay(day);
-                                    const cleanApt = apt.name.replace(/^(นาย|นาง|นางสาว)\s*/, '').replace(/🎮/g, '').trim().toLowerCase();
-                                    const targetPat =
-                                      users.find(
-                                        (u) =>
-                                          u.role === 'patient' &&
-                                          ((u.name || '').toLowerCase().includes(cleanApt) ||
-                                            cleanApt.includes((u.name || '').replace(/^(นาย|นาง|นางสาว)\s*/, '').trim().toLowerCase()) ||
-                                            u.username.toLowerCase() === cleanApt)
-                                      ) ||
-                                      selectedCalendarPatient ||
-                                      users.find((u) => u.role === 'patient');
-                                    if (targetPat) {
-                                      setQuickInfoPatient(targetPat);
-                                      setIsQuickInfoModalOpen(true);
-                                    }
-                                  }}
-                                  className={`px-1 sm:px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-bold truncate transition cursor-pointer hover:opacity-90 flex items-center justify-between gap-0.5 sm:gap-1 group/pill ${
-                                    apt.type === 'dual'
-                                      ? 'bg-gradient-to-r from-emerald-100 via-teal-50 to-purple-100 text-[#064E3B] border border-emerald-300 shadow-2xs font-extrabold'
-                                      : apt.type === 'green'
-                                      ? 'bg-emerald-100 text-emerald-800'
-                                      : apt.type === 'cyan'
-                                      ? 'bg-sky-100 text-sky-800'
-                                      : 'bg-purple-100 text-purple-800'
-                                  }`}
-                                  title="คลิกเพื่อดูข้อมูลคนไข้ด่วน"
-                                >
-                                  <span className="truncate">{apt.time} {apt.name}</span>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => handleDeleteAppointment(day, aIdx, e)}
-                                    className="p-0.5 rounded-full hover:bg-rose-200 text-slate-400 hover:text-rose-600 transition flex items-center justify-center flex-shrink-0 cursor-pointer ml-0.5 sm:ml-1"
-                                    title={`ลบนัดหมาย ${apt.time} ${apt.name}`}
-                                  >
-                                    <X className="w-2.5 h-2.5 stroke-[3]" />
-                                  </button>
-                                </div>
-                              ))}
+                            {/* Middle: Individual Mode Markers (R1) or Combined Mode Summary (R4) */}
+                            {scheduleViewMode === 'individual' ? (
+                              <div className="space-y-0.5 sm:space-y-1 my-0.5 sm:my-1">
+                                {displayedAppointments.map((apt, aIdx) => {
+                                  const statusColor =
+                                    apt.status === 'completed'
+                                      ? 'bg-blue-100 text-blue-800 border-blue-300'
+                                      : apt.status === 'paused'
+                                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                                      : apt.status === 'missed'
+                                      ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                      : 'bg-emerald-100 text-emerald-800 border-emerald-300';
 
-                              {/* Selected Day Action Button matching Image 2 (+ ตัดคอร์สที่นี่) */}
-                              {isSelected && (
-                                <div className="space-y-0.5 sm:space-y-1 mt-0.5 sm:mt-1">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const mStr = String(scheduleSelectedMonth + 1).padStart(2, '0');
-                                      const dStr = String(day).padStart(2, '0');
-                                      setSelectedDateForCourse(`${scheduleSelectedYear}-${mStr}-${dStr}`);
-                                      setIsCourseModeModalOpen(true);
-                                    }}
-                                    className="w-full py-1 sm:py-1.5 px-1 sm:px-2 bg-[#009FD9] hover:bg-[#0089BD] text-white rounded-full text-[9px] sm:text-[11px] font-black shadow-xs hover:shadow transition flex items-center justify-center gap-0.5 sm:gap-1 active:scale-95 cursor-pointer"
-                                    title="คลิกเพื่อเลือกรูปแบบการฝึกและตัดคอร์ส"
-                                  >
-                                    <span>+ ตัดคอร์สที่นี่</span>
-                                  </button>
-                                  {(dayAppointments.length > 0 || (effectiveAppointments[day]?.length || 0) > 0) && (
+                                  const dotColor =
+                                    apt.status === 'completed'
+                                      ? 'bg-[#3B82F6]'
+                                      : apt.status === 'paused'
+                                      ? 'bg-[#F59E0B]'
+                                      : apt.status === 'missed'
+                                      ? 'bg-[#EF4444]'
+                                      : 'bg-[#10B981]';
+
+                                  const exBadgeText = apt.exerciseSummary || (apt.exerciseCount > 1 ? `${apt.exerciseCount} ท่า` : '1 ท่า');
+
+                                  return (
+                                    <div
+                                      key={aIdx}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setQuickInfoSelectedDay(day);
+                                        const targetPat = apt.patient || selectedCalendarPatient || users.find((u) => isSamePatient(u, apt));
+                                        if (targetPat) {
+                                          setQuickInfoPatient(targetPat);
+                                          setIsQuickInfoModalOpen(true);
+                                        }
+                                      }}
+                                      className={`px-1.5 py-0.5 sm:py-1 rounded-md text-[9px] sm:text-[10px] font-bold border transition cursor-pointer hover:opacity-90 flex flex-col gap-0.5 ${statusColor} shadow-2xs`}
+                                      title={`คลิกเพื่อดูข้อมูลคนไข้ด่วน: ${apt.name} (${apt.time})`}
+                                    >
+                                      <div className="flex items-center justify-between gap-1">
+                                        <span className="flex items-center gap-1 truncate font-extrabold">
+                                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dotColor}`} />
+                                          <span className="truncate">{apt.time}</span>
+                                        </span>
+                                        <span className="text-[8px] sm:text-[9px] px-1 py-0.2 rounded bg-white/70 font-black flex-shrink-0">
+                                          {exBadgeText}
+                                        </span>
+                                      </div>
+                                      <div className="truncate text-[8px] sm:text-[9px] opacity-90">
+                                        {normalizePatientName(apt.name)}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+
+                                {/* Selected Day Action Button (+ ตัดคอร์สที่นี่ / ลบวันนัด) */}
+                                {isSelected && (
+                                  <div className="space-y-0.5 sm:space-y-1 mt-0.5 sm:mt-1">
                                     <button
                                       type="button"
-                                      onClick={(e) => handleDeleteDayAppointments(day, e)}
-                                      className="w-full py-0.5 sm:py-1 px-1 sm:px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-full text-[9px] sm:text-[10px] font-black shadow-2xs hover:shadow transition flex items-center justify-center gap-0.5 sm:gap-1 active:scale-95 cursor-pointer"
-                                      title={`ลบวันนัดหมายวันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const mStr = String(scheduleSelectedMonth + 1).padStart(2, '0');
+                                        const dStr = String(day).padStart(2, '0');
+                                        setSelectedDateForCourse(`${scheduleSelectedYear}-${mStr}-${dStr}`);
+                                        setIsCourseModeModalOpen(true);
+                                      }}
+                                      className="w-full py-1 sm:py-1.5 px-1 sm:px-2 bg-[#009FD9] hover:bg-[#0089BD] text-white rounded-full text-[9px] sm:text-[11px] font-black shadow-xs hover:shadow transition flex items-center justify-center gap-0.5 sm:gap-1 active:scale-95 cursor-pointer"
+                                      title="คลิกเพื่อเลือกรูปแบบการฝึกและตัดคอร์ส"
                                     >
-                                      <Trash2 className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-rose-600" />
-                                      <span>ลบวันนัด</span>
+                                      <span>+ ตัดคอร์สที่นี่</span>
                                     </button>
+                                    {deleteActionState && (
+                                      <button
+                                        type="button"
+                                        disabled={!deleteActionState.allowed}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          if (deleteActionState.allowed) {
+                                            handleDeleteSelectedPatientAppointment(deleteActionState.targetApt, e);
+                                          }
+                                        }}
+                                        className={`w-full py-0.5 sm:py-1 px-1 sm:px-2 rounded-full text-[9px] sm:text-[10px] font-black shadow-2xs transition flex items-center justify-center gap-0.5 sm:gap-1 border ${
+                                          deleteActionState.allowed
+                                            ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-300 hover:shadow active:scale-95 cursor-pointer'
+                                            : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-60'
+                                        }`}
+                                        title={deleteActionState.allowed ? `ลบวันนัดหมายวันที่ ${day} ${THAI_MONTH_NAMES[scheduleSelectedMonth]}` : deleteActionState.reason}
+                                      >
+                                        <Trash2 className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-rose-600" />
+                                        <span>ลบวันนัด</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              /* Combined Mode (R4) */
+                              <div className="space-y-1 my-0.5 sm:my-1">
+                                {(daySchedule?.patientCount || 0) > 0 && (
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="px-1.5 py-0.2 rounded-full bg-teal-100 text-teal-800 text-[8px] sm:text-[9px] font-black border border-teal-200">
+                                      {daySchedule?.patientCount} คน
+                                    </span>
+                                  </div>
+                                )}
+                                <div className="space-y-0.5">
+                                  {(daySchedule?.patients || []).slice(0, 2).map((pSummary, pIdx) => {
+                                    const isOther = pSummary.ownership.tag === 'other';
+                                    return (
+                                      <div
+                                        key={pIdx}
+                                        className={`px-1 sm:px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] truncate flex items-center gap-0.5 border ${
+                                          isOther
+                                            ? 'bg-slate-100 text-slate-500 border-slate-200 opacity-70'
+                                            : 'bg-emerald-50 text-emerald-800 border-emerald-200 font-bold'
+                                        }`}
+                                        title={`${pSummary.patientName} (${pSummary.ownership.label})`}
+                                      >
+                                        {isOther && <Lock className="w-2.5 h-2.5 flex-shrink-0 text-slate-400" />}
+                                        <span className="truncate">{normalizePatientName(pSummary.patientName)}</span>
+                                      </div>
+                                    );
+                                  })}
+                                  {(daySchedule?.patientCount || 0) > 2 && (
+                                    <div className="text-[8px] sm:text-[9px] text-slate-400 font-bold text-center">
+                                      +{(daySchedule?.patientCount || 0) - 2} คน
+                                    </div>
                                   )}
                                 </div>
-                              )}
-                            </div>
+                              </div>
+                            )}
 
                             {/* Bottom spacer */}
                             <div className="h-0.5" />
@@ -3595,6 +3822,150 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
                       {/* Trailing 1 empty cell to complete 35 cells grid */}
                       <div className="bg-slate-50/40 rounded-xl sm:rounded-2xl min-h-[58px] sm:min-h-[82px] lg:min-h-[92px] border border-transparent" />
+                    </div>
+
+                    {/* Day-Detail Panel for selectedCalendarDay (R3) */}
+                    <div
+                      className="mt-4 bg-white rounded-2xl border border-emerald-200/90 p-3 sm:p-5 shadow-xs animate-fadeIn"
+                      aria-label={`รายละเอียดผู้ลงโปรแกรมวันที่ ${selectedCalendarDay} ${THAI_MONTH_NAMES[scheduleSelectedMonth]}`}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-emerald-100">
+                        <div className="flex items-center gap-2">
+                          <CalendarDays className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                          <h4 className="text-sm sm:text-base font-black text-slate-800">
+                            วันที่ {selectedCalendarDay} {THAI_MONTH_NAMES[scheduleSelectedMonth]} {scheduleSelectedYear + 543} — ผู้ที่ลงโปรแกรมวันนี้
+                          </h4>
+                        </div>
+                        <div className="text-xs text-slate-500 font-bold">
+                          รวม {selectedDaySchedule?.patientCount || 0} คน
+                        </div>
+                      </div>
+
+                      {(!selectedDaySchedule || selectedDaySchedule.patients.length === 0) ? (
+                        <div className="py-8 text-center text-slate-400 text-xs sm:text-sm font-bold flex flex-col items-center justify-center gap-1.5">
+                          <UserX className="w-6 h-6 text-slate-300" />
+                          <span>ยังไม่มีผู้ลงโปรแกรมวันนี้</span>
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-slate-100 mt-2">
+                          {selectedDaySchedule.patients.map((patSummary, pIdx) => {
+                            const isSelectedPatient = isSamePatient(patSummary.patient, selectedCalendarPatient);
+                            const isDemo = (patSummary.patientName || '').includes('สาธิต') || ((patSummary.patient as any)?.isDemo);
+                            const displayName = normalizePatientName(patSummary.patientName);
+
+                            return (
+                              <div
+                                key={pIdx}
+                                className={`py-3 px-3 rounded-xl transition flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+                                  isSelectedPatient
+                                    ? 'bg-cyan-50/80 border border-cyan-200 ring-1 ring-cyan-300 shadow-2xs'
+                                    : 'hover:bg-slate-50/80 border border-transparent'
+                                }`}
+                              >
+                                {/* Left: Patient info & Ownership */}
+                                <div className="flex items-start sm:items-center gap-3 min-w-0">
+                                  <div
+                                    className={`w-9 h-9 rounded-full flex items-center justify-center font-black text-xs flex-shrink-0 ${
+                                      patSummary.ownership.tag === 'mine'
+                                        ? 'bg-emerald-100 text-emerald-700'
+                                        : patSummary.ownership.tag === 'covered'
+                                        ? 'bg-cyan-100 text-cyan-700'
+                                        : 'bg-slate-100 text-slate-600'
+                                    }`}
+                                  >
+                                    {displayName.charAt(0)}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-black text-xs sm:text-sm text-slate-800">
+                                        {displayName}
+                                      </span>
+                                      {isDemo && (
+                                        <span className="px-1.5 py-0.2 text-[10px] rounded-md bg-amber-100 text-amber-800 font-bold">
+                                          (สาธิต)
+                                        </span>
+                                      )}
+                                      <span className="text-[11px] font-semibold text-slate-500">
+                                        HN: {patSummary.hn}
+                                      </span>
+                                      {/* Ownership badge */}
+                                      <span
+                                        className={`px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 ${
+                                          patSummary.ownership.tag === 'mine'
+                                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                            : patSummary.ownership.tag === 'covered'
+                                            ? 'bg-cyan-100 text-cyan-800 border border-cyan-300'
+                                            : 'bg-slate-100 text-slate-600 border border-slate-200'
+                                        }`}
+                                      >
+                                        {patSummary.ownership.tag === 'other' && <Lock className="w-2.5 h-2.5" />}
+                                        <span>{patSummary.ownership.label}</span>
+                                      </span>
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 font-medium mt-0.5 flex items-center gap-2 flex-wrap">
+                                      <span>ผู้ดูแล: {patSummary.therapistName || '-'}</span>
+                                      <span>•</span>
+                                      <span>{patSummary.exerciseSummary || `${patSummary.exerciseCount} รายการฝึก`}</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Right: Status badge & Actions */}
+                                <div className="flex items-center gap-2.5 flex-shrink-0 self-end md:self-center">
+                                  {/* Status Badge */}
+                                  <span
+                                    className={`px-2.5 py-1 rounded-full text-[10px] sm:text-xs font-black ${
+                                      patSummary.status === 'completed'
+                                        ? 'bg-blue-100 text-blue-800'
+                                        : patSummary.status === 'paused'
+                                        ? 'bg-amber-100 text-amber-800'
+                                        : patSummary.status === 'missed'
+                                        ? 'bg-rose-100 text-rose-800'
+                                        : 'bg-emerald-100 text-emerald-800'
+                                    }`}
+                                  >
+                                    {patSummary.status === 'completed'
+                                      ? 'สำเร็จครบโปรแกรม'
+                                      : patSummary.status === 'paused'
+                                      ? 'พักการฝึก'
+                                      : patSummary.status === 'missed'
+                                      ? 'ขาดการฝึก'
+                                      : 'กำลังรักษา'}
+                                  </span>
+
+                                  {/* Action: Delete button if permitted (R6/R7) */}
+                                  {patSummary.ownership.tag === 'other' ? (
+                                    <span className="text-[11px] text-slate-400 italic flex items-center gap-1 font-semibold">
+                                      <Lock className="w-3 h-3" />
+                                      <span>อ่านได้อย่างเดียว</span>
+                                    </span>
+                                  ) : patSummary.canDelete && patSummary.deletableAppointment ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteSelectedPatientAppointment(patSummary.deletableAppointment as any)}
+                                      className="px-3 py-1 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-black border border-rose-300 transition flex items-center gap-1 cursor-pointer active:scale-95 shadow-2xs"
+                                      title={`ลบนัดหมายของ ${displayName}`}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                                      <span>ลบวันนัด</span>
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      disabled
+                                      className="px-3 py-1 rounded-full bg-slate-100 text-slate-400 text-xs font-bold border border-slate-200 cursor-not-allowed opacity-60 flex items-center gap-1"
+                                      title={patSummary.deleteReason || 'ไม่สามารถลบได้'}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5 text-slate-400" />
+                                      <span>ลบวันนัด</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -5625,9 +5996,26 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         treatmentPlan={quickInfoPlan}
         dayNumber={quickInfoSelectedDay}
         onDeleteAppointmentDate={
-          quickInfoSelectedDay
-            ? () => handleDeleteDayAppointments(quickInfoSelectedDay)
-            : undefined
+          (() => {
+            if (!quickInfoSelectedDay) return undefined;
+            const targetPat = quickInfoPatient || selectedCalendarPatient;
+            if (!targetPat) return undefined;
+            const dayApts = effectiveAppointments[quickInfoSelectedDay] || [];
+            const targetApt = dayApts.find((a) => isSamePatient(a, targetPat));
+            if (!targetApt) return undefined;
+
+            const check = canDeleteAppointment(
+              currentUserObj,
+              targetPat,
+              { id: targetApt.id, date: targetApt.dateStr, status: targetApt.status },
+              delegations,
+              activityLogs as any,
+              dateKey()
+            );
+            if (!check.allowed) return undefined;
+
+            return () => handleDeleteSelectedPatientAppointment(targetApt);
+          })()
         }
         onNavigateToCalendar={(pat) => {
           setIsQuickInfoModalOpen(false);

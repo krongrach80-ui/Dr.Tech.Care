@@ -30,6 +30,12 @@ import {
   generateSecureTemporaryPassword,
   validatePasswordStrength,
 } from '../services/authSecurityService';
+import {
+  canDeleteAppointment,
+  dateKey,
+  isSamePatient,
+  formatThaiDate,
+} from '../utils/scheduleRules';
 
 const DEFAULT_PASSWORD_HASH = STANDARD_PASSWORD_HASHES['1234'];
 
@@ -884,6 +890,7 @@ interface HospitalState {
   therapists: PhysicalTherapist[];
   exercises: HospitalExercise[];
   treatmentPlans: TreatmentPlan[];
+  cancelledAppointmentKeys: string[];
   activityLogs: ActivityLog[];
   bannedDevices: string[];
   bannedIps: string[];
@@ -947,6 +954,13 @@ interface HospitalState {
   // Treatment Plans
   saveTreatmentPlan: (plan: Omit<TreatmentPlan, 'id' | 'createdAt'> & { id?: number | string }) => void;
   deleteTreatmentPlan: (id: number | string) => void;
+  deleteAppointmentForPatient: (params: {
+    patientId?: string | number;
+    patient?: any;
+    dateStr: string;
+    appointmentId?: string | number;
+    planId?: string | number;
+  }) => { success: boolean; error?: string };
 
   // Symptoms & Logs & Security (Kick/Ban)
   reportSymptom: (report: Omit<PatientSymptomReport, 'id' | 'reportedAt' | 'status'>) => void;
@@ -977,6 +991,14 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   exercises: getStoredExercises(),
   modpacks: getStoredModpacks(),
   treatmentPlans: getStoredTreatmentPlans(),
+  cancelledAppointmentKeys: (() => {
+    try {
+      const saved = localStorage.getItem('strongcare_cancelled_appointments');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  })(),
   delegations: getStoredDelegations(),
   activityLogs: INITIAL_LOGS,
   bannedDevices: ['Linux / Curl Automation Client', 'Unknown Android Emulator #99'],
@@ -2265,6 +2287,144 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       return { treatmentPlans: updated };
     });
     get().addActivityLog('ลบแผนการรักษา', 'TREATMENT', `ลบแผนการรักษา ID: ${id}`);
+  },
+
+  deleteAppointmentForPatient: (params) => {
+    const { dateStr, appointmentId, planId } = params;
+    const patientId = params.patientId || params.patient?.id || params.patient?.code;
+    const currentUserId = get().currentUserId;
+    const currentRole = get().currentRole;
+    const currentUser = get().users.find((u) => u.id === currentUserId) || {
+      id: currentUserId,
+      role: currentRole,
+    };
+
+    const patient = get().users.find(
+      (u) =>
+        (patientId && String(u.id) === String(patientId)) ||
+        (patientId && u.code && String(u.code).toLowerCase() === String(patientId).toLowerCase()) ||
+        (patientId && (u as any).patient_code && String((u as any).patient_code).toLowerCase() === String(patientId).toLowerCase()) ||
+        (patientId && (u as any).hn && String((u as any).hn).toLowerCase() === String(patientId).toLowerCase()) ||
+        (params.patient && isSamePatient(params.patient, u)) ||
+        (patientId && isSamePatient({ id: patientId, code: String(patientId) }, u))
+    ) || params.patient;
+
+    if (!patient) {
+      return { success: false, error: 'ไม่พบข้อมูลคนไข้ในระบบ' };
+    }
+
+    const checkAppt = {
+      id: appointmentId || `apt-${planId || 'manual'}-${dateStr}`,
+      date: dateStr,
+      patientId: patient.id,
+      status: 'scheduled',
+    };
+
+    const perm = canDeleteAppointment(
+      currentUser,
+      patient,
+      checkAppt,
+      get().delegations,
+      get().symptomReports,
+      dateKey()
+    );
+
+    if (!perm.allowed) {
+      get().addActivityLog(
+        'SECURITY_DENIED_DELETE_APPOINTMENT',
+        'SYSTEM',
+        `ปฏิเสธการลบนัดหมายวันที่ ${dateStr} ของคนไข้ ${patient.name}: ${perm.reason || 'ไม่มีสิทธิ์'}`
+      );
+      return { success: false, error: perm.reason || 'ไม่มีสิทธิ์ลบนัดหมายนี้' };
+    }
+
+    // 1. Update treatmentPlans (authoritative store)
+    const patCodeClean = (patient.code || (patient as any).patient_code || patient.name || '')
+      .replace(/[^a-zA-Z0-9ก-๙]/g, '')
+      .toLowerCase();
+    const cancelKeyApt = `${dateStr}-${patCodeClean}`;
+
+    set((state) => {
+      const updatedPlans = state.treatmentPlans.map((plan) => {
+        const isTargetPlan = (planId && String(plan.id) === String(planId)) ||
+          isSamePatient({ id: plan.patientId, code: plan.patientCode, name: plan.patientName }, patient);
+
+        if (!isTargetPlan) return plan;
+
+        let modified = false;
+        let newSelectedDates = plan.selectedDates;
+        let newScheduledDates = plan.scheduledDates;
+
+        if (Array.isArray(plan.selectedDates) && plan.selectedDates.includes(dateStr)) {
+          newSelectedDates = plan.selectedDates.filter((d) => d !== dateStr);
+          modified = true;
+        }
+
+        if (Array.isArray(plan.scheduledDates)) {
+          newScheduledDates = plan.scheduledDates.filter((d) => {
+            const dStr = typeof d === 'string' ? d : d.date;
+            return dStr !== dateStr;
+          });
+          modified = true;
+        }
+
+        if (modified) {
+          return {
+            ...plan,
+            selectedDates: newSelectedDates,
+            scheduledDates: newScheduledDates,
+            updatedAt: dateKey(),
+          };
+        }
+        return plan;
+      });
+
+      try {
+        localStorage.setItem('strongcare_hospital_treatment_plans', JSON.stringify(updatedPlans));
+      } catch {}
+
+      if (supabaseService.isConfigured()) {
+        supabaseService.saveTreatmentPlans(updatedPlans).catch((e) =>
+          console.warn('Supabase saveTreatmentPlans error:', e)
+        );
+      }
+
+      // 2. Clean strongcare_calendar_appointments in localStorage for this patient only
+      try {
+        const calSaved = localStorage.getItem('strongcare_calendar_appointments');
+        if (calSaved) {
+          const calApts = JSON.parse(calSaved);
+          const dayNum = parseInt(dateStr.split('-')[2], 10);
+          if (calApts[dayNum]) {
+            calApts[dayNum] = calApts[dayNum].filter(
+              (a: any) => !isSamePatient({ name: a.name }, patient)
+            );
+            if (calApts[dayNum].length === 0) delete calApts[dayNum];
+            localStorage.setItem('strongcare_calendar_appointments', JSON.stringify(calApts));
+          }
+        }
+      } catch {}
+
+      // 3. Save patient-specific cancelled key in localStorage (never -all wildcard)
+      try {
+        const prevCancelled = JSON.parse(localStorage.getItem('strongcare_cancelled_appointments') || '[]');
+        const updatedCancelled = Array.from(new Set([...prevCancelled, cancelKeyApt]));
+        localStorage.setItem('strongcare_cancelled_appointments', JSON.stringify(updatedCancelled));
+      } catch {}
+
+      return {
+        treatmentPlans: updatedPlans,
+        cancelledAppointmentKeys: Array.from(new Set([...state.cancelledAppointmentKeys, cancelKeyApt])),
+      };
+    });
+
+    get().addActivityLog(
+      'DELETE_APPOINTMENT',
+      'TREATMENT',
+      `ลบวันนัดหมายวันที่ ${formatThaiDate(dateStr)} ของคนไข้ ${patient.name} (${patient.code || patient.id}) สำเร็จ`
+    );
+
+    return { success: true };
   },
 
   reportSymptom: (reportData) => {
