@@ -1242,6 +1242,19 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
                   ).catch(() => {});
                 }
 
+                let resolvedVector = patientFaceStorageService.parseVector(p.face_vector);
+                if (!resolvedVector && typeof p.medical_history === 'string' && p.medical_history.includes('FACE_EMB:')) {
+                  const match = p.medical_history.match(/FACE_EMB:(\[.*?\])/);
+                  if (match) {
+                    resolvedVector = patientFaceStorageService.parseVector(match[1]);
+                  }
+                }
+                let resolvedPhoto = p.photo || p.avatar_url;
+                if (!resolvedPhoto && typeof p.medical_history === 'string' && p.medical_history.includes('FACE_PHOTO:')) {
+                  const pMatch = p.medical_history.match(/FACE_PHOTO:(data:image\/[^\s\n]+)/);
+                  if (pMatch) resolvedPhoto = pMatch[1];
+                }
+
                 return {
                   id: p.id,
                   code: p.patient_code,
@@ -1271,19 +1284,21 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
                     .trim(),
                   assignedTherapistName: p.profiles?.full_name || 'กภ. ธนากร วงศ์สวัสดิ์',
                   assignedTherapistId: p.responsible_therapist_id || 1,
-                  face_image_url: p.photo || p.avatar_url,
-                  biometricVector: p.face_vector,
-                  face_vector: p.face_vector,
+                  face_image_url: resolvedPhoto || undefined,
+                  biometricVector: resolvedVector || undefined,
+                  face_vector: resolvedVector || undefined,
                   created_at: p.created_at ? p.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
                   last_active: isPending ? 'รอลงข้อมูลส่วนตัว' : 'พร้อมรับบริการ',
                 };
               })
           : [];
 
-        // Hydrate patientFaceStorageService and faceRegistryService so that any kiosk or client has all patient face photos and records in memory
+        // Hydrate patientFaceStorageService and faceRegistryService so that any kiosk or client on any device has all patient face vectors in memory
         if (patientUsers && patientUsers.length > 0) {
           for (const pu of patientUsers) {
-            if (pu.face_image_url || (pu as any).biometricVector) {
+            const rawV = (pu as any).biometricVector || (pu as any).face_vector;
+            const parsedV = patientFaceStorageService.parseVector(rawV);
+            if (pu.face_image_url || parsedV) {
               patientFaceStorageService.savePatientRecord(pu.code, {
                 patient_profile: {
                   id: pu.id,
@@ -1294,11 +1309,24 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
                   status: (pu.status === 'suspended' || pu.status === 'pending_info') ? pu.status : 'active',
                 },
                 biometric_data: {
-                  face_vector: (pu as any).biometricVector || (pu as any).face_vector || [],
+                  face_vector: parsedV || [],
                   registered_face_url: pu.face_image_url || '',
                   enrolled_at: pu.created_at || new Date().toISOString(),
                 },
               }, pu.face_image_url, false);
+
+              if (parsedV && !isPlaceholderPatientName(pu.name, pu.status)) {
+                faceRegistryService.saveProfile({
+                  patientId: pu.id,
+                  patientCode: pu.code,
+                  name: pu.name,
+                  age: pu.age,
+                  gender: pu.gender,
+                  embeddings: [parsedV],
+                  face_image_url: pu.face_image_url,
+                  enrolledAt: pu.created_at || new Date().toISOString(),
+                });
+              }
             }
           }
         } else if (Array.isArray(patients) && patients.length === 0) {

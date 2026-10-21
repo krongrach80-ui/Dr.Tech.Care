@@ -410,6 +410,7 @@ interface KioskSixStepWorkflowProps {
   onOpenReception?: () => void;
   kioskStationName?: string;
   isActive?: boolean;
+  initialStep?: number;
 }
 
 export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
@@ -420,6 +421,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   onOpenReception,
   kioskStationName = 'Dr.Tech.Care (ตู้ Kiosk ประจำสถานี 1)',
   isActive = true,
+  initialStep,
 }) => {
   // Query param flags: อนุญาต Demo Mode เฉพาะขณะรัน Local Development Server เท่านั้น (ใน Production Build จะเป็น false เสมอ)
   const isExplicitDemo = Boolean(
@@ -1781,6 +1783,19 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     setShowNoAccountModal(false);
     setShowPinModal(true);
   };
+
+  // Synchronize dynamic initialStep (e.g. from Reception to Step 4 Face Verification)
+  useEffect(() => {
+    if (initialStep && initialStep >= 1 && initialStep <= 6) {
+      changeStep(initialStep);
+      if (initialStep === 4) {
+        handleResetFaceScan();
+        setShowNoAccountModal(false);
+        setShowPinModal(false);
+        startCamera();
+      }
+    }
+  }, [initialStep, changeStep, startCamera]);
 
   // Search account created by Admin to bind face
   const handleSearchAccountToLink = async () => {

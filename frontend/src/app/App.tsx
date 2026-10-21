@@ -116,6 +116,7 @@ export const App: React.FC = () => {
 
   // Toast notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [kioskInitialStep, setKioskInitialStep] = useState<number>(1);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -559,6 +560,7 @@ export const App: React.FC = () => {
         {isKioskActive && (
           <KioskSixStepWorkflow
             isActive={isKioskActive}
+            initialStep={kioskInitialStep}
             onLoginComplete={(patient) => {
               handleLoginSuccess(patient);
             }}
@@ -821,23 +823,19 @@ export const App: React.FC = () => {
           syncHash(currentScreen, null);
         }}
         onSuccessNavigateToKiosk={(patient) => {
-          const normalizedPatient: Patient = {
-            ...patient,
-            code: (patient as any).code || patient.patient_code || '',
-            patient_code: patient.patient_code || (patient as any).code || '',
-            name: patient.name || 'ผู้รับบริการ',
-          };
-          selectPatient(normalizedPatient);
-          setCurrentUserName(normalizedPatient.name);
+          setIsReceptionOpen(false);
+          // ล้างเซสชันเก่าเพื่อให้กล้องตรวจจับและตรวจสอบใบหน้าสดจริงๆ ไม่ให้เข้าสู่ระบบล่วงหน้า
+          selectPatient(null as any);
+          setCurrentUserName('');
           if (typeof window !== 'undefined') {
             try {
-              localStorage.setItem('drtechcare_active_patient', JSON.stringify(normalizedPatient));
+              localStorage.removeItem('drtechcare_active_patient');
             } catch {}
           }
-          showToast(`ยินดีต้อนรับ ${normalizedPatient.name} สมัครและเข้าสู่ระบบสำเร็จ`);
-          setTimeout(() => {
-            handleNavigate(2);
-          }, 350);
+          // นำทางไปยังตู้ Kiosk ขั้นตอนที่ 4 (ตรวจจับใบหน้าใหม่ด้วยกล้อง)
+          setKioskInitialStep(4);
+          handleNavigate(1);
+          showToast(`กรุณามองกล้องเพื่อสแกนใบหน้าตรวจสอบตัวตนของคุณ ${patient?.name || ''}`);
         }}
       />
 

@@ -742,14 +742,6 @@ export const supabaseService = {
     }
   },
 
-  async saveFaceEmbeddings(idOrCode: any, embeddings: number[] | number[][], photo?: string): Promise<any> {
-    if (!isSupabaseConfigured() || !idOrCode) return null;
-    return this.updatePatient(idOrCode, {
-      face_vector: embeddings,
-      photo: photo,
-    });
-  },
-
   async updatePatient(id: any, updates: any): Promise<any> {
     if (!isSupabaseConfigured()) return null;
     const strId = String(id || updates.patient_code || updates.code || '').trim();
@@ -917,6 +909,62 @@ export const supabaseService = {
       await this.logActivity('DELETE_PATIENT', `ลบเวชระเบียนคนไข้: ${str}`, 'PATIENT').catch(() => {});
     } catch (e) {
       console.error('[SUPABASE] deletePatient exception:', e);
+    }
+  },
+
+  /**
+   * บันทึกหรืออัปเดตเวกเตอร์ใบหน้า 128 มิติ และรูปถ่ายคนไข้ลงฐานข้อมูลคลาวด์ Supabase
+   * เพื่อให้ทุกอุปกรณ์ (Cross-Device) สแกนหน้าติดได้เหมือนกันทั้งหมด
+   */
+  async saveFaceEmbeddings(idOrCode: any, vectorOrVectors: any, photoUrl?: string | null): Promise<boolean> {
+    if (!isSupabaseConfigured() || !idOrCode || !vectorOrVectors) return false;
+    try {
+      const cleanVec = Array.isArray(vectorOrVectors)
+        ? (Array.isArray(vectorOrVectors[0]) ? vectorOrVectors[0] : vectorOrVectors)
+        : vectorOrVectors;
+      const vecStr = typeof cleanVec === 'string' ? cleanVec : JSON.stringify(cleanVec);
+
+      const str = String(idOrCode).trim();
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
+      let existingRow: any = null;
+      if (isUuid) {
+        const { data } = await supabase.from('patients').select('*').eq('id', str).maybeSingle();
+        existingRow = data;
+      }
+      if (!existingRow) {
+        const { data } = await supabase.from('patients').select('*').ilike('patient_code', str).maybeSingle();
+        existingRow = data;
+      }
+
+      let medHistory = (existingRow?.medical_history || '')
+        .replace(/FACE_EMB:\[.*?\]/g, '')
+        .replace(/FACE_PHOTO:data:image\/[^\s\n]+/g, '')
+        .trim();
+
+      medHistory = `FACE_EMB:${vecStr}${photoUrl ? '\nFACE_PHOTO:' + photoUrl : ''}${medHistory ? '\n' + medHistory : ''}`;
+
+      const updatePayload: any = {
+        medical_history: medHistory,
+      };
+
+      let updateQuery = supabase.from('patients').update(updatePayload);
+      if (isUuid) {
+        updateQuery = updateQuery.eq('id', str);
+      } else {
+        updateQuery = updateQuery.ilike('patient_code', str);
+      }
+
+      const { error } = await updateQuery;
+      if (error) {
+        console.warn('[SUPABASE] saveFaceEmbeddings update error:', error);
+        return false;
+      }
+      console.log(`[SUPABASE] Successfully persisted face embedding for ${str} to Cloud Database`);
+      return true;
+    } catch (e) {
+      console.error('[SUPABASE] saveFaceEmbeddings exception:', e);
+      return false;
     }
   },
 

@@ -26,6 +26,7 @@ import { voiceAssistant } from '../../services/voiceAssistantService';
 import confetti from 'canvas-confetti';
 import { patientFaceStorageService, isPlaceholderPatientName } from '../../services/patientFaceStorageService';
 import { faceRegistryService } from '../../services/faceRegistryService';
+import { supabaseService } from '../../services/supabaseService';
 
 interface ReceptionOnboardingModalProps {
   isOpen: boolean;
@@ -394,7 +395,33 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
         console.warn('Reception saveProfile warning:', regErr);
       }
 
-      // 4. Refresh patient list in patientStore
+      // 4. Directly persist patient and biometrics to Supabase Cloud
+      if (supabaseService.isConfigured()) {
+        try {
+          const vectors = embeddingsList.map((e) => e.embedding).filter(Boolean);
+          await supabaseService.createPatient({
+            patient_code: patientCode,
+            name: fullName.trim(),
+            full_name: fullName.trim(),
+            age,
+            gender: gender === 'female' ? 'หญิง' : 'ชาย',
+            phone: phone || null,
+            pin: pin.trim() || '1234',
+            photo: capturedPhoto || null,
+            chief_complaint: diagnosis,
+            status: 'active',
+            embeddings: vectors,
+          });
+          if (vectors.length > 0) {
+            await supabaseService.saveFaceEmbeddings(patientCode, vectors, capturedPhoto || null);
+          }
+          await useHospitalStore.getState().initializeFromSupabase();
+        } catch (sbErr) {
+          console.warn('[RECEPTION] Supabase direct persistence error:', sbErr);
+        }
+      }
+
+      // 5. Refresh patient list in patientStore
       await fetchPatients();
 
       const createdObj = {
@@ -413,7 +440,7 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
       stopCamera();
       setStep(3);
       audioFeedback.playRepSuccess();
-      voiceAssistant.speakSystem(`ลงทะเบียนคนไข้และบันทึกใบหน้าของคุณ ${fullName} สำเร็จเรียบร้อยครับ สามารถใช้งานตู้ได้ทันที`, {
+      voiceAssistant.speakSystem(`ลงทะเบียนคนไข้และบันทึกใบหน้าของคุณ ${fullName} สำเร็จเรียบร้อยครับ กรุณามองกล้องเพื่อสแกนใบหน้าเข้าสู่ระบบ`, {
         priority: 'success',
         force: true,
       });
@@ -427,6 +454,14 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
       } catch {
         // confetti fallback
       }
+
+      // Automatically transition to Kiosk Step 4 (Live Face Verification) after celebration
+      setTimeout(() => {
+        if (onSuccessNavigateToKiosk) {
+          onSuccessNavigateToKiosk(createdObj);
+          onClose();
+        }
+      }, 1500);
     } catch (err: any) {
       setScanMessage(`เกิดข้อผิดพลาด: ${err?.message || 'ไม่สามารถบันทึกข้อมูลได้'}`);
     } finally {
@@ -878,14 +913,13 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
                 <button
                   type="button"
                   onClick={() => {
-                    selectPatient(createdPatientData);
                     onSuccessNavigateToKiosk(createdPatientData);
                     onClose();
                   }}
-                  className="w-full sm:w-auto px-6 py-3 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-sm font-bold shadow-lg shadow-cyan-500/25 hover:opacity-95 transition flex items-center justify-center gap-2 active:scale-95"
+                  className="w-full sm:w-auto px-6 py-3 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-sm font-bold shadow-lg shadow-cyan-500/25 hover:opacity-95 transition flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
                 >
                   <Sparkles className="w-4 h-4" />
-                  <span>ทดสอบเข้าสู่ระบบตู้ทันที (Test Kiosk Face Login)</span>
+                  <span>ไปสแกนใบหน้าตรวจสอบทันที (Live Face Scan)</span>
                 </button>
               )}
 
