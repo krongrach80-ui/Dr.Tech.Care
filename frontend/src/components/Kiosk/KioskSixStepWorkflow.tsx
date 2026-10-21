@@ -2897,37 +2897,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               </p>
             </div>
 
-            {/* ตัวเลือก: สมัครบัญชีผู้ป่วยใหม่ & เข้าสู่ระบบด้วยรหัส PIN */}
-            {!cameraError && (
-              <div className="mt-3 sm:mt-4 w-full max-w-xs space-y-2">
-                <button
-                  type="button"
-                  data-kiosk-target="step1-register"
-                  onClick={() => {
-                    if (onOpenReception) {
-                      onOpenReception();
-                    } else {
-                      onOpenHospitalPortal();
-                    }
-                  }}
-                  className="w-full min-h-[46px] py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-600 text-white font-extrabold text-xs sm:text-sm shadow-md hover:shadow-lg transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 border border-emerald-400/40"
-                  id="btnKioskRegisterNewPatient"
-                >
-                  <Plus className="w-4 h-4 text-white" />
-                  <span>📝 สมัครบัญชีคนไข้ใหม่ (ลงทะเบียนเปิดประวัติ)</span>
-                </button>
 
-                <button
-                  data-kiosk-target="step1-pin"
-                  onClick={() => setShowPinModal(true)}
-                  className="w-full min-h-[40px] py-2 px-4 rounded-xl bg-slate-100/90 hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 font-bold text-xs sm:text-sm border border-slate-300 hover:border-emerald-400 flex items-center justify-center gap-2 transition cursor-pointer active:scale-95 shadow-2xs"
-                  id="btnKioskPinFallbackMain"
-                >
-                  <Key className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>เข้าสู่ระบบด้วยรหัส PIN (ทางเลือก)</span>
-                </button>
-              </div>
-            )}
           </div>
         )}
 

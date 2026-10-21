@@ -5,7 +5,7 @@ import { resolveDefaultApiUrl, IS_STATIC_MODE } from '../config/apiConfig';
 import { IndexedDbService } from './indexedDbService';
 import { supabaseService } from './supabaseService';
 import { faceRegistryService } from './faceRegistryService';
-import { patientFaceStorageService } from './patientFaceStorageService';
+import { patientFaceStorageService, isPlaceholderPatientName } from './patientFaceStorageService';
 
 function getApiBase(): string {
   return resolveDefaultApiUrl() || '/api';
@@ -428,34 +428,36 @@ export const api = {
             await supabaseService.saveFaceEmbeddings(targetPatient.id, rawVectors, payload.photo).catch(() => {});
           }
         } else {
-          const pCode = payload.patient_code || `P-${Math.floor(1000 + Math.random() * 9000)}`;
-          const cleanName = (payload.full_name || payload.name || '').trim() || 'ผู้ลงทะเบียนใหม่';
-          const created = await supabaseService.createPatient({
-            patient_code: pCode,
-            name: cleanName,
-            full_name: cleanName,
-            age: payload.age || 60,
-            gender: payload.gender || 'ชาย',
-            phone: payload.phone || null,
-            pin: payload.pin || '1234',
-            photo: payload.photo || null,
-            chief_complaint: payload.notes || 'ลงทะเบียนด้วยใบหน้า Face Enrollment',
-            status: 'active',
-            embeddings: rawVectors,
-          });
-
-          if (created) {
-            enrolledPatient = {
-              id: created.id,
-              patient_code: created.patient_code,
-              name: created.full_name,
-              full_name: created.full_name,
-              age: created.age,
-              gender: created.gender,
+          const rawName = (payload.full_name || payload.name || '').trim();
+          if (rawName && !isPlaceholderPatientName(rawName)) {
+            const pCode = payload.patient_code || `P-${Math.floor(1000 + Math.random() * 9000)}`;
+            const created = await supabaseService.createPatient({
+              patient_code: pCode,
+              name: rawName,
+              full_name: rawName,
+              age: payload.age || 60,
+              gender: payload.gender || 'ชาย',
+              phone: payload.phone || null,
+              pin: payload.pin || '1234',
               photo: payload.photo || null,
-            };
-            if (rawVectors.length > 0) {
-              await supabaseService.saveFaceEmbeddings(created.id, rawVectors, payload.photo).catch(() => {});
+              chief_complaint: payload.notes || 'ลงทะเบียนด้วยใบหน้า Face Enrollment',
+              status: 'active',
+              embeddings: rawVectors,
+            });
+
+            if (created) {
+              enrolledPatient = {
+                id: created.id,
+                patient_code: created.patient_code,
+                name: created.full_name,
+                full_name: created.full_name,
+                age: created.age,
+                gender: created.gender,
+                photo: payload.photo || null,
+              };
+              if (rawVectors.length > 0) {
+                await supabaseService.saveFaceEmbeddings(created.id, rawVectors, payload.photo).catch(() => {});
+              }
             }
           }
         }

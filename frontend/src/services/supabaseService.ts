@@ -592,8 +592,9 @@ export const supabaseService = {
         }
       }
     }
-    if (!fullName) {
-      fullName = 'ผู้ป่วยใหม่';
+    if (!fullName || isPlaceholderPatientName(fullName)) {
+      console.warn('[SUPABASE] createPatient aborted: refusing to create patient with empty or placeholder name:', patientData);
+      return null;
     }
 
     // Resolve valid UUID for profiles foreign key to avoid 23503 constraint error
@@ -754,12 +755,10 @@ export const supabaseService = {
       }
       const { data: existing } = await fetchQuery.maybeSingle();
 
-      // If patient not found in Supabase at all, create it!
-      if (!existing && !isUuid) {
-        return this.createPatient({
-          patient_code: strId,
-          ...updates,
-        });
+      // If patient not found in Supabase at all, DO NOT auto-create to prevent resurrecting deleted accounts
+      if (!existing) {
+        console.warn(`[SUPABASE] updatePatient: patient '${strId}' not found in Supabase. Skipping update.`);
+        return null;
       }
 
       const payload: any = {};

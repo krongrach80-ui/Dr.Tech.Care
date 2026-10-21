@@ -1192,7 +1192,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
 
         const deletedSet = getDeletedUserCodes();
 
-        const patientUsers: UserAccount[] = (patients && patients.length > 0)
+        const patientUsers: UserAccount[] = Array.isArray(patients)
           ? patients
               .filter((p: any) => {
                 const idStr = String(p.id).trim().toUpperCase();
@@ -1285,7 +1285,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
                   last_active: isPending ? 'รอลงข้อมูลส่วนตัว' : 'พร้อมรับบริการ',
                 };
               })
-          : get().users.filter((u) => u.role === 'patient');
+          : [];
 
         // Hydrate patientFaceStorageService and faceRegistryService so that any kiosk or client has all patient face photos and records in memory
         if (patientUsers && patientUsers.length > 0) {
@@ -1308,6 +1308,10 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
               }, pu.face_image_url);
             }
           }
+        } else if (Array.isArray(patients) && patients.length === 0) {
+          // If all patients were deleted from Supabase, purge local storage & memory face dossiers
+          patientFaceStorageService.purgeAllPlaceholderRecords();
+          faceRegistryService.syncFromPatients([]);
         }
 
         const mergedUsers = [...staffUsers, ...patientUsers];

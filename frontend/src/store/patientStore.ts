@@ -50,7 +50,7 @@ export const usePatientStore = create<PatientState>((set, get) => ({
     if (supabaseService.isConfigured()) {
       try {
         const sbPatients = await supabaseService.fetchPatients();
-        if (sbPatients && sbPatients.length > 0) {
+        if (Array.isArray(sbPatients)) {
           faceRegistryService.syncFromPatients(sbPatients);
           const mapped: Patient[] = sbPatients.map((p: any) => ({
             id: p.id,
@@ -72,8 +72,8 @@ export const usePatientStore = create<PatientState>((set, get) => ({
           }));
 
           const currentSelected = get().selectedPatient || getStoredActivePatient();
-          let updatedSelected: Patient | null = currentSelected;
-          if (currentSelected) {
+          let updatedSelected: Patient | null = null;
+          if (currentSelected && mapped.length > 0) {
             const found = mapped.find(
               (p) =>
                 (currentSelected.id && String(p.id).toLowerCase() === String(currentSelected.id).toLowerCase()) ||
@@ -85,9 +85,13 @@ export const usePatientStore = create<PatientState>((set, get) => ({
             }
           }
 
-          if (updatedSelected && typeof window !== 'undefined') {
+          if (typeof window !== 'undefined') {
             try {
-              localStorage.setItem(STORAGE_KEY_ACTIVE_PATIENT, JSON.stringify(updatedSelected));
+              if (updatedSelected) {
+                localStorage.setItem(STORAGE_KEY_ACTIVE_PATIENT, JSON.stringify(updatedSelected));
+              } else {
+                localStorage.removeItem(STORAGE_KEY_ACTIVE_PATIENT);
+              }
             } catch {}
           }
 

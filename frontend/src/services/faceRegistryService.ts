@@ -298,6 +298,21 @@ export class FaceRegistryService {
   public syncFromPatients(patients: any[]): void {
     if (!Array.isArray(patients)) return;
 
+    if (patients.length === 0) {
+      this.cache = [];
+      this.persist([]);
+      return;
+    }
+
+    const validCodes = new Set(patients.map((p) => String(p.patient_code || p.id).toUpperCase()));
+    const currentProfiles = this.getAllProfiles();
+    const pruned = currentProfiles.filter((prof) => {
+      const code = String(prof.patientCode || prof.patientId).toUpperCase();
+      return validCodes.has(code);
+    });
+    this.cache = pruned;
+    this.persist(pruned);
+
     for (const p of patients) {
       if (!p) continue;
 
@@ -334,6 +349,7 @@ export class FaceRegistryService {
           age: p.age,
           gender: p.gender,
           embeddings,
+          face_image_url: photo,
           enrolledAt: p.created_at || new Date().toISOString(),
         });
       }
