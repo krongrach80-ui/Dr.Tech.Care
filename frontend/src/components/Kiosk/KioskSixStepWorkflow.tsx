@@ -694,18 +694,19 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         if (!exists) {
           const rawVec = ap.face_vector || ap.biometricVector;
           const parsed = patientFaceStorageService.parseVector(rawVec);
-          const vec = parsed || getRegisteredPatientVector(ap.code);
-          const photo = ap.face_image_url || patientFaceStorageService.getPatientFaceImage(ap.code) || patientFaceStorageService.getPatientFaceImage(ap.id) || undefined;
-          faceRegistryService.saveProfile({
-            patientId: ap.id,
-            patientCode: ap.code,
-            name: ap.name,
-            age: ap.age,
-            gender: ap.gender,
-            embeddings: [vec],
-            face_image_url: photo,
-            enrolledAt: ap.created_at || new Date().toISOString(),
-          });
+          if (parsed) {
+            const photo = ap.face_image_url || patientFaceStorageService.getPatientFaceImage(ap.code) || patientFaceStorageService.getPatientFaceImage(ap.id) || undefined;
+            faceRegistryService.saveProfile({
+              patientId: ap.id,
+              patientCode: ap.code,
+              name: ap.name,
+              age: ap.age,
+              gender: ap.gender,
+              embeddings: [parsed],
+              face_image_url: photo,
+              enrolledAt: ap.created_at || new Date().toISOString(),
+            });
+          }
         }
       }
     } catch (err) {
@@ -1492,8 +1493,8 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           (c) => c.status !== 'disabled' && c.status !== 'suspended' && !isPlaceholderPatientName(c.name, c.status)
         );
 
-        // b & c) Cosine Similarity (threshold >= 80% / 0.80) Matching Logic
-        const evaluation = patientFaceStorageService.matchLiveFaceAgainstDatabase(vector128, candidates, 0.80);
+        // b & c) Cosine Similarity (threshold >= 98% / 0.98) Matching Logic
+        const evaluation = patientFaceStorageService.matchLiveFaceAgainstDatabase(vector128, candidates, 0.98);
 
         // Required Console Logging
         console.log('[BIOMETRIC LOGIN MATCH RESULT]:', {
@@ -1501,11 +1502,11 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           matchedPatientName: evaluation.matched?.name || 'None',
           matchedHN: evaluation.matched?.patientCode || 'None',
           similarity: `${evaluation.bestScorePercent}%`,
-          isPassed: Boolean(evaluation.matched && evaluation.bestScorePercent >= 80),
+          isPassed: Boolean(evaluation.matched && evaluation.bestScorePercent >= 98),
         });
 
-        // d) If matched successfully (Cosine Similarity >= 80%):
-        if (evaluation.matched && evaluation.bestScorePercent >= 80) {
+        // d) If matched successfully (Cosine Similarity >= 98%):
+        if (evaluation.matched && evaluation.bestScorePercent >= 98) {
           const matchedCandidate = evaluation.matched;
           const targetHN = matchedCandidate.patientCode;
 
@@ -3559,7 +3560,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             <div className="inline-flex items-center gap-1.5 bg-amber-100 text-amber-900 px-3 py-1 rounded-full text-xs font-black mb-2">
               <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
               <span>
-                ความคล้ายคลึงชีวมิติสูงสุด: {lastMatchScore}% {lastMatchScore < 80 ? '(ต่ำกว่าเกณฑ์มาตรฐาน 80%)' : ''}
+                ความคล้ายคลึงชีวมิติสูงสุด: {lastMatchScore}% {lastMatchScore < 98 ? '(ต่ำกว่าเกณฑ์มาตรฐาน 98%)' : ''}
               </span>
             </div>
 

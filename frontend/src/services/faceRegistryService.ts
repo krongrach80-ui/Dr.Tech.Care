@@ -33,10 +33,9 @@ export interface MatchResult {
 
 const STORAGE_KEY = 'strongcare_enrolled_faces';
 // เกณฑ์ความปลอดภัยชีวมิติระดับสูง (ResNet-34)
-// สำหรับคนเดียวกัน: Cosine >= 0.88 (มักได้ 0.92-0.98)
-// สำหรับคนละคน: Cosine <= 0.80
-export const STRICT_COSINE_THRESHOLD = 0.88;
-export const STRICT_DISTANCE_THRESHOLD = 0.45;
+// ตรงกัน 98% ขึ้นไปเท่านั้น ถึงจะสามารถเข้าสู่บัญชีได้
+export const STRICT_COSINE_THRESHOLD = 0.98;
+export const STRICT_DISTANCE_THRESHOLD = 0.25;
 
 import { isPlaceholderPatientName } from './patientFaceStorageService';
 

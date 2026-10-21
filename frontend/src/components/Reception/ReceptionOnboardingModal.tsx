@@ -345,8 +345,8 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
         gender,
         diagnosis,
         face_image_url: capturedPhoto || undefined,
-        face_vector: embeddingsList?.[0] || undefined,
-        biometricVector: embeddingsList?.[0] || undefined,
+        face_vector: embeddingsList?.[0]?.embedding || undefined,
+        biometricVector: embeddingsList?.[0]?.embedding || undefined,
       });
 
       // 3. Save to isolated patientFaceStorageService and faceRegistryService

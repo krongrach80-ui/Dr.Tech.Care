@@ -316,7 +316,16 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
       });
 
       // 3. Save to Isolated Local Storage Dossier
-      patientFaceStorageService.savePatientFaceData(hn, hn, capturedVector, photo || null);
+      patientFaceStorageService.savePatientFaceData(
+        hn,
+        hn,
+        capturedVector,
+        photo || null,
+        patient.name,
+        Number(patient.age) || 65,
+        patient.gender || 'male',
+        'active'
+      );
       patientFaceStorageService.savePatientRecord(
         hn,
         {

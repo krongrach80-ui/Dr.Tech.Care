@@ -818,12 +818,23 @@ class PatientFaceStorageService {
     patientId: string | number,
     patientCode: string,
     vector: number[],
-    imageDataUrl: string | null
+    imageDataUrl: string | null,
+    patientName?: string,
+    age?: number,
+    gender?: string,
+    status: 'active' | 'suspended' | 'pending_info' = 'active'
   ): { face_image_url: string; imageFileName: string } {
     const code = this.normalizePatientId(patientCode || patientId);
     const timestamp = Date.now();
     const imageFileName = `face_${code}_${timestamp}.jpg`;
     const profileFacePath = `/uploads/faces/${imageFileName}`;
+
+    const existing = this.getPatientRecord(code);
+    const resolvedName = (patientName && !isPlaceholderPatientName(patientName))
+      ? patientName.trim()
+      : (existing?.patient_profile?.full_name && !isPlaceholderPatientName(existing.patient_profile.full_name))
+        ? existing.patient_profile.full_name
+        : `ผู้รับบริการ (${code})`;
 
     const record = this.savePatientRecord(
       code,
@@ -831,13 +842,13 @@ class PatientFaceStorageService {
         patient_profile: {
           patient_id: code,
           id: patientId,
-          first_name: `ผู้รับบริการ`,
-          last_name: `(${code})`,
-          full_name: `ผู้รับบริการ (${code})`,
-          age: 65,
-          gender: 'male',
+          first_name: resolvedName.split(' ')[0] || resolvedName,
+          last_name: resolvedName.split(' ').slice(1).join(' ') || '',
+          full_name: resolvedName,
+          age: age || existing?.patient_profile?.age || 65,
+          gender: (gender as any) || existing?.patient_profile?.gender || 'male',
           created_at: new Date().toISOString().split('T')[0],
-          status: 'pending_info',
+          status: status,
         },
         biometric_data: {
           face_vector: vector,
@@ -878,7 +889,9 @@ class PatientFaceStorageService {
     if (data && typeof data === 'object' && !Array.isArray(data)) {
       if (Array.isArray(data.face_vector)) data = data.face_vector;
       else if (Array.isArray(data.vector)) data = data.vector;
+      else if (Array.isArray(data.embedding)) data = data.embedding;
       else if (Array.isArray(data.embeddings?.[0])) data = data.embeddings[0];
+      else if (Array.isArray(data.embeddings)) data = data.embeddings;
     }
     if (Array.isArray(data)) {
       const flat = data.length === 1 && Array.isArray(data[0]) ? data[0] : data;
@@ -935,12 +948,12 @@ class PatientFaceStorageService {
 
   /**
    * 12. Match live scanned face against all registered patient records
-   * Strict Cosine Similarity >= 80% (0.80)
+   * Strict Cosine Similarity >= 98% (0.98)
    */
   public matchLiveFaceAgainstDatabase(
     liveVector: number[],
     candidates: PatientFaceBinding[],
-    similarityThreshold: number = 0.80
+    similarityThreshold: number = 0.98
   ): MatchEvaluation {
     if (!liveVector || liveVector.length !== 128 || !candidates.length) {
       console.warn('⚠️ [FACE MATCH]: Invalid live vector or empty candidate database');
@@ -1005,8 +1018,10 @@ class PatientFaceStorageService {
       }))
     );
 
-    // Filter valid matches meeting threshold (>= 80% / 0.80)
-    const validMatches = comparisons.filter((c) => c.similarity >= similarityThreshold);
+    // Filter valid matches meeting threshold (>= 98% / 0.98)
+    const validMatches = comparisons.filter(
+      (c) => c.similarity >= similarityThreshold && (c.similarity * 100) >= 98
+    );
 
     // Chosen match must be a genuine real patient match meeting threshold - NEVER fall back to placeholder
     const chosenMatchResult = validMatches.length > 0 ? validMatches[0] : null;

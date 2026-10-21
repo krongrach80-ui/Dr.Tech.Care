@@ -635,8 +635,8 @@ export const api = {
       }
     }
 
-    // 2. ตรวจสอบเปรียบเทียบเวกเตอร์ในเครื่องด้วย Dual-Metric (Cosine >= 0.90, Distance <= 0.42)
-    const matchRes = faceRegistryService.findBestMatch(embedding, 0.90, 0.42);
+    // 2. ตรวจสอบเปรียบเทียบเวกเตอร์ในเครื่องด้วย Dual-Metric (Cosine >= 0.98, Distance <= 0.25)
+    const matchRes = faceRegistryService.findBestMatch(embedding, 0.98, 0.25);
 
     if (matchRes.match && matchRes.bestProfile) {
       const p = matchRes.bestProfile;
