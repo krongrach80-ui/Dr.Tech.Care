@@ -15,7 +15,7 @@ interface DeleteUserModalProps {
   user: UserAccount | null;
   currentRole: UserRole;
   currentUserId: number | string;
-  onConfirmDelete: (userId: number | string) => void;
+  onConfirmDelete: (userOrId: UserAccount | number | string) => void;
   onSuccessToast: (msg: string) => void;
 }
 
@@ -37,7 +37,7 @@ export const DeleteUserModal: React.FC<DeleteUserModalProps> = ({
   const handleConfirm = () => {
     if (isSelf) return;
     setIsDeleting(true);
-    onConfirmDelete(user.id);
+    onConfirmDelete(user);
     onSuccessToast(`ลบบัญชีของ ${user.name} เรียบร้อยแล้ว`);
     setIsDeleting(false);
     onClose();

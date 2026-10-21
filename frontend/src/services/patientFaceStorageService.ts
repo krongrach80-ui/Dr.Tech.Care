@@ -383,7 +383,8 @@ class PatientFaceStorageService {
   public savePatientRecord(
     patientId: string | number,
     partialRecord: PartialPatientRecord,
-    profileFaceDataUrl?: string | null
+    profileFaceDataUrl?: string | null,
+    syncToSupabase: boolean = true
   ): CompletePatientRecord {
     const code = this.normalizePatientId(patientId);
 
@@ -474,8 +475,21 @@ class PatientFaceStorageService {
       }
     }
 
-    // Synchronize directly to Supabase Cloud (Single Source of Truth across all devices & reloads)
-    if (supabaseService.isConfigured() && (resolvedPhoto || fullRecord.biometric_data?.face_vector)) {
+    // Synchronize directly to Supabase Cloud ONLY if syncToSupabase is true AND patient is not deleted
+    const deletedSet = typeof window !== 'undefined' ? (() => {
+      try {
+        const raw = localStorage.getItem('strongcare_deleted_users');
+        return raw ? new Set(JSON.parse(raw)) : new Set();
+      } catch { return new Set(); }
+    })() : new Set();
+
+    const isBlacklisted = deletedSet.has(code.toUpperCase()) || deletedSet.has(String(patientId).toUpperCase());
+    if (isBlacklisted) {
+      console.log(`[STORAGE] Skipping Supabase sync for blacklisted deleted patient: ${code}`);
+      return fullRecord;
+    }
+
+    if (syncToSupabase && supabaseService.isConfigured() && (resolvedPhoto || fullRecord.biometric_data?.face_vector)) {
       const vec = fullRecord.biometric_data?.face_vector || [];
       supabaseService.saveFaceEmbeddings(
         code,

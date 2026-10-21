@@ -91,19 +91,6 @@ const INITIAL_THERAPISTS: PhysicalTherapist[] = [
     status: 'active',
     licenseNumber: 'กภ.18902',
   },
-  {
-    id: 4,
-    code: 'T-6512',
-    name: 'pjj',
-    specialty: 'หมอpj',
-    phone: '0632531669',
-    email: 'pjj@drtechcare.hospital',
-    activePatientsCount: 0,
-    assignedCases: [],
-    bio: 'กายภาพบำบัดฟื้นฟูเฉพาะทาง',
-    status: 'active',
-    licenseNumber: 'ภก. 5110',
-  },
 ];
 
 const INITIAL_DELEGATIONS: TemporaryCaseDelegation[] = [
@@ -183,20 +170,6 @@ const INITIAL_USERS: UserAccount[] = [
     email: 'pimchanok.s@strongcare.hospital',
     created_at: '2026-01-20',
     last_active: 'วันนี้ 16:10',
-  },
-  {
-    id: 4,
-    username: 'pjj',
-    name: 'pjj',
-    role: 'therapist',
-    status: 'active',
-    code: 'T-6512',
-    password: DEFAULT_PASSWORD_HASH,
-    must_change_password: false,
-    phone: '0632531669',
-    email: 'pjj@drtechcare.hospital',
-    created_at: '2026-02-15',
-    last_active: 'พร้อมให้บริการ',
   },
   {
     id: 5,
@@ -953,7 +926,7 @@ interface HospitalState {
     }
   ) => UserAccount | null;
   updateUser: (id: number | string, data: Partial<UserAccount>) => void;
-  deleteUser: (id: number | string) => void;
+  deleteUser: (id: number | string | UserAccount) => void;
   toggleUserStatus: (id: number | string) => void;
   resetUserPassword: (id: number | string, newPin?: string) => string;
   changePasswordWithVerification: (id: number | string, newPass: string) => Promise<boolean>;
@@ -1192,6 +1165,26 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
 
         const deletedSet = getDeletedUserCodes();
 
+        // Active purge: if any blacklisted user exists in Supabase, purge them from the cloud database
+        if (Array.isArray(patients)) {
+          for (const p of patients) {
+            const idStr = String(p.id || '').trim().toUpperCase();
+            const codeStr = String(p.patient_code || '').trim().toUpperCase();
+            if (deletedSet.has(idStr) || deletedSet.has(codeStr)) {
+              supabaseService.deletePatient(p.patient_code || p.id).catch(() => {});
+            }
+          }
+        }
+        if (Array.isArray(therapists)) {
+          for (const t of therapists) {
+            const idStr = String(t.id || '').trim().toUpperCase();
+            const codeStr = String(t.code || '').trim().toUpperCase();
+            if (deletedSet.has(idStr) || deletedSet.has(codeStr)) {
+              supabaseService.deleteTherapist(t.code || t.id).catch(() => {});
+            }
+          }
+        }
+
         const patientUsers: UserAccount[] = Array.isArray(patients)
           ? patients
               .filter((p: any) => {
@@ -1305,7 +1298,7 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
                   registered_face_url: pu.face_image_url || '',
                   enrolled_at: pu.created_at || new Date().toISOString(),
                 },
-              }, pu.face_image_url);
+              }, pu.face_image_url, false);
             }
           }
         } else if (Array.isArray(patients) && patients.length === 0) {
@@ -2121,47 +2114,84 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   },
 
   deleteUser: (id) => {
-    const target = String(id).trim().toUpperCase();
-    const user = get().users.find((u) =>
-      String(u.id) === target ||
-      (u.code && String(u.code).trim().toUpperCase() === target)
-    );
-    const targetCode = (user?.code || '').trim().toUpperCase();
-    const targetIdStr = user ? String(user.id) : target;
+    let user: UserAccount | undefined;
+    let targetId: string = '';
+    let targetCode: string = '';
+    let targetUsername: string = '';
+    let targetRole: UserRole | undefined;
 
+    if (id && typeof id === 'object' && 'id' in id) {
+      user = id as UserAccount;
+      targetId = String(user.id || '').trim();
+      targetCode = (user.code || '').trim();
+      targetUsername = (user.username || '').trim();
+      targetRole = user.role;
+    } else {
+      const searchTarget = String(id || '').trim().toUpperCase();
+      user = get().users.find((u) => {
+        const uId = String(u.id || '').trim().toUpperCase();
+        const uCode = (u.code || '').trim().toUpperCase();
+        const uUser = (u.username || '').trim().toUpperCase();
+        return uId === searchTarget || uCode === searchTarget || uUser === searchTarget;
+      });
+      targetId = String(user?.id || id || '').trim();
+      targetCode = (user?.code || (searchTarget.startsWith('P-') || searchTarget.startsWith('T-') ? searchTarget : '')).trim();
+      targetUsername = (user?.username || '').trim();
+      targetRole = user?.role;
+    }
+
+    const idUpper = targetId.toUpperCase();
+    const codeUpper = targetCode.toUpperCase();
+    const userUpper = targetUsername.toUpperCase();
+
+    // 1. Filter out from users state
     const updatedUsers = get().users.filter((u) => {
+      const uIdUpper = String(u.id || '').trim().toUpperCase();
+      const uCodeUpper = (u.code || '').trim().toUpperCase();
+      const uUserUpper = (u.username || '').trim().toUpperCase();
       const isMatch =
-        String(u.id) === targetIdStr ||
-        String(u.id) === target ||
-        (u.code && targetCode && String(u.code).trim().toUpperCase() === targetCode);
+        (idUpper && uIdUpper === idUpper) ||
+        (codeUpper && uCodeUpper === codeUpper) ||
+        (userUpper && uUserUpper === userUpper);
       return !isMatch;
     });
     set({ users: updatedUsers });
     persistUsers(updatedUsers);
 
-    // Central Backend Database Sync
-    if (user?.code || id) {
-      api.deletePatient(user?.code || id).catch((e) => console.warn('Central DB deletePatient warning:', e));
+    // 2. If therapist, also filter out from therapists state
+    if (targetRole === 'therapist' || codeUpper.startsWith('T-') || idUpper.startsWith('T-')) {
+      const updatedTherapists = get().therapists.filter((t) => {
+        const tIdUpper = String(t.id || '').trim().toUpperCase();
+        const tCodeUpper = (t.code || '').trim().toUpperCase();
+        const isMatch =
+          (idUpper && tIdUpper === idUpper) ||
+          (codeUpper && tCodeUpper === codeUpper);
+        return !isMatch;
+      });
+      set({ therapists: updatedTherapists });
     }
 
-    // Add to persistent blacklist so it NEVER restores on page reload
-    if (user) {
-      addDeletedUserToBlacklist(user.id, user.code, user.username);
-    } else {
-      addDeletedUserToBlacklist(id);
+    // 3. Central Backend Database Sync
+    if (targetCode || targetId) {
+      api.deletePatient(targetCode || targetId).catch((e) => console.warn('Central DB deletePatient warning:', e));
     }
 
-    // Permanently purge patient physical folder public/uploads/patients/{code}/ and all records
-    if (user?.code) {
-      patientFaceStorageService.deletePatientDirectoryAndData(user.code);
-      usePatientStore.getState().deletePatient(user.code);
-    }
-    patientFaceStorageService.deletePatientDirectoryAndData(id);
-    usePatientStore.getState().deletePatient(id);
+    // 4. Add to persistent blacklist so it NEVER restores on page reload
+    addDeletedUserToBlacklist(targetId, targetCode, targetUsername);
 
-    // Remove any associated treatment plans
+    // 5. Permanently purge patient physical folder public/uploads/patients/{code}/ and all records
+    if (targetCode) {
+      patientFaceStorageService.deletePatientDirectoryAndData(targetCode);
+      usePatientStore.getState().deletePatient(targetCode);
+    }
+    if (targetId && targetId !== targetCode) {
+      patientFaceStorageService.deletePatientDirectoryAndData(targetId);
+      usePatientStore.getState().deletePatient(targetId);
+    }
+
+    // 6. Remove any associated treatment plans
     const remainingPlans = get().treatmentPlans.filter(
-      (p) => p.patientId !== id && (!user?.code || p.patientCode !== user.code)
+      (p) => String(p.patientId || '').toUpperCase() !== idUpper && (!targetCode || (p.patientCode && p.patientCode.toUpperCase() !== codeUpper))
     );
     set({ treatmentPlans: remainingPlans });
     try {
@@ -2171,15 +2201,39 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
       supabaseService.saveTreatmentPlans(remainingPlans).catch(() => {});
     }
 
-    // Remove from mock patients.json persistent storage
-    removePatientFromPatientsJson(id, user?.code);
+    // 7. Remove from mock patients.json persistent storage
+    removePatientFromPatientsJson(targetId, targetCode);
 
-    get().addActivityLog('ลบผู้ใช้งาน', 'AUTH', `ลบผู้ใช้งาน ${user?.name || id} และลบโฟลเดอร์เวชระเบียนถาวร`);
-    console.log(`[DELETE USER] Permanently deleted user ${user?.name || id} (${user?.code || id}), purged directory /public/uploads/patients/${user?.code || id}/ and updated patients.json`);
+    get().addActivityLog('ลบผู้ใช้งาน', 'AUTH', `ลบผู้ใช้งาน ${user?.name || targetCode || targetId} และลบข้อมูลถาวร`);
+    console.log(`[DELETE USER] Permanently deleted user ${user?.name || targetCode || targetId} (${targetCode || targetId})`);
 
+    // 8. Delete permanently from Supabase Cloud (patients, therapists, profiles)
     if (supabaseService.isConfigured()) {
-      supabaseService.deleteProfile(id).catch((e) => console.warn('Supabase deleteProfile error:', e));
-      supabaseService.deletePatient(user?.code || id).catch((e) => console.error('Supabase deletePatient error:', e));
+      // Delete from patients table
+      supabaseService.deletePatient(targetCode || targetId).catch((e) => console.warn('deletePatient error:', e));
+      if (targetId && targetId !== targetCode) {
+        supabaseService.deletePatient(targetId).catch((e) => console.warn('deletePatient by id error:', e));
+      }
+
+      // Delete from therapists table if therapist
+      if (targetRole === 'therapist' || codeUpper.startsWith('T-') || idUpper.startsWith('T-')) {
+        supabaseService.deleteTherapist(targetCode || targetId).catch((e) => console.warn('deleteTherapist error:', e));
+        if (targetId && targetId !== targetCode) {
+          supabaseService.deleteTherapist(targetId).catch((e) => console.warn('deleteTherapist by id error:', e));
+        }
+      }
+
+      // Delete from profiles table
+      supabaseService.deleteProfile(targetId, targetUsername).catch((e) => console.warn('deleteProfile error:', e));
+
+      // 9. Send Realtime Broadcast
+      try {
+        supabase.channel(PATIENTS_REALTIME_CHANNEL).send({
+          type: 'broadcast',
+          event: 'patient_deleted',
+          payload: { patient_code: targetCode, id: targetId, role: targetRole },
+        }).catch(() => {});
+      } catch {}
     }
   },
 
@@ -2386,25 +2440,45 @@ export const useHospitalStore = create<HospitalState>((set, get) => ({
   },
 
   deleteTherapist: (id) => {
+    const searchTarget = String(id || '').trim().toUpperCase();
+    const target = get().therapists.find((t) => {
+      const tId = String(t.id || '').trim().toUpperCase();
+      const tCode = (t.code || '').trim().toUpperCase();
+      return tId === searchTarget || tCode === searchTarget;
+    });
+    const targetCode = target?.code || (searchTarget.startsWith('T-') ? searchTarget : '');
+    const targetId = String(target?.id || id || '');
+
     set((state) => {
-      const target = state.therapists.find((t) => t.id === id);
-      const filteredTherapists = state.therapists.filter((t) => t.id !== id);
-      let filteredUsers = state.users;
-      if (target) {
-        filteredUsers = state.users.filter((u) => {
-          const match =
-            String(u.id) === String(id) ||
-            (u.code && target.code && u.code.trim().toUpperCase() === target.code.trim().toUpperCase());
-          return !match;
-        });
-        persistUsers(filteredUsers);
-      }
+      const filteredTherapists = state.therapists.filter((t) => {
+        const tId = String(t.id || '').trim().toUpperCase();
+        const tCode = (t.code || '').trim().toUpperCase();
+        const match = tId === searchTarget || (targetCode && tCode === targetCode.toUpperCase());
+        return !match;
+      });
+      const filteredUsers = state.users.filter((u) => {
+        const uId = String(u.id || '').trim().toUpperCase();
+        const uCode = (u.code || '').trim().toUpperCase();
+        const match = uId === searchTarget || (targetCode && uCode === targetCode.toUpperCase());
+        return !match;
+      });
+      persistUsers(filteredUsers);
       return {
         therapists: filteredTherapists,
         users: filteredUsers,
       };
     });
-    get().addActivityLog('ลบข้อมูลนักกายภาพบำบัด', 'THERAPIST', `ลบนักกายภาพ ID: ${id}`);
+
+    addDeletedUserToBlacklist(targetId, targetCode);
+    get().addActivityLog('ลบข้อมูลนักกายภาพบำบัด', 'THERAPIST', `ลบนักกายภาพ: ${target?.name || targetCode || id}`);
+
+    if (supabaseService.isConfigured()) {
+      supabaseService.deleteTherapist(targetCode || targetId).catch((e) => console.warn('Supabase deleteTherapist error:', e));
+      if (targetId && targetId !== targetCode) {
+        supabaseService.deleteTherapist(targetId).catch((e) => console.warn('Supabase deleteTherapist by id error:', e));
+      }
+      supabaseService.deleteProfile(targetId).catch((e) => console.warn('Supabase deleteProfile error:', e));
+    }
   },
 
   addExercise: (exerciseData) => {

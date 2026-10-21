@@ -3,8 +3,24 @@ import { Patient } from '../types/patient';
 import { api } from '../services/api';
 import { supabaseService } from '../services/supabaseService';
 import { faceRegistryService } from '../services/faceRegistryService';
+import { patientFaceStorageService } from '../services/patientFaceStorageService';
 
 const STORAGE_KEY_ACTIVE_PATIENT = 'drtechcare_active_patient';
+const STORAGE_KEY_DELETED_USERS = 'strongcare_deleted_users';
+
+const getDeletedSet = (): Set<string> => {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_DELETED_USERS);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        return new Set(arr.map((item) => String(item).trim().toUpperCase()));
+      }
+    }
+  } catch {}
+  return new Set();
+};
 
 const getStoredActivePatient = (): Patient | null => {
   if (typeof window === 'undefined') return null;
@@ -13,6 +29,13 @@ const getStoredActivePatient = (): Patient | null => {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && (parsed.name || parsed.patient_code || parsed.id)) {
+        const deletedSet = getDeletedSet();
+        const idUpper = parsed.id ? String(parsed.id).trim().toUpperCase() : '';
+        const codeUpper = parsed.patient_code ? String(parsed.patient_code).trim().toUpperCase() : '';
+        if ((idUpper && deletedSet.has(idUpper)) || (codeUpper && deletedSet.has(codeUpper))) {
+          localStorage.removeItem(STORAGE_KEY_ACTIVE_PATIENT);
+          return null;
+        }
         return parsed;
       }
     }
@@ -45,14 +68,34 @@ export const usePatientStore = create<PatientState>((set, get) => ({
 
   fetchPatients: async () => {
     set({ isLoading: true });
+    const deletedSet = getDeletedSet();
 
     // 1. ลองดึงจาก Supabase ก่อนถ้ามีการตั้งค่า
     if (supabaseService.isConfigured()) {
       try {
         const sbPatients = await supabaseService.fetchPatients();
         if (Array.isArray(sbPatients)) {
-          faceRegistryService.syncFromPatients(sbPatients);
-          const mapped: Patient[] = sbPatients.map((p: any) => ({
+          // คัดกรองผู้ป่วยที่ถูกลบไปแล้วออก และตามลบใน Supabase ถ้ายังมีหลงเหลือ
+          const validPatients: any[] = [];
+          for (const p of sbPatients) {
+            const pIdUpper = p.id ? String(p.id).trim().toUpperCase() : '';
+            const pCodeUpper = p.patient_code ? String(p.patient_code).trim().toUpperCase() : '';
+            const pHnUpper = p.hn ? String(p.hn).trim().toUpperCase() : '';
+
+            if (
+              (pIdUpper && deletedSet.has(pIdUpper)) ||
+              (pCodeUpper && deletedSet.has(pCodeUpper)) ||
+              (pHnUpper && deletedSet.has(pHnUpper))
+            ) {
+              console.log(`[PATIENT-STORE] Purging blacklisted patient from Supabase: ${p.patient_code || p.id}`);
+              supabaseService.deletePatient(p.patient_code || p.id).catch(() => {});
+              continue;
+            }
+            validPatients.push(p);
+          }
+
+          faceRegistryService.syncFromPatients(validPatients);
+          const mapped: Patient[] = validPatients.map((p: any) => ({
             id: p.id,
             patient_code: p.patient_code,
             name: p.full_name,
@@ -213,17 +256,43 @@ export const usePatientStore = create<PatientState>((set, get) => ({
   },
 
   deletePatient: (idOrCode) => {
-    const idStr = String(idOrCode).trim().toUpperCase();
+    const idStr = String(idOrCode).trim();
+    if (!idStr) return;
+    const upperStr = idStr.toUpperCase();
+
+    // 1. บันทึกเข้า Deleted Blacklist เพื่อป้องกันข้อมูลฟื้นคืนชีพ
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY_DELETED_USERS);
+        const list: string[] = raw ? JSON.parse(raw) : [];
+        if (!list.includes(upperStr)) {
+          list.push(upperStr);
+          localStorage.setItem(STORAGE_KEY_DELETED_USERS, JSON.stringify(list));
+        }
+      } catch {}
+    }
+
+    // 2. เรียก Supabase delete ให้หมดจด
+    try {
+      supabaseService.deletePatient(idStr).catch((e) => console.warn('[PATIENT-STORE] Supabase deletePatient error:', e));
+    } catch {}
+
+    // 3. ลบข้อมูลโฟลเดอร์รูปและ Face biometrics
+    try {
+      patientFaceStorageService.deletePatientDirectoryAndData(idStr);
+    } catch {}
+
+    // 4. ลบออกจากหน่วยความจำ Zustand
     set((state) => {
       const filtered = state.patients.filter((p) => {
-        const matchesId = String(p.id).trim().toUpperCase() === idStr;
-        const matchesCode = p.patient_code && p.patient_code.trim().toUpperCase() === idStr;
+        const matchesId = String(p.id).trim().toUpperCase() === upperStr;
+        const matchesCode = p.patient_code && p.patient_code.trim().toUpperCase() === upperStr;
         return !matchesId && !matchesCode;
       });
       const selectedMatches =
         state.selectedPatient &&
-        (String(state.selectedPatient.id).trim().toUpperCase() === idStr ||
-          (state.selectedPatient.patient_code && state.selectedPatient.patient_code.trim().toUpperCase() === idStr));
+        (String(state.selectedPatient.id).trim().toUpperCase() === upperStr ||
+          (state.selectedPatient.patient_code && state.selectedPatient.patient_code.trim().toUpperCase() === upperStr));
       if (selectedMatches && typeof window !== 'undefined') {
         try {
           localStorage.removeItem(STORAGE_KEY_ACTIVE_PATIENT);

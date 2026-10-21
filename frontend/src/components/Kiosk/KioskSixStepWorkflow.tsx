@@ -613,11 +613,13 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         }
       } catch {}
     }
+    const firstPatient = usePatientStore.getState().patients[0];
+    if (firstPatient) return firstPatient;
     return {
       id: 1,
-      patient_code: 'P-1425',
-      code: 'P-1425',
-      name: 'ผู้รับบริการ',
+      patient_code: 'P-0012',
+      code: 'P-0012',
+      name: 'ผู้รับบริการทั่วไป',
       age: 65,
       gender: 'male',
       notes: 'ฟื้นฟูกายภาพบำบัด',
@@ -2473,7 +2475,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       return;
     }
 
-    setPinError('❌ ไม่พบบัญชีคนไข้ที่ตรงกับรหัสนี้ (กรุณากรอกรหัส HN เช่น P-1425 หรือแตะเลือกจากรายชื่อด้านบน)');
+    setPinError('❌ ไม่พบบัญชีคนไข้ที่ตรงกับรหัสนี้ (กรุณากรอกรหัส HN เช่น P-0012 หรือแตะเลือกจากรายชื่อด้านบน)');
     audioFeedback.playHoldTick();
   };
 

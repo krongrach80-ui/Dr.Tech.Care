@@ -468,11 +468,22 @@ export const supabaseService = {
     return data;
   },
 
-  async deleteProfile(id: any): Promise<void> {
-    if (!isSupabaseConfigured()) return;
-    const { error } = await supabase.from('profiles').delete().eq('id', id);
-    if (error) throw error;
-    await this.logActivity('DELETE_USER', `ลบผู้ใช้งาน ID: ${id}`, 'AUTH');
+  async deleteProfile(idOrUsername: any, usernameFallback?: string): Promise<void> {
+    if (!isSupabaseConfigured() || !idOrUsername) return;
+    try {
+      const str = String(idOrUsername).trim();
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+      if (isUuid) {
+        await supabase.from('profiles').delete().eq('id', str);
+      }
+      const uName = (usernameFallback || (!isUuid ? str : '')).trim();
+      if (uName) {
+        await supabase.from('profiles').delete().ilike('username', uName);
+      }
+      await this.logActivity('DELETE_USER', `ลบผู้ใช้งาน: ${idOrUsername}`, 'AUTH').catch(() => {});
+    } catch (e) {
+      console.warn('[SUPABASE] deleteProfile warning:', e);
+    }
   },
 
   // =========================================================================
@@ -887,17 +898,23 @@ export const supabaseService = {
   async deletePatient(idOrCode: any): Promise<void> {
     if (!isSupabaseConfigured() || !idOrCode) return;
     try {
-      const isUuid = typeof idOrCode === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrCode);
-      let query = supabase.from('patients').delete();
+      const str = String(idOrCode).trim();
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+      
+      // 1. Delete by UUID if valid
       if (isUuid) {
-        query = query.eq('id', idOrCode);
-      } else {
-        query = query.eq('patient_code', String(idOrCode));
+        const { error: errId } = await supabase.from('patients').delete().eq('id', str);
+        if (errId) console.warn('[SUPABASE] deletePatient by id error:', errId);
       }
-      const { error } = await query;
-      if (error) {
-        console.error('[SUPABASE] deletePatient error:', error);
-      }
+
+      // 2. Also delete by patient_code and hn
+      const { error: errCode } = await supabase.from('patients').delete().ilike('patient_code', str);
+      if (errCode) console.warn('[SUPABASE] deletePatient by patient_code error:', errCode);
+
+      const { error: errHn } = await supabase.from('patients').delete().ilike('hn', str);
+      if (errHn) console.warn('[SUPABASE] deletePatient by hn error:', errHn);
+
+      await this.logActivity('DELETE_PATIENT', `ลบเวชระเบียนคนไข้: ${str}`, 'PATIENT').catch(() => {});
     } catch (e) {
       console.error('[SUPABASE] deletePatient exception:', e);
     }
@@ -1009,6 +1026,22 @@ export const supabaseService = {
       'THERAPIST'
     );
     return data;
+  },
+
+  async deleteTherapist(idOrCode: any): Promise<void> {
+    if (!isSupabaseConfigured() || !idOrCode) return;
+    try {
+      const str = String(idOrCode).trim();
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+      if (isUuid) {
+        await supabase.from('therapists').delete().eq('id', str);
+      } else {
+        await supabase.from('therapists').delete().ilike('code', str);
+      }
+      await this.logActivity('DELETE_THERAPIST', `ลบข้อมูลนักกายภาพบำบัด: ${str}`, 'THERAPIST').catch(() => {});
+    } catch (e) {
+      console.warn('[SUPABASE] deleteTherapist warning:', e);
+    }
   },
 
   // =========================================================================

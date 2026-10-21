@@ -57,6 +57,7 @@ import {
   UserX,
 } from 'lucide-react';
 import { useHospitalStore } from '../../store/hospitalStore';
+import { usePatientStore } from '../../store/patientStore';
 import { validatePasswordStrength } from '../../services/authSecurityService';
 import { UserAccount, UserRole, PhysicalTherapist, HospitalExercise, ActivityLog, TreatmentPlan, TemporaryCaseDelegation } from '../../types/hospital';
 import { ReceptionOnboardingModal } from '../../components/Reception/ReceptionOnboardingModal';
@@ -252,6 +253,29 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
           handleIncomingPatient(payload.new);
         }
       )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'patients' },
+        (payload) => {
+          console.info('[SUPABASE REALTIME] postgres_changes DELETE on patients:', payload);
+          const oldRecord = payload.old as any;
+          if (oldRecord) {
+            const targetId = oldRecord.id || oldRecord.patient_code;
+            if (targetId) {
+              useHospitalStore.getState().deleteUser(targetId);
+              usePatientStore.getState().deletePatient(targetId);
+            }
+          }
+        }
+      )
+      .on('broadcast', { event: 'patient_deleted' }, (payload) => {
+        console.info('[SUPABASE REALTIME] broadcast patient_deleted:', payload);
+        const data = payload?.payload;
+        if (data?.patient_code || data?.id) {
+          useHospitalStore.getState().deleteUser(data.patient_code || data.id);
+          usePatientStore.getState().deletePatient(data.patient_code || data.id);
+        }
+      })
       .on('broadcast', { event: 'patient_registered' }, (payload) => {
         console.info('[SUPABASE REALTIME] broadcast patient_registered:', payload);
         handleIncomingPatient(payload.payload);
