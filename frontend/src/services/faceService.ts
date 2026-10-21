@@ -737,33 +737,61 @@ export class FaceService {
    */
   public async generateAveragedEmbedding(
     video: HTMLVideoElement,
-    framesCount: number = 5
+    framesCount: number = 5,
+    fallbackDetection?: FaceDetectionResult
   ): Promise<{ embedding: number[]; qualityScore: number }> {
     const vectors: number[][] = [];
     const qualityScores: number[] = [];
 
+    // Pre-seed with fallback detection if available
+    if (fallbackDetection && fallbackDetection.detected) {
+      try {
+        const vec = await this.computeDeepEmbedding(video, fallbackDetection);
+        if (vec && vec.length === 128) {
+          vectors.push(vec);
+          qualityScores.push(fallbackDetection.qualityScore);
+        }
+      } catch {
+        const geoVec = this.generateEmbedding(fallbackDetection);
+        if (geoVec && geoVec.length === 128) {
+          vectors.push(geoVec);
+          qualityScores.push(fallbackDetection.qualityScore);
+        }
+      }
+    }
+
     for (let i = 0; i < framesCount; i++) {
-      const det = this.detectFace(video, performance.now());
-      if (det && det.detected && det.qualityGate.passed) {
+      const det = this.detectFace(video, Date.now());
+      if (det && det.detected) {
         try {
           const vec = await this.computeDeepEmbedding(video, det);
-          vectors.push(vec);
-          qualityScores.push(det.qualityScore);
+          if (vec && vec.length === 128) {
+            vectors.push(vec);
+            qualityScores.push(det.qualityScore);
+          }
         } catch {
           // ignore single frame
         }
       }
-      await new Promise((r) => setTimeout(r, 45)); // ~22 fps interval
+      await new Promise((r) => setTimeout(r, 40));
     }
 
     if (vectors.length === 0) {
-      // Single frame attempt
-      const det = this.detectFace(video, performance.now());
+      if (fallbackDetection && fallbackDetection.detected) {
+        const vec = this.generateEmbedding(fallbackDetection);
+        return { embedding: vec, qualityScore: fallbackDetection.qualityScore };
+      }
+      const det = this.detectFace(video, Date.now());
       if (!det || !det.detected) {
         throw new Error('ไม่พบตำแหน่งใบหน้าในกรอบภาพ กรุณาจัดตำแหน่งใหม่');
       }
-      const vec = await this.computeDeepEmbedding(video, det);
-      return { embedding: vec, qualityScore: det.qualityScore };
+      try {
+        const vec = await this.computeDeepEmbedding(video, det);
+        return { embedding: vec, qualityScore: det.qualityScore };
+      } catch {
+        const vec = this.generateEmbedding(det);
+        return { embedding: vec, qualityScore: det.qualityScore };
+      }
     }
 
     // Mean vector across frames

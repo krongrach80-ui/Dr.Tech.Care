@@ -27,6 +27,7 @@ import confetti from 'canvas-confetti';
 import { patientFaceStorageService, isPlaceholderPatientName } from '../../services/patientFaceStorageService';
 import { faceRegistryService } from '../../services/faceRegistryService';
 import { supabaseService } from '../../services/supabaseService';
+import { livenessEngine } from '../../services/livenessEngine';
 
 interface ReceptionOnboardingModalProps {
   isOpen: boolean;
@@ -224,7 +225,7 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
   };
 
   // Capture current angle
-  const handleCaptureAngle = async (angle: 'center' | 'left' | 'right') => {
+  const handleCaptureAngle = async (angle: 'center' | 'left' | 'right', completeNow: boolean = false) => {
     if (!detection || !detection.detected || isProcessing) return;
     setIsProcessing(true);
     setShowShutterFlash(true);
@@ -232,14 +233,43 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
     setTimeout(() => setShowShutterFlash(false), 250);
 
     try {
-      const averaged = videoRef.current
-        ? await faceService.generateAveragedEmbedding(videoRef.current, 5)
-        : { embedding: faceService.generateEmbedding(detection), qualityScore: detection.qualityScore };
+      let embedding: number[] | null = null;
+      const qualityScore = detection.qualityScore || 90;
 
+      // 1. Try extracting with livenessEngine (exact match with Kiosk)
+      if (videoRef.current) {
+        try {
+          embedding = await livenessEngine.extractBiometricEmbedding(videoRef.current);
+        } catch (e) {
+          console.warn('livenessEngine extraction fallback:', e);
+        }
+      }
+
+      // 2. Try deep embedding with detection landmarks
+      if (!embedding || embedding.length !== 128) {
+        if (videoRef.current && detection) {
+          try {
+            embedding = await faceService.computeDeepEmbedding(videoRef.current, detection);
+          } catch (e) {
+            console.warn('computeDeepEmbedding fallback:', e);
+          }
+        }
+      }
+
+      // 3. Guaranteed instant fallback: anthropometric geometric embedding from 468 MediaPipe landmarks
+      if (!embedding || embedding.length !== 128) {
+        embedding = faceService.generateEmbedding(detection);
+      }
+
+      if (!embedding || embedding.length !== 128) {
+        throw new Error('ไม่สามารถประมวลผลเวกเตอร์ใบหน้าได้ กรุณาจัดตำแหน่งใบหน้าให้อยู่ในกรอบวงรีแล้วลองใหม่อีกครั้ง');
+      }
+
+      const averaged = { embedding, qualityScore };
       const updated = { ...capturedEmbeddings, [angle]: averaged };
       setCapturedEmbeddings(updated);
 
-      if (angle === 'center') {
+      if (angle === 'center' || !capturedPhoto) {
         if (videoRef.current && videoRef.current.videoWidth > 0) {
           try {
             const vw = videoRef.current.videoWidth;
@@ -262,6 +292,15 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
             console.warn('Failed to capture frame in Reception modal:', e);
           }
         }
+      }
+
+      if (completeNow || angle === 'right') {
+        // Complete enrollment!
+        await finalizeEnrollment(updated);
+        return;
+      }
+
+      if (angle === 'center') {
         setScanStage('left');
         setScanMessage('บันทึกมุมตรงสำเร็จ! กรุณาหันหน้าไปทางซ้ายเล็กน้อย');
         voiceAssistant.speakSystem('บันทึกมุมตรงเรียบร้อยครับ ตอนนี้ค่อยๆ หันหน้าไปทางซ้ายเล็กน้อยครับ', {
@@ -275,9 +314,6 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
           priority: 'instruction',
           force: true,
         });
-      } else if (angle === 'right') {
-        // Complete enrollment!
-        await finalizeEnrollment(updated);
       }
     } catch (err: any) {
       setScanMessage(err?.message || 'เกิดข้อผิดพลาดในการบันทึกเวกเตอร์ใบหน้า');
@@ -731,39 +767,45 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
 
               {/* Angle steps tracker */}
               <div className="flex items-center gap-1.5 text-xs font-bold">
-                <span
-                  className={`px-2.5 py-1 rounded-full ${
+                <button
+                  type="button"
+                  onClick={() => setScanStage('center')}
+                  className={`px-2.5 py-1 rounded-full cursor-pointer transition ${
                     capturedEmbeddings.center
-                      ? 'bg-emerald-600 text-white'
+                      ? 'bg-emerald-600 text-white shadow-xs'
                       : scanStage === 'center'
-                      ? 'bg-amber-400 text-slate-900 animate-pulse'
+                      ? 'bg-amber-400 text-slate-900 font-extrabold shadow-sm'
                       : 'bg-slate-200 text-slate-600'
                   }`}
                 >
-                  1. มองตรง
-                </span>
-                <span
-                  className={`px-2.5 py-1 rounded-full ${
+                  1. มองตรง {capturedEmbeddings.center && '✓'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScanStage('left')}
+                  className={`px-2.5 py-1 rounded-full cursor-pointer transition ${
                     capturedEmbeddings.left
-                      ? 'bg-emerald-600 text-white'
+                      ? 'bg-emerald-600 text-white shadow-xs'
                       : scanStage === 'left'
-                      ? 'bg-amber-400 text-slate-900 animate-pulse'
+                      ? 'bg-amber-400 text-slate-900 font-extrabold shadow-sm'
                       : 'bg-slate-200 text-slate-600'
                   }`}
                 >
-                  2. หันซ้าย
-                </span>
-                <span
-                  className={`px-2.5 py-1 rounded-full ${
+                  2. หันซ้าย {capturedEmbeddings.left && '✓'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScanStage('right')}
+                  className={`px-2.5 py-1 rounded-full cursor-pointer transition ${
                     capturedEmbeddings.right
-                      ? 'bg-emerald-600 text-white'
+                      ? 'bg-emerald-600 text-white shadow-xs'
                       : scanStage === 'right'
-                      ? 'bg-amber-400 text-slate-900 animate-pulse'
+                      ? 'bg-amber-400 text-slate-900 font-extrabold shadow-sm'
                       : 'bg-slate-200 text-slate-600'
                   }`}
                 >
-                  3. หันขวา
-                </span>
+                  3. หันขวา {capturedEmbeddings.right && '✓'}
+                </button>
               </div>
             </div>
 
@@ -813,25 +855,38 @@ export const ReceptionOnboardingModal: React.FC<ReceptionOnboardingModalProps> =
             </div>
 
             {/* Scan Controls */}
-            <div className="flex items-center justify-between pt-2">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 pt-2">
               <button
                 type="button"
                 onClick={() => {
                   stopCamera();
                   setStep(1);
                 }}
-                className="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-50 transition flex items-center gap-1.5"
+                className="w-full sm:w-auto px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-50 transition flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
                 <span>ย้อนกลับไปแก้ไขข้อมูล</span>
               </button>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                {/* ปุ่มลัด: บันทึกและเสร็จสิ้นทันทีถ้าบันทึกมุมตรงแล้ว */}
+                {capturedEmbeddings.center && scanStage !== 'center' && (
+                  <button
+                    type="button"
+                    disabled={isProcessing}
+                    onClick={() => finalizeEnrollment(capturedEmbeddings)}
+                    className="px-4 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md transition flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>บันทึกและจบขั้นตอนทันที</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   disabled={!detection?.detected || isProcessing}
                   onClick={() => handleCaptureAngle(scanStage)}
-                  className="px-6 py-2.5 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs sm:text-sm font-bold shadow-lg shadow-cyan-500/25 hover:opacity-95 transition disabled:opacity-50 flex items-center gap-2 active:scale-95"
+                  className="px-6 py-2.5 rounded-full bg-gradient-to-r from-[#10B981] via-[#06B6D4] to-[#2563EB] text-white text-xs sm:text-sm font-bold shadow-lg shadow-cyan-500/25 hover:opacity-95 transition disabled:opacity-50 flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
                 >
                   <Camera className="w-4 h-4" />
                   <span>
