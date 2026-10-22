@@ -7,7 +7,7 @@
     "dev:backend": "node backend/server.js",
     "dev:frontend": "cd frontend && npm run dev",
     "build": "cd frontend && npm run build",
-    "test": "cd frontend && npm test",
+    "test": "cd frontend && npm test && cd .. && npx tsx tests/algorithms.test.ts && npx tsx tests/trainingModes.test.ts && node scripts/testMultiDeviceSync.mjs && node frontend/scripts/testRegisterAndNotFound.mjs",
     "test:sync": "node scripts/testMultiDeviceSync.mjs",
     "bundle:migrations": "node scripts/bundle-migrations.mjs",
     "run:sql": "node scripts/run-sql.mjs",

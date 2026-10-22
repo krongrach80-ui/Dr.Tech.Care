@@ -1,0 +1,45 @@
+{
+  "id": 13,
+  "code": "P-0013",
+  "username": "malee",
+  "name": "นางมาลี รักสุข",
+  "first_name": "นางมาลี",
+  "last_name": "รักสุข",
+  "age": 72,
+  "gender": "female",
+  "phone": "084-332-9900",
+  "status": "active",
+  "diagnosis": "ข้อเข่าเสื่อมระยะที่ 2 และกล้ามเนื้อต้นขาอ่อนแรง (Knee OA Grade 2)",
+  "chief_complaint": "ข้อเข่าเสื่อมระยะที่ 2 และกล้ามเนื้อต้นขาอ่อนแรง (Knee OA Grade 2)",
+  "medical_history": "",
+  "treatment_plan": "",
+  "assignedTherapistName": "กภ. ธนากร วงศ์สวัสดิ์",
+  "assignedTherapistId": 1,
+  "assigned_exercises": [
+    {
+      "id": "shoulder_raise",
+      "name": "กางแขนด้านข้าง (Shoulder Abduction)",
+      "target_angle": 90,
+      "hold_seconds": 3,
+      "reps": 10
+    },
+    {
+      "id": "overhead_reach",
+      "name": "ยกแขนขึ้นเหนือศีรษะ (Overhead Reach)",
+      "target_angle": 120,
+      "hold_seconds": 3,
+      "reps": 10
+    },
+    {
+      "id": "elbow_flexion",
+      "name": "งอและเหยียดข้อศอก (Elbow Flexion)",
+      "target_angle": 140,
+      "hold_seconds": 2,
+      "reps": 12
+    }
+  ],
+  "face_vector": null,
+  "face_image_url": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400&auto=format&fit=crop&q=80",
+  "created_at": "2026-10-14",
+  "last_active": "พร้อมรับบริการ"
+}

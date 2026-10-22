@@ -31,13 +31,14 @@ export interface MatchResult {
   margin: number;
 }
 
-const STORAGE_KEY = 'strongcare_enrolled_faces';
-// เกณฑ์ความปลอดภัยชีวมิติระดับสูง (ResNet-34)
-// ตรงกัน 98% ขึ้นไปเท่านั้น ถึงจะสามารถเข้าสู่บัญชีได้
-export const STRICT_COSINE_THRESHOLD = 0.98;
-export const STRICT_DISTANCE_THRESHOLD = 0.25;
-
+import { BIOMETRIC_CONFIG } from '../config/biometricConfig';
 import { isPlaceholderPatientName } from './patientFaceStorageService';
+
+const STORAGE_KEY = 'strongcare_enrolled_faces';
+// เกณฑ์ความปลอดภัยชีวมิติระดับมาตรฐานการแพทย์ (ResNet-34 3-Tier)
+// ตรงกัน 88% ขึ้นไป (Cosine >= 0.88, Distance <= 0.49) ถึงจะสามารถเข้าสู่บัญชีอัตโนมัติ
+export const STRICT_COSINE_THRESHOLD = BIOMETRIC_CONFIG.THRESHOLD_PASS;
+export const STRICT_DISTANCE_THRESHOLD = BIOMETRIC_CONFIG.DISTANCE_PASS;
 
 export class FaceRegistryService {
   private static instance: FaceRegistryService;

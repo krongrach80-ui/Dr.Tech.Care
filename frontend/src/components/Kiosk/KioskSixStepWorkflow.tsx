@@ -65,6 +65,7 @@ import { patientSyncService } from '../../services/patientSyncService';
 import { patientFaceStorageService, PatientFaceBinding, isPlaceholderPatientName } from '../../services/patientFaceStorageService';
 import { cameraOrientationService, CameraOrientation, CameraRotation } from '../../services/cameraOrientationService';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
+import { BIOMETRIC_CONFIG, BiometricMatchLevel, cosineToDistance, cosineToPercent } from '../../config/biometricConfig';
 import { asset } from '../../utils/asset';
 import logoImg from '../../assets/logo.png';
 import logoIconImg from '../../assets/logo_icon.png';
@@ -585,6 +586,35 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   const [showPinModal, setShowPinModal] = useState<boolean>(false);
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<string | null>(null);
+
+  // Biometric State Machine: 'idle' | 'scanning' | 'matched' | 'near-match' | 'no-match' | 'cooldown'
+  const [biometricState, setBiometricState] = useState<'idle' | 'scanning' | 'matched' | 'near-match' | 'no-match' | 'cooldown'>('idle');
+  const biometricStateRef = useRef<'idle' | 'scanning' | 'matched' | 'near-match' | 'no-match' | 'cooldown'>('idle');
+  useEffect(() => {
+    biometricStateRef.current = biometricState;
+  }, [biometricState]);
+
+  // Dev / Staff Debug Mode: Show biometric matching percentage only when requested
+  const isDevMode = typeof window !== 'undefined' && (
+    window.location.search.includes('dev=1') ||
+    window.location.search.includes('test=1') ||
+    isDemoMode
+  );
+
+  // Near-Match Modal State (75% - 87% ยืนยันตัวตนเพิ่มเติมด้วย PIN 6 หลัก)
+  const [showNearMatchModal, setShowNearMatchModal] = useState<boolean>(false);
+  const [nearMatchCandidate, setNearMatchCandidate] = useState<PatientFaceBinding | null>(null);
+
+  // Cooldown State & Tracking
+  const [cooldownRemainingSec, setCooldownRemainingSec] = useState<number>(0);
+  const cooldownIntervalRef = useRef<any>(null);
+
+  // Multi-frame Sampling Progress (เช่น 1/6 ถึง 6/6)
+  const [sampleFrameCount, setSampleFrameCount] = useState<number>(0);
+
+  // Non-matching Consecutive Tracking (ป้องกัน popup เด้งถ้าไม่ตรงไม่ถึง 3 วินาที หรือ N เฟรม)
+  const consecutiveFailStartTimeRef = useRef<number | null>(null);
+  const consecutiveFailFramesRef = useRef<number>(0);
 
   // No Account Found Warning Modal State ("ไม่พบข้อมูลบัญชีในระบบ โปรดลงทะเบียนผู้ป่วยใหม่")
   const [showNoAccountModal, setShowNoAccountModal] = useState<boolean>(false);
@@ -1312,8 +1342,9 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     biometricTimersRef.current = [];
 
     setIsScanning(true);
+    setBiometricState('scanning');
     setBiometricPhase(1);
-    setBiometricProgress(30);
+    setBiometricProgress(20);
     setScanStatusMessage('🛡️ [1/2] ตรวจสอบ 3D Liveness & Anti-Replay Nonce...');
     audioFeedback.playHoldTick();
 
@@ -1321,24 +1352,55 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       if (!videoRef.current) throw new Error('ไม่พบสัญญาณกล้อง');
 
       setBiometricPhase(2);
-      setBiometricProgress(65);
-      setScanStatusMessage('🧬 [2/2] สกัดเวกเตอร์ชีวมิติ 128 มิติ (ResNet-34) และเปรียบเทียบ Cosine Similarity...');
+      setBiometricProgress(40);
+      setScanStatusMessage('🧬 [2/2] สกัดเวกเตอร์ชีวมิติหลายมุมมอง (Multi-frame Sampling)...');
 
-      // [PERFORMANCE & COMPATIBILITY]:
-      // 1. Extract real 128-D vector directly from raw uncompressed webcam video frame FIRST
-      // (Ensures ZERO loss in Cosine Similarity matching precision)
-      let vector128 = await livenessEngine.extractBiometricEmbedding(videoRef.current);
+      // [MULTI-FRAME SAMPLING]: สกัดผลหลายเฟรมต่อเนื่อง (6 เฟรมใน ~1.2 วินาที)
+      // เพื่อหาค่ามัธยฐาน (Median Vector) ลดความผันผวนจากแสงสะท้อน การกระพริบตา และมุมหน้า
+      const TOTAL_FRAMES = BIOMETRIC_CONFIG.SAMPLE_FRAMES_COUNT;
+      const collectedVectors: number[][] = [];
+
+      for (let i = 0; i < TOTAL_FRAMES; i++) {
+        setSampleFrameCount(i + 1);
+        const prog = 40 + Math.round(((i + 1) / TOTAL_FRAMES) * 45); // 40% -> 85%
+        setBiometricProgress(prog);
+        setScanStatusMessage(`🧬 กำลังวิเคราะห์มุมมองใบหน้า (${i + 1}/${TOTAL_FRAMES})... กรุณามองตรง`);
+
+        if (videoRef.current) {
+          const vec = await livenessEngine.extractBiometricEmbedding(videoRef.current);
+          if (vec && vec.length === 128) {
+            collectedVectors.push(vec);
+          }
+        }
+
+        if (i < TOTAL_FRAMES - 1) {
+          await new Promise((r) => setTimeout(r, BIOMETRIC_CONFIG.SAMPLE_INTERVAL_MS));
+        }
+      }
+
+      let vector128: number[] | null = null;
+      if (collectedVectors.length >= 2) {
+        vector128 = patientFaceStorageService.aggregateVectors(collectedVectors, true);
+      } else if (collectedVectors.length === 1) {
+        vector128 = collectedVectors[0];
+      }
+
       if (!vector128) {
         if (isDemoMode) {
           vector128 = getRegisteredPatientVector('P-0012');
         } else {
-          throw new Error('ไม่สามารถตรวจจับใบหน้าได้ กรุณามองตรงเข้าหากล้อง');
+          setIsScanning(false);
+          setBiometricState('idle');
+          setBiometricPhase(0);
+          setScanStep('front');
+          setScanStatusMessage('⚠️ ตรวจจับใบหน้าไม่ชัดเจน กรุณามองตรงเข้าหากล้องและเพิ่มแสงสว่าง');
+          audioFeedback.playHoldTick();
+          return;
         }
       }
 
       // [AUTOMATIC IMAGE COMPRESSION]:
-      // 2. AFTER feature extraction is completed, capture and compress the frame for storage
-      // (Max dimensions 800x800px, JPEG quality 80% ~100-150 KB)
+      // Capture and compress the reference snapshot for login history
       const liveJpg = patientFaceStorageService.captureFrameAsJpg(videoRef.current, 0.80, 800, 800);
 
       // =========================================================================
@@ -1495,20 +1557,24 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           (c) => c.status !== 'disabled' && c.status !== 'suspended' && !isPlaceholderPatientName(c.name, c.status)
         );
 
-        // b & c) Cosine Similarity (threshold >= 98% / 0.98) Matching Logic
-        const evaluation = patientFaceStorageService.matchLiveFaceAgainstDatabase(vector128, candidates, 0.98);
+        // b & c) Cosine Similarity (3-Tier Biometric Evaluation: Pass >= 88%, Near 75-87%, Fail < 75%)
+        const evaluation = patientFaceStorageService.matchLiveFaceAgainstDatabase(vector128, candidates, BIOMETRIC_CONFIG.THRESHOLD_PASS);
 
         // Required Console Logging
-        console.log('[BIOMETRIC LOGIN MATCH RESULT]:', {
+        console.log('[BIOMETRIC LOGIN MATCH RESULT (3-Tier)]:', {
           calculatedDistance: evaluation.bestDistance,
-          matchedPatientName: evaluation.matched?.name || 'None',
-          matchedHN: evaluation.matched?.patientCode || 'None',
+          matchedPatientName: evaluation.matched?.name || evaluation.nearMatchCandidate?.name || 'None',
+          matchedHN: evaluation.matched?.patientCode || evaluation.nearMatchCandidate?.patientCode || 'None',
           similarity: `${evaluation.bestScorePercent}%`,
-          isPassed: Boolean(evaluation.matched && evaluation.bestScorePercent >= 98),
+          tier: evaluation.matchLevel,
+          isPassed: evaluation.matchLevel === 'pass',
         });
 
-        // d) If matched successfully (Cosine Similarity >= 98%):
-        if (evaluation.matched && evaluation.bestScorePercent >= 98) {
+        // d) If matched successfully (Pass tier >= 88%):
+        if (evaluation.matchLevel === 'pass' && evaluation.matched) {
+          consecutiveFailStartTimeRef.current = null;
+          consecutiveFailFramesRef.current = 0;
+          setBiometricState('matched');
           const matchedCandidate = evaluation.matched;
           const targetHN = matchedCandidate.patientCode;
 
@@ -1707,27 +1773,72 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             changeStep(5);
           }, 1200);
           biometricTimersRef.current.push(t4);
-        } else {
-          // [NO MATCH FOUND IN DATABASE / UNRECOGNIZED FACE]:
-          console.info(
-            `[KIOSK] No matching registered account found (Similarity: ${evaluation.bestScorePercent}%).`
-          );
+        } else if (evaluation.matchLevel === 'near-match') {
+          // [NEAR-MATCH: 75% - 87%]: ใบหน้าคล้ายคลึงแต่ยังไม่มั่นใจ ให้ยืนยันตัวตนเพิ่มเติม
+          console.info(`[KIOSK] Near-match detected (Similarity: ${evaluation.bestScorePercent}%). Secondary authentication required.`);
+          consecutiveFailStartTimeRef.current = null;
+          consecutiveFailFramesRef.current = 0;
+          setIsScanning(false);
+          setBiometricPhase(0);
+          setBiometricState('near-match');
           setLastMatchScore(evaluation.bestScorePercent);
           lastLiveVectorRef.current = vector128;
           lastLiveJpgRef.current = liveJpg;
-          setIsScanning(false);
-          setBiometricPhase(0);
-          setScanStep('front');
-          setScanStatusMessage(`❌ ยังไม่มีข้อมูลใบหน้านี้ในระบบ (ความคล้ายคลึง: ${evaluation.bestScorePercent}%)`);
-          setShowNoAccountModal(true);
 
-          audioFeedback.playHoldTick();
+          const candidate = evaluation.nearMatchCandidate || (evaluation.comparisons[0] as any) || null;
+          setNearMatchCandidate(candidate);
+          setShowNearMatchModal(true);
+          setScanStatusMessage('🟡 ตรวจพบข้อมูลใบหน้าใกล้เคียง กรุณายืนยันตัวตนเพิ่มเติม');
+
+          audioFeedback.playRepSuccess();
           try {
             voiceAssistant.speak(
-              'ไม่พบข้อมูลใบหน้าในระบบค่ะ หากท่านยังไม่มีบัญชี กรุณากดปุ่มสมัครบัญชีคนไข้ใหม่เพื่อลงทะเบียนเข้าใช้งานนะคะ',
+              'ระบบพบข้อมูลใบหน้าที่ใกล้เคียงค่ะ เพื่อความปลอดภัยของข้อมูลทางการแพทย์ กรุณายืนยันตัวตนเพิ่มเติมด้วยรหัส PIN ค่ะ',
               { level: 'system' }
             );
           } catch {}
+        } else {
+          // [NO-MATCH: < 75%]: ใบหน้าไม่ตรงกับฐานข้อมูล
+          console.info(`[KIOSK] No matching registered account found (Similarity: ${evaluation.bestScorePercent}%).`);
+          lastLiveVectorRef.current = vector128;
+          lastLiveJpgRef.current = liveJpg;
+          setLastMatchScore(evaluation.bestScorePercent);
+          setIsScanning(false);
+          setBiometricPhase(0);
+
+          const now = performance.now();
+          if (consecutiveFailStartTimeRef.current === null) {
+            consecutiveFailStartTimeRef.current = now;
+          }
+          consecutiveFailFramesRef.current += 1;
+          const failElapsedMs = now - consecutiveFailStartTimeRef.current;
+
+          // ตรวจสอบว่าไม่ตรงต่อเนื่องครบอย่างน้อย 3 วินาที หรือ N เฟรมติดกัน จึงจะแสดง Popup
+          if (
+            failElapsedMs >= BIOMETRIC_CONFIG.NO_MATCH_CONSECUTIVE_MS ||
+            consecutiveFailFramesRef.current >= BIOMETRIC_CONFIG.MIN_FAIL_FRAMES
+          ) {
+            consecutiveFailStartTimeRef.current = null;
+            consecutiveFailFramesRef.current = 0;
+            setBiometricState('no-match');
+            setScanStep('front');
+            setScanStatusMessage('❌ ไม่พบข้อมูลใบหน้านี้ในระบบ');
+            setShowNoAccountModal(true);
+
+            audioFeedback.playHoldTick();
+            try {
+              voiceAssistant.speak(
+                'ระบบยังไม่พบข้อมูลใบหน้านี้ในระบบค่ะ หากเป็นคนไข้ใหม่ สามารถเพิ่มบัญชีได้ที่หน้าจัดการข้อมูลนะคะ',
+                { level: 'system' }
+              );
+            } catch {}
+          } else {
+            // ยังไม่ครบ 3 วินาที แสดงเพียงข้อความแนะนำบนหน้าจอ โดยไม่เปิด Popup ให้รบกวน
+            setBiometricState('idle');
+            setScanStep('front');
+            setScanStatusMessage('⚠️ ความคมชัดยังไม่เพียงพอ กรุณามองตรง แสงสว่างพอดี หรือถอดแมสก์/หมวก');
+            audioFeedback.playHoldTick();
+          }
         }
     } catch (err) {
       console.warn('Biometric scan error:', err);
@@ -1748,15 +1859,61 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     }, 350);
   };
 
+  // Trigger Cooldown Period (8-10 วินาที) หลังปิด Modal หรือทำรายการ ป้องกัน Popup เด้งรัว
+  const triggerCooldown = useCallback((durationMs: number = BIOMETRIC_CONFIG.COOLDOWN_MS) => {
+    if (cooldownIntervalRef.current) {
+      clearInterval(cooldownIntervalRef.current);
+      cooldownIntervalRef.current = null;
+    }
+    setBiometricState('cooldown');
+    const totalSec = Math.ceil(durationMs / 1000);
+    setCooldownRemainingSec(totalSec);
+    setScanStatusMessage(`⏸️ พักการสแกนชั่วคราว (${totalSec} วิ) หรือกดปุ่ม "ลองสแกนอีกครั้ง" ได้ทันที`);
+
+    let secLeft = totalSec;
+    cooldownIntervalRef.current = setInterval(() => {
+      secLeft -= 1;
+      setCooldownRemainingSec(secLeft);
+      if (secLeft <= 0) {
+        if (cooldownIntervalRef.current) {
+          clearInterval(cooldownIntervalRef.current);
+          cooldownIntervalRef.current = null;
+        }
+        setBiometricState('idle');
+        setScanStatusMessage('กรุณามองตรงเข้าหากล้องเพื่อสแกนใบหน้า');
+      } else {
+        setScanStatusMessage(`⏸️ พักการสแกนชั่วคราว (${secLeft} วิ) หรือกดปุ่ม "ลองสแกนอีกครั้ง" ได้ทันที`);
+      }
+    }, 1000);
+  }, []);
+
+  // Clear Cooldown and start scan immediately when user presses "ลองสแกนอีกครั้ง"
+  const clearCooldownAndScanNow = useCallback(() => {
+    if (cooldownIntervalRef.current) {
+      clearInterval(cooldownIntervalRef.current);
+      cooldownIntervalRef.current = null;
+    }
+    setCooldownRemainingSec(0);
+    setBiometricState('idle');
+    setShowNoAccountModal(false);
+    setShowNearMatchModal(false);
+    consecutiveFailStartTimeRef.current = null;
+    consecutiveFailFramesRef.current = 0;
+    setSampleFrameCount(0);
+    handleResetFaceScan();
+  }, []);
+
   // Step 4: Reset / Retry Face Scan
   const handleResetFaceScan = () => {
     biometricTimersRef.current.forEach((t) => clearTimeout(t));
     biometricTimersRef.current = [];
     setIsScanning(false);
+    setBiometricState('idle');
     setBiometricPhase(0);
     setBiometricProgress(0);
     setFaceHoldProgress(0);
     setHoldElapsedMs(0);
+    setSampleFrameCount(0);
     challengeProgressRef.current = { front: false, left: false, right: false };
     setChallengeProgress({ front: false, left: false, right: false });
     setScanStep('front');
@@ -1775,12 +1932,17 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   }, [isActive, triggerSlideUp]);
 
   const handleRetryScan = () => {
-    setShowNoAccountModal(false);
-    handleResetFaceScan();
+    clearCooldownAndScanNow();
   };
 
   const handleUsePinInstead = () => {
     setShowNoAccountModal(false);
+    setShowNearMatchModal(false);
+    if (cooldownIntervalRef.current) {
+      clearInterval(cooldownIntervalRef.current);
+      cooldownIntervalRef.current = null;
+    }
+    setBiometricState('idle');
     setShowPinModal(true);
   };
 
@@ -2012,13 +2174,13 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         handleStartFaceLogin();
         break;
       case 'step1-register':
-        if (onOpenReception) {
-          onOpenReception();
-        } else {
+        if (onOpenHospitalPortal) {
           onOpenHospitalPortal();
+        } else if (onOpenReception) {
+          onOpenReception();
         }
         try {
-          voiceAssistant.speak('กรุณากรอกข้อมูลเพื่อสมัครบัญชีคนไข้ใหม่ได้เลยค่ะ', { level: 'system' });
+          voiceAssistant.speak('กำลังพาท่านไปหน้าจัดการข้อมูลเพื่อเพิ่มบัญชีค่ะ', { level: 'system' });
         } catch {}
         break;
       case 'step1-pin':
@@ -2071,7 +2233,18 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
 
   // Step 4 Face Liveness Detection Hook (สร้างเมื่อเข้า Step 4 และ close() ตอนออก)
   useEffect(() => {
-    if (currentStep !== 4 || isScanning || !isActive) return;
+    // ป้องกันการสแกนซ้ำซ้อนขณะที่มี Modal เปิดอยู่ หรืออยู่ในช่วง Cooldown
+    if (
+      currentStep !== 4 ||
+      isScanning ||
+      !isActive ||
+      showNoAccountModal ||
+      showNearMatchModal ||
+      showPinModal ||
+      showLinkAccountModal ||
+      biometricState === 'cooldown' ||
+      biometricState === 'matched'
+    ) return;
 
     let cancelled = false;
     let rafId: number | null = null;
@@ -2086,7 +2259,17 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     livenessEngine.initialize().catch(() => {});
 
     const loop = () => {
-      if (cancelled || !isActive) return;
+      if (
+        cancelled ||
+        !isActive ||
+        showNoAccountModal ||
+        showNearMatchModal ||
+        showPinModal ||
+        showLinkAccountModal ||
+        biometricStateRef.current === 'cooldown' ||
+        biometricStateRef.current === 'matched'
+      ) return;
+
       const now = performance.now();
       if (now - lastTime >= 50) {
         lastTime = now;
@@ -2143,6 +2326,19 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             if (frameData) {
               setCurrentLivenessFrame(frameData);
 
+              // ถ้าไม่มีใบหน้าในกล้อง: ห้ามขึ้น popup ใดๆ แสดงข้อความเบาๆ สบายตา
+              const faceCount = frameData.qualityGate?.faceCount ?? 0;
+              if (faceCount === 0) {
+                holdStartTime = null;
+                setFaceHoldProgress(0);
+                setHoldElapsedMs(0);
+                consecutiveFailStartTimeRef.current = null;
+                consecutiveFailFramesRef.current = 0;
+                setScanStatusMessage('กรุณามองตรงเข้าหากล้อง');
+                rafId = requestAnimationFrame(loop);
+                return;
+              }
+
               const currentCh: LivenessChallenge =
                 scanStep === 'front' ? 'front' : scanStep === 'left' ? 'turn_left' : 'turn_right';
               const evalRes = livenessEngine.evaluateChallenge(currentCh, frameData);
@@ -2198,7 +2394,17 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       cancelled = true;
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [currentStep, scanStep, isScanning, isActive]);
+  }, [
+    currentStep,
+    scanStep,
+    isScanning,
+    isActive,
+    showNoAccountModal,
+    showNearMatchModal,
+    showPinModal,
+    showLinkAccountModal,
+    biometricState,
+  ]);
 
   // Event listener สำหรับการทดสอบความปลอดภัยและ E2E Testing ในสภาพแวดล้อม Headless/CI
   useEffect(() => {
@@ -2663,16 +2869,16 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (onOpenReception) {
-                      onOpenReception();
-                    } else {
+                    if (onOpenHospitalPortal) {
                       onOpenHospitalPortal();
+                    } else if (onOpenReception) {
+                      onOpenReception();
                     }
                   }}
                   className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] sm:text-xs shadow-sm transition active:scale-95 cursor-pointer pointer-events-auto flex items-center gap-1 border border-emerald-400/40"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>📝 ยังไม่มีบัญชี? สมัครบัญชีคนไข้ใหม่</span>
+                  <span>🏢 สมัครบัญชี: ไปหน้าจัดการข้อมูล</span>
                 </button>
               </div>
             </>
@@ -2957,10 +3163,10 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             onRetryCamera={startCamera}
             onFallbackToPin={() => setShowPinModal(true)}
             onRegisterNewPatient={() => {
-              if (onOpenReception) {
-                onOpenReception();
-              } else {
+              if (onOpenHospitalPortal) {
                 onOpenHospitalPortal();
+              } else if (onOpenReception) {
+                onOpenReception();
               }
             }}
           />
@@ -3551,71 +3757,191 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         </div>
       )}
 
-      {/* โมดอลแจ้งเตือน: ไม่พบข้อมูลบัญชีในระบบ โปรดลงทะเบียนผู้ป่วยใหม่ */}
-      {showNoAccountModal && (
+      {/* โมดอล: ยืนยันตัวตนเพิ่มเติม (Near-Match 75% - 87%) */}
+      {showNearMatchModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[9999] flex items-center justify-center p-3 sm:p-4 animate-fadeIn">
           <div className="w-full max-w-md bg-white rounded-[32px] p-6 shadow-2xl border-2 border-amber-400 relative flex flex-col items-center text-center animate-scaleUp">
-            {/* Close button */}
+            {/* Close button with Cooldown */}
             <button
               onClick={() => {
-                setShowNoAccountModal(false);
-                handleResetFaceScan();
+                setShowNearMatchModal(false);
+                triggerCooldown(BIOMETRIC_CONFIG.COOLDOWN_MS);
               }}
               className="absolute top-4 right-4 p-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
 
-            {/* Warning Icon with Amber glow */}
+            {/* Amber Medical Shield Icon */}
             <div className="w-20 h-20 rounded-full bg-amber-50 border-4 border-amber-400 text-amber-600 flex items-center justify-center mb-3 shadow-inner">
+              <Key className="w-10 h-10 stroke-[2.5]" />
+            </div>
+
+            {/* Dev Mode Score Badge */}
+            {isDevMode && (
+              <div className="inline-flex items-center gap-1.5 bg-amber-100 text-amber-900 px-3 py-1 rounded-full text-xs font-black mb-2">
+                <Shield className="w-3.5 h-3.5 text-amber-700" />
+                <span>[โหมดเจ้าหน้าที่] ความคล้ายคลึง: {lastMatchScore}% (ระดับยืนยันเพิ่มเติม)</span>
+              </div>
+            )}
+
+            <h3 className="text-xl sm:text-2xl font-black text-amber-900 tracking-tight">
+              ยืนยันตัวตนเพิ่มเติม
+            </h3>
+            <p className="text-xs sm:text-sm font-bold text-slate-700 mt-1">
+              ระบบตรวจพบใบหน้าคล้ายคลึงกับบัญชีคนไข้ในระบบ
+            </p>
+
+            {/* Candidate Info Card */}
+            {nearMatchCandidate && (
+              <div className="w-full bg-amber-50/70 border border-amber-200 rounded-2xl p-3 my-3 text-left flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full bg-amber-200 border-2 border-amber-400 flex items-center justify-center text-amber-800 font-black text-base shrink-0">
+                  {nearMatchCandidate.name ? nearMatchCandidate.name.charAt(0) : 'P'}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-sm font-black text-slate-900 truncate">
+                    คุณ {nearMatchCandidate.name}
+                  </h4>
+                  <p className="text-xs font-bold text-emerald-700">
+                    รหัสประจำตัว HN: {nearMatchCandidate.patientCode}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Description Card */}
+            <div className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-3 text-xs text-slate-700 text-left space-y-1">
+              <div className="flex items-start gap-1.5">
+                <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <p className="font-semibold text-slate-700">
+                  เพื่อความปลอดภัยสูงสุดของข้อมูลประวัติการรักษา กรุณากดปุ่มด้านล่างเพื่อใส่รหัส PIN 6 หลัก
+                </p>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="w-full space-y-2.5">
+              {/* PRIMARY CTA: ใส่รหัส PIN 6 หลัก */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNearMatchModal(false);
+                  setShowPinModal(true);
+                }}
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 hover:from-emerald-500 hover:to-teal-600 text-white font-black text-sm shadow-md hover:shadow-lg active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer border border-emerald-400/40"
+              >
+                <Key className="w-5 h-5 text-white" />
+                <span>🔑 ใช้รหัส PIN 6 หลัก (ยืนยันเข้าสู่ระบบ)</span>
+              </button>
+
+              {/* SECONDARY: ค้นหา HN / เบอร์โทร */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNearMatchModal(false);
+                  setShowLinkAccountModal(true);
+                  setFoundAccountForLink(null);
+                  setLinkSearchError(null);
+                  setLinkSearchQuery(nearMatchCandidate?.patientCode || '');
+                }}
+                className="w-full py-2.5 px-4 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold text-xs active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <UserCheck className="w-4 h-4 text-emerald-600" />
+                <span>🔗 ค้นหาด้วยรหัส HN / เบอร์โทรศัพท์</span>
+              </button>
+
+              {/* Try Scan Again */}
+              <button
+                type="button"
+                onClick={handleRetryScan}
+                className="w-full py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>ลองสแกนใบหน้าอีกครั้ง (ปรับแสงและหันหน้าตรง)</span>
+              </button>
+
+              {/* Staff Bypass */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNearMatchModal(false);
+                  onOpenHospitalPortal();
+                }}
+                className="w-full py-2.5 px-3 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-extrabold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Shield className="w-4 h-4 text-amber-700" />
+                <span>🛡️ เจ้าหน้าที่เข้าสู่ระบบบุคลากร / รพ. (Staff Bypass)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* โมดอลแจ้งเตือน: ไม่พบข้อมูลใบหน้านี้ในระบบ */}
+      {showNoAccountModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[9999] flex items-center justify-center p-3 sm:p-4 animate-fadeIn">
+          <div className="w-full max-w-md bg-white rounded-[32px] p-6 shadow-2xl border-2 border-rose-300 relative flex flex-col items-center text-center animate-scaleUp">
+            {/* Close button with Cooldown */}
+            <button
+              onClick={() => {
+                setShowNoAccountModal(false);
+                triggerCooldown(BIOMETRIC_CONFIG.COOLDOWN_MS);
+              }}
+              className="absolute top-4 right-4 p-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Warning Icon */}
+            <div className="w-20 h-20 rounded-full bg-rose-50 border-4 border-rose-300 text-rose-500 flex items-center justify-center mb-3 shadow-inner">
               <AlertCircle className="w-10 h-10 stroke-[2.5]" />
             </div>
 
-            {/* Heading & Score Badge */}
-            <div className="inline-flex items-center gap-1.5 bg-amber-100 text-amber-900 px-3 py-1 rounded-full text-xs font-black mb-2">
-              <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
-              <span>
-                ความคล้ายคลึงชีวมิติสูงสุด: {lastMatchScore}% {lastMatchScore < 98 ? '(ต่ำกว่าเกณฑ์มาตรฐาน 98%)' : ''}
-              </span>
-            </div>
+            {/* Heading & Score Badge (ซ่อนใน production แสดงเฉพาะตอน ?dev=1) */}
+            {isDevMode && (
+              <div className="inline-flex items-center gap-1.5 bg-rose-100 text-rose-900 px-3 py-1 rounded-full text-xs font-black mb-2">
+                <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
+                <span>[โหมดเจ้าหน้าที่] ความคล้ายคลึง: {lastMatchScore}% (ต่ำกว่าเกณฑ์ 75%)</span>
+              </div>
+            )}
 
-            <h3 className="text-xl sm:text-2xl font-black text-[#0B2B2B] tracking-tight">
-              ยังไม่มีข้อมูลใบหน้านี้ในระบบ
+            <h3 className="text-xl sm:text-2xl font-black text-rose-600 tracking-tight">
+              ไม่พบข้อมูลใบหน้านี้ในระบบ
             </h3>
-            <p className="text-xs sm:text-sm font-extrabold text-amber-800 mt-1">
-              ระบบตรวจสอบแล้วไม่พบบัญชีผู้ป่วยที่ตรงกับใบหน้าของคุณ
+            <p className="text-xs sm:text-sm font-extrabold text-slate-700 mt-1">
+              ระบบตรวจสอบแล้วไม่พบบัญชีผู้ป่วยที่ผูกกับใบหน้านี้ หากท่านยังไม่เคยลงทะเบียน สามารถไปที่หน้าจัดการข้อมูลเพื่อเพิ่มบัญชี
             </p>
 
             {/* Description Card */}
-            <div className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 my-4 text-xs text-slate-600 text-left space-y-2">
+            <div className="w-full bg-rose-50/70 border border-rose-200 rounded-2xl p-4 my-4 text-xs text-rose-950 text-left space-y-2">
               <div className="flex items-start gap-2">
-                <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <p className="font-bold text-slate-700">
-                  ระบบไม่พบเวชระเบียนที่ผูกกับใบหน้านี้ในฐานข้อมูล
+                <Info className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <p className="font-bold text-rose-900">
+                  ระบบไม่พบข้อมูลใบหน้านี้ในฐานข้อมูล
                 </p>
               </div>
-              <p className="text-[11px] text-slate-500 font-medium pl-6">
-                หากท่านเป็นคนไข้ใหม่ กรุณากดปุ่ม <span className="font-bold text-emerald-700">"สมัครบัญชีคนไข้ใหม่"</span> ด้านล่าง เพื่อลงทะเบียนเปิดประวัติและเริ่มใช้งานได้ทันที
+              <p className="text-[12px] text-slate-700 font-semibold pl-6 leading-relaxed">
+                👉 ถ้าจะสมัครบัญชีให้ไป <span className="font-bold text-emerald-700">"หน้าจัดการข้อมูล"</span> เเล้วเพิ่มเอา
               </p>
             </div>
 
             {/* Action Buttons */}
             <div className="w-full space-y-2.5">
-              {/* PRIMARY CTA: สมัครบัญชีคนไข้ใหม่ (ลงทะเบียนเปิดประวัติทันที) */}
+              {/* PRIMARY CTA: ไปหน้าจัดการข้อมูล เเล้วเพิ่มเอา */}
               <button
                 type="button"
                 onClick={() => {
                   setShowNoAccountModal(false);
-                  if (onOpenReception) {
-                    onOpenReception();
-                  } else {
+                  if (onOpenHospitalPortal) {
                     onOpenHospitalPortal();
+                  } else if (onOpenReception) {
+                    onOpenReception();
                   }
                 }}
-                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-600 text-white font-black text-sm shadow-md hover:shadow-lg active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer border border-emerald-400/40"
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 hover:from-emerald-500 hover:to-teal-600 text-white font-black text-sm shadow-md hover:shadow-lg active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer border border-emerald-400/40"
               >
                 <Plus className="w-5 h-5 text-white" />
-                <span>📝 สมัครบัญชีคนไข้ใหม่ (ลงทะเบียนเปิดประวัติทันที)</span>
+                <span>🏢 ไปหน้าจัดการข้อมูล (เพิ่มบัญชีคนไข้ใหม่)</span>
               </button>
 
               {/* SECONDARY: ผูกใบหน้ากับบัญชีที่มีอยู่แล้วในระบบ (ค้นหาด้วย HN / เบอร์โทร) */}

@@ -445,7 +445,7 @@ export const LivenessScanHUD: React.FC<LivenessScanHUDProps> = ({
             id="btnRegisterFromHUD"
           >
             <UserPlus className="w-5 h-5 text-white" />
-            <span>📝 ยังไม่มีบัญชี? สมัครบัญชีคนไข้ใหม่</span>
+            <span>🏢 สมัครบัญชี: ไปหน้าจัดการข้อมูล</span>
           </button>
         )}
         <button

@@ -635,8 +635,8 @@ export const api = {
       }
     }
 
-    // 2. ตรวจสอบเปรียบเทียบเวกเตอร์ในเครื่องด้วย Dual-Metric (Cosine >= 0.98, Distance <= 0.25)
-    const matchRes = faceRegistryService.findBestMatch(embedding, 0.98, 0.25);
+    // 2. ตรวจสอบเปรียบเทียบเวกเตอร์ในเครื่องด้วย Dual-Metric 3-Tier (Cosine >= 0.88, Distance <= 0.49)
+    const matchRes = faceRegistryService.findBestMatch(embedding);
 
     if (matchRes.match && matchRes.bestProfile) {
       const p = matchRes.bestProfile;
@@ -667,8 +667,8 @@ export const api = {
       similarity: matchRes.similarity,
       similarity_percent: matchRes.similarityPercent,
       message: matchRes.similarity > 0.65
-        ? `❌ ไม่พบใบหน้าที่ลงทะเบียนในระบบ (ความคล้ายคลึง ${matchRes.similarityPercent}% ไม่ถึงเกณฑ์ 90%) ระบบปฏิเสธเพื่อความปลอดภัย`
-        : '❌ ไม่พบใบหน้าที่ลงทะเบียนในระบบ กรุณาสมัครสมาชิกก่อน หรือเข้าสู่ระบบด้วย PIN',
+        ? `❌ ไม่พบหน้าในระบบ (ความคล้ายคลึง ${matchRes.similarityPercent}% ไม่ถึงเกณฑ์ 90%) ระบบปฏิเสธเพื่อความปลอดภัย`
+        : '❌ ไม่พบหน้าในระบบ หากต้องการสมัครบัญชีให้ไปหน้าจัดการข้อมูล แล้วเพิ่มเอา',
     };
   },
 

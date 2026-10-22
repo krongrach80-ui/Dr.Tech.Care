@@ -154,6 +154,8 @@ interface HospitalPortalProps {
   onClose: () => void;
   onLaunchKioskExercise?: (exerciseId?: number | string) => void;
   onSelectPatientForKiosk?: (patientData: any) => void;
+  initialTab?: TabKey;
+  autoOpenAddUser?: boolean;
 }
 
 type TabKey = 'users' | 'patients' | 'schedules' | 'therapists' | 'exercises' | 'logs' | 'settings';
@@ -162,6 +164,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   onClose,
   onLaunchKioskExercise,
   onSelectPatientForKiosk,
+  initialTab = 'users',
+  autoOpenAddUser = false,
 }) => {
   const {
     currentRole,
@@ -328,7 +332,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   }, [initializeFromSupabase, upsertPatientFromSupabase]);
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<TabKey>('users');
+  const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
 
   // Staff Authentication Barrier
   const [isStaffAuthenticated, setIsStaffAuthenticated] = useState<boolean>(false);
@@ -696,7 +700,13 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   };
 
   // Add User Modal State
-  const [isAddUserModalOpen, setIsAddUserModalOpen] = useState<boolean>(false);
+  const [isAddUserModalOpen, setIsAddUserModalOpen] = useState<boolean>(Boolean(autoOpenAddUser));
+
+  useEffect(() => {
+    if (autoOpenAddUser && isStaffAuthenticated) {
+      setIsAddUserModalOpen(true);
+    }
+  }, [autoOpenAddUser, isStaffAuthenticated]);
 
   const handleAddUser = async (
     userData: Omit<UserAccount, 'id' | 'created_at'>,
@@ -2028,6 +2038,19 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             </div>
           </div>
 
+          {/* Banner if redirected from Register / Add Account */}
+          {autoOpenAddUser && (
+            <div className="p-3.5 bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-300 rounded-2xl text-emerald-950 text-xs text-left shadow-xs space-y-1 animate-fadeIn">
+              <div className="flex items-center gap-2 font-black text-emerald-800">
+                <span className="text-base">🏢</span>
+                <span>ระบบจัดการข้อมูล (เพิ่มบัญชีคนไข้ใหม่)</span>
+              </div>
+              <p className="text-slate-600 font-semibold leading-relaxed">
+                ถ้าจะสมัครบัญชีให้เข้าสู่ระบบเพื่อไปยัง <strong>หน้าจัดการข้อมูล</strong> เเล้วทำการเพิ่มบัญชีคนไข้ใหม่
+              </p>
+            </div>
+          )}
+
           {/* Login Form */}
           <form onSubmit={handleStaffLogin} className="space-y-4 text-left">
             {/* Username Field */}
@@ -2173,6 +2196,17 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               </div>
             </div>
           )}
+
+          {/* Close / Return to Kiosk button */}
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+            >
+              ✕ ปิดหน้าต่าง (กลับสู่หน้าหลักตู้ Kiosk)
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -2181,7 +2215,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   // Sidebar Menu Items based on Role
   // Admin: 7 items | Physiotherapist: 5 items
   const sidebarItems: { id: TabKey; label: string; icon: React.FC<{ className?: string }>; adminOnly?: boolean }[] = [
-    { id: 'users', label: '1. จัดการผู้ใช้งาน', icon: Users },
+    { id: 'users', label: '1. จัดการข้อมูล (ผู้ใช้งาน)', icon: Users },
     { id: 'patients', label: '2. ข้อมูลคนไข้', icon: User },
     { id: 'schedules', label: '3. ตารางกายภาพ', icon: CalendarDays },
     {
@@ -2358,7 +2392,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             <div className="min-w-0">
               <h1 className="text-xs sm:text-base lg:text-lg font-extrabold text-[#0F2F2B] tracking-tight truncate flex items-center gap-1.5">
                 <span className="truncate">
-                  {activeTab === 'users' && 'จัดการผู้ใช้งาน'}
+                  {activeTab === 'users' && 'จัดการข้อมูล (ผู้ใช้งาน)'}
                   {activeTab === 'patients' && 'ข้อมูลคนไข้'}
                   {activeTab === 'schedules' && 'ตารางฝึกกายภาพ'}
                   {activeTab === 'therapists' && 'ข้อมูลนักกายภาพ'}
@@ -2367,7 +2401,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   {activeTab === 'settings' && 'ตั้งค่าระบบ'}
                 </span>
                 <span className="hidden xl:inline text-xs font-semibold text-slate-400">
-                  {activeTab === 'users' && '(User Management)'}
+                  {activeTab === 'users' && '(Data & User Management)'}
                   {activeTab === 'patients' && '(Patient Data)'}
                   {activeTab === 'schedules' && '(Therapy Schedules)'}
                   {activeTab === 'therapists' && '(Physiotherapist Data)'}
@@ -2603,7 +2637,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     title={currentRole === 'therapist' ? "ลงทะเบียนคนไข้ใหม่ พร้อมสแกนใบหน้า 10 ช็อต" : "ลงทะเบียนผู้ใช้ใหม่ พร้อมสแกนใบหน้า 10 ช็อต"}
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>{currentRole === 'therapist' ? '+ Add New Patient' : '+ Add New User'}</span>
+                    <span>{currentRole === 'therapist' ? '+ เพิ่มบัญชีคนไข้ใหม่ (+ Add Patient)' : '+ เพิ่มบัญชีผู้ใช้ใหม่ (+ Add User)'}</span>
                   </button>
                 </div>
               </div>

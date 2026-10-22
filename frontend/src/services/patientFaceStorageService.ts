@@ -15,6 +15,7 @@ import { FaceRegistryService } from './faceRegistryService';
 import { resolveDefaultApiUrl } from '../config/apiConfig';
 import { cameraOrientationService } from './cameraOrientationService';
 import { supabaseService } from './supabaseService';
+import { BIOMETRIC_CONFIG, BiometricMatchLevel, evaluateBiometricMatchLevel } from '../config/biometricConfig';
 
 export interface PatientProfileData {
   patient_id: string; // e.g. P-6022, P-0012
@@ -157,6 +158,8 @@ export interface MatchEvaluation {
   bestScorePercent: number;
   bestDistance: number;
   comparisons: FaceMatchComparisonResult[];
+  matchLevel?: BiometricMatchLevel;
+  nearMatchCandidate?: PatientFaceBinding | null;
 }
 
 /**
@@ -947,13 +950,47 @@ class PatientFaceStorageService {
   }
 
   /**
-   * 12. Match live scanned face against all registered patient records
-   * Strict Cosine Similarity >= 98% (0.98)
+   * รวมเวกเตอร์ 128 มิติจากหลายเฟรม (Multi-frame Sampling) เพื่อลดความผันผวนจากแสง/มุม
+   * คำนวณค่ามัธยฐาน (Median) หรือเฉลี่ย (Average) ในแต่ละมิติ แล้วทำการ L2 Normalization
+   */
+  public aggregateVectors(vectors: number[][], useMedian: boolean = true): number[] {
+    if (!vectors || !vectors.length) return [];
+    const validVectors = vectors.filter((v) => v && v.length === 128);
+    if (!validVectors.length) return [];
+    if (validVectors.length === 1) return this.normalizeVector(validVectors[0]);
+
+    const dim = 128;
+    const aggregated: number[] = new Array(dim).fill(0);
+
+    for (let d = 0; d < dim; d++) {
+      const vals: number[] = [];
+      for (let f = 0; f < validVectors.length; f++) {
+        vals.push(validVectors[f][d]);
+      }
+
+      if (useMedian) {
+        vals.sort((a, b) => a - b);
+        const mid = Math.floor(vals.length / 2);
+        aggregated[d] = vals.length % 2 !== 0 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
+      } else {
+        const sum = vals.reduce((acc, v) => acc + v, 0);
+        aggregated[d] = sum / vals.length;
+      }
+    }
+
+    return this.normalizeVector(aggregated);
+  }
+
+  /**
+   * 12. Match live scanned face against all registered patient records (3-Tier Biometric Matching)
+   * - Pass (>= 88% / 0.88): เข้าระบบอัตโนมัติ
+   * - Near-Match (75% - 87%): ยืนยันตัวตนเพิ่มเติมด้วย PIN 6 หลัก หรือ HN
+   * - No-Match (< 75%): ไม่พบข้อมูลใบหน้านี้
    */
   public matchLiveFaceAgainstDatabase(
     liveVector: number[],
     candidates: PatientFaceBinding[],
-    similarityThreshold: number = 0.98
+    similarityThreshold: number = BIOMETRIC_CONFIG.THRESHOLD_PASS
   ): MatchEvaluation {
     if (!liveVector || liveVector.length !== 128 || !candidates.length) {
       console.warn('⚠️ [FACE MATCH]: Invalid live vector or empty candidate database');
@@ -963,6 +1000,7 @@ class PatientFaceStorageService {
         bestScorePercent: 0,
         bestDistance: 2.0,
         comparisons: [],
+        matchLevel: 'no-match',
       };
     }
 
@@ -982,9 +1020,6 @@ class PatientFaceStorageService {
       const dist = this.computeEuclideanDistance(normLive, normCand);
       const cosSim = this.computeCosineSimilarity(normLive, normCand);
       const simPercent = Math.max(0, Math.min(100, Math.round(cosSim * 100)));
-
-      // Required console.log during login:
-      console.log(`[BIOMETRIC LOGIN] Comparing with [HN: ${cand.patientCode}] [Name: ${cand.name}] -> Distance: ${dist.toFixed(4)}, Similarity: ${simPercent}%`);
 
       comparisons.push({
         patient_id: cand.patientId,
@@ -1007,7 +1042,7 @@ class PatientFaceStorageService {
     comparisons.sort((a, b) => b.similarity - a.similarity);
 
     // [CONSOLE LOGS & DEBUGGING]: Log the list of compared patients and resulting similarity percentage scores
-    console.log('[BIOMETRIC LOGIN] Candidate Comparisons Table:');
+    console.log('[BIOMETRIC LOGIN] Candidate Comparisons Table (3-Tier):');
     console.table(
       comparisons.map((c) => ({
         HN: c.patient_code,
@@ -1018,61 +1053,69 @@ class PatientFaceStorageService {
       }))
     );
 
-    // Filter valid matches meeting threshold (>= 98% / 0.98)
-    const validMatches = comparisons.filter(
-      (c) => c.similarity >= similarityThreshold && (c.similarity * 100) >= 98
-    );
+    const highestPercent = Math.max(0, Math.min(100, Math.round(highestSimilarity * 100)));
+    const matchLevel = evaluateBiometricMatchLevel(highestSimilarity);
 
-    // Chosen match must be a genuine real patient match meeting threshold - NEVER fall back to placeholder
-    const chosenMatchResult = validMatches.length > 0 ? validMatches[0] : null;
+    // กรณีที่ 1: ผ่านเกณฑ์ Auto-Login (>= 88%)
+    if (matchLevel === 'pass' && bestMatch) {
+      console.log('🎯 [FACE MATCH SUCCESS - AUTO LOGIN]:', {
+        matched_patient_id: bestMatch.patientId,
+        matched_hn: bestMatch.patientCode,
+        matched_name: bestMatch.name,
+        distance: Number(lowestDistance.toFixed(4)),
+        similarity: `${highestPercent}%`,
+        threshold: `${Math.round(similarityThreshold * 100)}%`,
+        tier: 'PASS (>= 88%)',
+      });
 
-    if (chosenMatchResult) {
-      const matchedCand = eligibleCandidates.find(
-        (c) => c.patientCode.toUpperCase() === chosenMatchResult.patient_code.toUpperCase()
-      );
-
-      if (matchedCand) {
-        const finalScore = chosenMatchResult.similarity;
-        const finalPercent = Math.max(0, Math.min(100, Math.round(finalScore * 100)));
-
-        console.log('🎯 [FACE MATCH SUCCESS]:', {
-          matched_patient_id: matchedCand.patientId,
-          matched_hn: matchedCand.patientCode,
-          matched_name: matchedCand.name,
-          calculatedDistance: chosenMatchResult.distance,
-          similarity: `${finalPercent}%`,
-          threshold: `${Math.round(similarityThreshold * 100)}%`,
-          isRealPatient: true,
-        });
-
-        return {
-          matched: matchedCand,
-          bestScore: finalScore,
-          bestScorePercent: finalPercent,
-          bestDistance: chosenMatchResult.distance,
-          comparisons,
-        };
-      }
+      return {
+        matched: bestMatch,
+        bestScore: highestSimilarity,
+        bestScorePercent: highestPercent,
+        bestDistance: Number(lowestDistance.toFixed(4)),
+        comparisons,
+        matchLevel: 'pass',
+      };
     }
 
-    // [STRICT FALLBACK]: If no REAL registered account matched, NEVER fall back to placeholder/draft accounts!
-    // Return matched: null so the system prompts the user to register an account if they haven't yet.
+    // กรณีที่ 2: เกือบตรง (75% - 87%) ยืนยันตัวตนเพิ่มเติม
+    if (matchLevel === 'near-match' && bestMatch) {
+      console.log('🟡 [FACE MATCH NEAR-MATCH - REQUIRE SECONDARY AUTH]:', {
+        candidate_hn: bestMatch.patientCode,
+        candidate_name: bestMatch.name,
+        distance: Number(lowestDistance.toFixed(4)),
+        similarity: `${highestPercent}%`,
+        tier: 'NEAR-MATCH (75-87%)',
+      });
 
-    const highestPercent = Math.max(0, Math.min(100, Math.round(highestSimilarity * 100)));
+      return {
+        matched: null,
+        nearMatchCandidate: bestMatch,
+        bestScore: highestSimilarity,
+        bestScorePercent: highestPercent,
+        bestDistance: Number(lowestDistance.toFixed(4)),
+        comparisons,
+        matchLevel: 'near-match',
+      };
+    }
 
-    console.warn('❌ [FACE MATCH FAILED - NO PATIENT REACHED THRESHOLD]:', {
+    // กรณีที่ 3: ไม่ตรง (< 75%)
+    console.warn('❌ [FACE MATCH NO-MATCH (< 75%)]:', {
       lowest_distance: Number(lowestDistance.toFixed(4)),
       highest_similarity: `${highestPercent}%`,
       required_threshold: `${Math.round(similarityThreshold * 100)}%`,
       candidate_count: candidates.length,
+      tier: 'NO-MATCH (< 75%)',
     });
 
     return {
       matched: null,
+      nearMatchCandidate: null,
       bestScore: Math.max(0, highestSimilarity),
       bestScorePercent: highestPercent,
       bestDistance: Number(lowestDistance.toFixed(4)),
       comparisons,
+      matchLevel: 'no-match',
     };
   }
 

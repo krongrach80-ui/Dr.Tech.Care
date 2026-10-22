@@ -405,9 +405,9 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
         }, 1500);
       } else {
         setVerifySuccess(false);
-        setVerifyMessage(res.message || '❌ ไม่พบใบหน้าที่ลงทะเบียนในระบบ (ความคล้ายคลึงไม่ถึงเกณฑ์ 90%)');
+        setVerifyMessage(res.message || '❌ ไม่พบหน้าในระบบ (ใบหน้าไม่ตรงกับข้อมูล)');
         audioFeedback.playSafetyAlert();
-        voiceAssistant.speakSystem('ไม่พบใบหน้าที่ลงทะเบียนในระบบครับ กำลังพาท่านไปสมัครสมาชิกใหม่ครับ', {
+        voiceAssistant.speakSystem('ไม่พบหน้าในระบบครับ ถ้าจะสมัครบัญชีให้ไปหน้าจัดการข้อมูล แล้วเพิ่มเอาครับ', {
           priority: 'warning',
           force: true,
         });
@@ -1089,7 +1089,7 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
                   }}
                   className="text-emerald-700 hover:text-emerald-800 underline underline-offset-4 cursor-pointer"
                 >
-                  ยังไม่มีข้อมูลใบหน้าในระบบ? สมัครสมาชิกใหม่
+                  ยังไม่มีข้อมูลในระบบ? สมัครบัญชี (ไปหน้าจัดการข้อมูล)
                 </button>
                 <span className="hidden sm:inline text-slate-300">|</span>
                 <button

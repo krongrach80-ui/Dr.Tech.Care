@@ -1,0 +1,45 @@
+{
+  "id": 21,
+  "code": "P-0021",
+  "username": "wichai",
+  "name": "นายวิชัย แก้วมณี",
+  "first_name": "นายวิชัย",
+  "last_name": "แก้วมณี",
+  "age": 65,
+  "gender": "male",
+  "phone": "089-445-5667",
+  "status": "active",
+  "diagnosis": "ปวดหลังส่วนล่างเรื้อรัง (Chronic Low Back Pain)",
+  "chief_complaint": "ปวดหลังส่วนล่างเรื้อรัง (Chronic Low Back Pain)",
+  "medical_history": "",
+  "treatment_plan": "",
+  "assignedTherapistName": "กภ. ธนากร วงศ์สวัสดิ์",
+  "assignedTherapistId": 1,
+  "assigned_exercises": [
+    {
+      "id": "shoulder_raise",
+      "name": "กางแขนด้านข้าง (Shoulder Abduction)",
+      "target_angle": 90,
+      "hold_seconds": 3,
+      "reps": 10
+    },
+    {
+      "id": "overhead_reach",
+      "name": "ยกแขนขึ้นเหนือศีรษะ (Overhead Reach)",
+      "target_angle": 120,
+      "hold_seconds": 3,
+      "reps": 10
+    },
+    {
+      "id": "elbow_flexion",
+      "name": "งอและเหยียดข้อศอก (Elbow Flexion)",
+      "target_angle": 140,
+      "hold_seconds": 2,
+      "reps": 12
+    }
+  ],
+  "face_vector": null,
+  "face_image_url": null,
+  "created_at": "2026-10-14",
+  "last_active": "พร้อมรับบริการ"
+}

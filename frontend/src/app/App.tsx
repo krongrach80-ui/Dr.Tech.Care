@@ -35,15 +35,27 @@ import { IS_STATIC_MODE } from '../config/apiConfig';
 import { Patient } from '../types/patient';
 import { TreatmentPlan } from '../types/hospital';
 import { KioskSixStepWorkflow } from '../components/Kiosk/KioskSixStepWorkflow';
-import { CheckCircle2, Shield } from 'lucide-react';
+import { CheckCircle2, Shield, Users, AlertCircle, Home, ArrowLeft } from 'lucide-react';
 
 // Helper to parse route from URL hash and search params (for GitHub Pages SPA reload fallback)
-const parseRouteFromUrl = (): { screen: number; modal?: 'hospital' | 'reception' | 'about' | 'profile' } => {
+interface ParsedRoute {
+  screen: number;
+  modal?: 'hospital' | 'reception' | 'about' | 'profile';
+  isNotFound?: boolean;
+  unmatchedPath?: string;
+  autoAddUser?: boolean;
+}
+
+const parseRouteFromUrl = (): ParsedRoute => {
   if (typeof window === 'undefined') return { screen: 1 };
   const rawHash = (window.location.hash || '').replace(/^#\/?/, '').toLowerCase().trim();
   const searchParams = new URLSearchParams(window.location.search);
   const routePath = rawHash || (searchParams.get('p') || '').replace(/^\//, '').toLowerCase().trim();
 
+  // Root / Kiosk
+  if (routePath === '' || routePath === 'kiosk' || routePath === 'screen1') {
+    return { screen: 1 };
+  }
   if (routePath === 'home' || routePath === 'patient' || routePath === 'screen2') {
     return { screen: 2 };
   }
@@ -53,11 +65,26 @@ const parseRouteFromUrl = (): { screen: number; modal?: 'hospital' | 'reception'
   if (routePath === 'minigame' || routePath === 'game' || routePath === 'screen5') {
     return { screen: 5 };
   }
-  if (routePath === 'hospital' || routePath === 'portal' || routePath === 'admin') {
+  if (
+    routePath === 'hospital' ||
+    routePath === 'portal' ||
+    routePath === 'admin' ||
+    routePath === 'management' ||
+    routePath === 'data' ||
+    routePath === 'users' ||
+    routePath === 'patients'
+  ) {
     return { screen: 1, modal: 'hospital' };
   }
-  if (routePath === 'reception') {
-    return { screen: 1, modal: 'reception' };
+  // ถ้าจะสมัครบัญชีให้ไปหน้าจัดการข้อมูล เเล้วเพิ่มเอา
+  if (
+    routePath === 'register' ||
+    routePath === 'signup' ||
+    routePath === 'enroll' ||
+    routePath === 'add-user' ||
+    routePath === 'reception'
+  ) {
+    return { screen: 1, modal: 'hospital', autoAddUser: true };
   }
   if (routePath === 'about') {
     return { screen: 1, modal: 'about' };
@@ -65,7 +92,9 @@ const parseRouteFromUrl = (): { screen: number; modal?: 'hospital' | 'reception'
   if (routePath === 'profile') {
     return { screen: 1, modal: 'profile' };
   }
-  return { screen: 1 };
+
+  // ถ้าหน้าไม่ตรงให้ขึ้นว่าไม่พบหน้าในระบบ
+  return { screen: 1, isNotFound: true, unmatchedPath: routePath };
 };
 
 export const App: React.FC = () => {
@@ -98,6 +127,11 @@ export const App: React.FC = () => {
     window.location.search.includes('dev=1') ||
     window.location.search.includes('test=1')
   );
+
+  // 404 Not Found & Navigation States
+  const [isNotFound, setIsNotFound] = useState<boolean>(Boolean(initialRoute.isNotFound));
+  const [unmatchedPath, setUnmatchedPath] = useState<string>(initialRoute.unmatchedPath || '');
+  const [autoOpenAddUserInHospital, setAutoOpenAddUserInHospital] = useState<boolean>(Boolean(initialRoute.autoAddUser));
 
   // Modal States
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
@@ -232,9 +266,10 @@ export const App: React.FC = () => {
   // Synchronize URL hash for browser history & reload resilience on GitHub Pages
   const syncHash = (screen: number, modal?: string | null) => {
     if (typeof window === 'undefined') return;
+    if (isNotFound) return; // Keep hash as-is so user sees their requested URL
     let target = '#/kiosk';
     if (modal === 'hospital') target = '#/hospital';
-    else if (modal === 'reception') target = '#/reception';
+    else if (modal === 'reception') target = '#/hospital';
     else if (modal === 'about') target = '#/about';
     else if (modal === 'profile') target = '#/profile';
     else if (screen === 2) target = '#/home';
@@ -251,6 +286,11 @@ export const App: React.FC = () => {
   useEffect(() => {
     const handleHashChange = () => {
       const route = parseRouteFromUrl();
+      setIsNotFound(Boolean(route.isNotFound));
+      setUnmatchedPath(route.unmatchedPath || '');
+      if (route.autoAddUser) {
+        setAutoOpenAddUserInHospital(true);
+      }
       setCurrentScreen(route.screen);
       setIsHospitalPortalOpen(route.modal === 'hospital');
       setIsReceptionOpen(route.modal === 'reception');
@@ -264,6 +304,7 @@ export const App: React.FC = () => {
   // Stop and completely unmount Kiosk auto-login and camera when navigating to ANY other screen or modal
   const isKioskActive =
     currentScreen === 1 &&
+    !isNotFound &&
     !isHospitalPortalOpen &&
     !isReceptionOpen &&
     !isAboutOpen &&
@@ -625,12 +666,15 @@ export const App: React.FC = () => {
               setIsAboutOpen(true);
             }}
             onOpenReception={() => {
+              // ถ้าจะสมัครบัญชีให้ไปหน้าจัดการข้อมูล เเล้วเพิ่มเอา
               try {
                 if (typeof window !== 'undefined' && window.speechSynthesis) {
                   window.speechSynthesis.cancel();
                 }
               } catch {}
-              setIsReceptionOpen(true);
+              setAutoOpenAddUserInHospital(true);
+              setIsHospitalPortalOpen(true);
+              syncHash(1, 'hospital');
             }}
           />
         )}
@@ -733,6 +777,66 @@ export const App: React.FC = () => {
           />
         )}
 
+        {/* ถ้าหน้าไม่ตรงให้ขึ้นว่าไม่พบหน้าในระบบ (404 Page Not Found) */}
+        {isNotFound && (
+          <div className="w-full max-w-lg mx-auto bg-white/95 backdrop-blur-xl border-2 border-rose-300 rounded-3xl p-6 sm:p-8 shadow-2xl text-center space-y-5 animate-fadeIn my-auto">
+            <div className="w-20 h-20 mx-auto rounded-full bg-rose-50 border-2 border-rose-400 text-rose-500 flex items-center justify-center text-3xl font-black shadow-inner">
+              ⚠️
+            </div>
+            <div className="space-y-1.5">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-100 text-rose-900 text-xs font-black">
+                <span>404 - ไม่พบหน้าในระบบ</span>
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-black text-[#0B2B2B]">
+                ไม่พบหน้าในระบบ
+              </h2>
+              <p className="text-xs sm:text-sm font-semibold text-slate-600">
+                ขออภัย ไม่พบหน้าที่คุณเรียกใช้งาน {unmatchedPath ? `(#/${unmatchedPath})` : ''} ในระบบ Dr.Tech.Care
+              </p>
+            </div>
+
+            <div className="bg-rose-50/70 border border-rose-200 rounded-2xl p-4 text-xs text-slate-700 space-y-1.5 text-left">
+              <div className="flex items-center gap-2 font-bold text-rose-900">
+                <span>💡 คำแนะนำระบบ:</span>
+              </div>
+              <p className="text-slate-600">
+                • ถ้าจะสมัครบัญชีให้ไป <strong className="text-emerald-700">หน้าจัดการข้อมูล</strong> เเล้วเพิ่มเอา
+              </p>
+              <p className="text-slate-600">
+                • หากต้องการใช้งานตู้ สามารถกดปุ่มด้านล่างเพื่อกลับสู่หน้าหลักตู้ Kiosk
+              </p>
+            </div>
+
+            <div className="space-y-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsNotFound(false);
+                  setAutoOpenAddUserInHospital(true);
+                  setIsHospitalPortalOpen(true);
+                  syncHash(1, 'hospital');
+                }}
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 hover:brightness-105 text-white font-black text-sm shadow-lg shadow-teal-700/20 active:scale-95 transition cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Users className="w-4 h-4" />
+                <span>🏢 ไปหน้าจัดการข้อมูล (เพิ่มบัญชี)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsNotFound(false);
+                  handleNavigate(1);
+                }}
+                className="w-full py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Home className="w-3.5 h-3.5" />
+                <span>กลับสู่หน้าหลัก (ตู้ Kiosk)</span>
+              </button>
+            </div>
+          </div>
+        )}
+
       </main>
 
       {/* 5. Modals System */}
@@ -787,10 +891,14 @@ export const App: React.FC = () => {
         <HospitalPortal
           onClose={() => {
             setIsHospitalPortalOpen(false);
+            setAutoOpenAddUserInHospital(false);
             syncHash(currentScreen, null);
           }}
+          initialTab="users"
+          autoOpenAddUser={autoOpenAddUserInHospital}
           onLaunchKioskExercise={(exerciseId) => {
             setIsHospitalPortalOpen(false);
+            setAutoOpenAddUserInHospital(false);
             handleNavigate(4);
           }}
           onSelectPatientForKiosk={(patient) => {

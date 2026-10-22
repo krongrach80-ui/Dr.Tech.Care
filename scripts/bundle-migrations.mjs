@@ -15,12 +15,9 @@ console.log('========================================================\n');
 
 // 1. Bundle all_migrations.sql
 // (schema, helpers, RLS, triggers, buckets, cron, production reference data)
-const migrationFiles = [
-  '20261019000001_core_schema_and_extensions.sql',
-  '20261019000002_security_helpers_and_rls.sql',
-  '20261019000003_storage_buckets.sql',
-  '20261019000004_autoreschedule_cron.sql',
-];
+const migrationFiles = fs.readdirSync(MIGRATIONS_DIR)
+  .filter((f) => f.endsWith('.sql'))
+  .sort();
 
 let migrationsSql = `-- ========================================================\n-- DR.TECH.CARE: ALL PRODUCTION & STAGING MIGRATIONS\n-- Includes: Core Schema, Extensions, Helpers, Strict RLS,\n--           Triggers, Storage Buckets, Autoreschedule Cron,\n--           and Reference Data (Settings & Clinical Mini-Games).\n-- Generated: ${new Date().toISOString()}\n-- ========================================================\n\n`;
 

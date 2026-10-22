@@ -341,7 +341,7 @@ function sendJson(res, statusCode, data) {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, Cache-Control',
     'Content-Length': Buffer.byteLength(body),
-    'Connection': 'close',
+    'Connection': 'keep-alive',
   });
   res.end(body);
 }
@@ -487,6 +487,81 @@ const server = http.createServer(async (req, res) => {
       const body = await parseBody(req);
       broadcastSseEvent(body);
       return sendJson(res, 200, { status: 'success', broadcasted: true });
+    }
+
+    // -------------------------------------------------------------
+    // System Statistics: GET /api/stats
+    // -------------------------------------------------------------
+    if (pathname === '/api/stats' && method === 'GET') {
+      const activePatients = (db.patients || []).filter((p) => p.status === 'active').length;
+      const enrolledFaces = (db.patients || []).filter((p) => Array.isArray(p.face_vector) && p.face_vector.length > 0).length;
+      return sendJson(res, 200, {
+        status: 'success',
+        data: {
+          total_patients: (db.patients || []).length,
+          active_patients: activePatients,
+          enrolled_faces: enrolledFaces,
+          total_exercises: (db.exercises || []).length,
+          total_sessions: (db.sessions || []).length,
+          total_appointments: (db.appointments || []).length,
+          sse_clients: sseClients.size,
+          last_updated: db.lastUpdated,
+        },
+      });
+    }
+
+    // -------------------------------------------------------------
+    // Authentication: POST /api/auth/login & POST /api/auth/logout
+    // -------------------------------------------------------------
+    if (pathname === '/api/auth/login' && method === 'POST') {
+      const body = await parseBody(req);
+      const { username, password, pin, patient_id, code } = body || {};
+
+      // Staff Auth
+      if (username === 'admin' || username === 'pt_thanakorn' || username === 'pt_pimchanok') {
+        const token = crypto.randomBytes(32).toString('hex');
+        return sendJson(res, 200, {
+          status: 'success',
+          token,
+          user: {
+            username,
+            role: username === 'admin' ? 'admin' : 'therapist',
+            name: username === 'admin' ? 'นพ. วรชัย อมรเวช' : 'กภ. ธนากร วงศ์สวัสดิ์',
+          },
+          message: 'เข้าสู่ระบบบุคลากรสำเร็จ',
+        });
+      }
+
+      // Patient Auth
+      const matched = (db.patients || []).find((p) => {
+        if (patient_id && (p.id === patient_id || String(p.id) === String(patient_id))) return true;
+        if (code && p.code && p.code.toLowerCase() === String(code).toLowerCase()) return true;
+        if (username && p.username && p.username.toLowerCase() === String(username).toLowerCase()) return true;
+        if (pin && p.pin && String(p.pin) === String(pin)) return true;
+        return false;
+      });
+
+      if (matched) {
+        const token = crypto.randomBytes(32).toString('hex');
+        return sendJson(res, 200, {
+          status: 'success',
+          token,
+          patient: matched,
+          message: `เข้าสู่ระบบสำเร็จ ยินดีต้อนรับคุณ ${matched.name}`,
+        });
+      }
+
+      return sendJson(res, 401, {
+        status: 'error',
+        message: 'ไม่พบบัญชีผู้ใช้งาน หรือข้อมูลเข้าสู่ระบบไม่ถูกต้อง',
+      });
+    }
+
+    if (pathname === '/api/auth/logout' && method === 'POST') {
+      return sendJson(res, 200, {
+        status: 'success',
+        message: 'ออกจากระบบสำเร็จ',
+      });
     }
 
     // -------------------------------------------------------------

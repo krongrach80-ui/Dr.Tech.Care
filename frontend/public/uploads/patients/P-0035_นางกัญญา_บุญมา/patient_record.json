@@ -1,0 +1,45 @@
+{
+  "id": 35,
+  "code": "P-0035",
+  "username": "kanya",
+  "name": "นางกัญญา บุญมา",
+  "first_name": "นางกัญญา",
+  "last_name": "บุญมา",
+  "age": 63,
+  "gender": "female",
+  "phone": "085-889-9001",
+  "status": "active",
+  "diagnosis": "กลุ่มอาการปวดกล้ามเนื้อคอบ่าเรื้อรัง (Myofascial Pain Syndrome)",
+  "chief_complaint": "กลุ่มอาการปวดกล้ามเนื้อคอบ่าเรื้อรัง (Myofascial Pain Syndrome)",
+  "medical_history": "",
+  "treatment_plan": "",
+  "assignedTherapistName": "กภ. พิมพ์ชนก สุขเกษม",
+  "assignedTherapistId": 2,
+  "assigned_exercises": [
+    {
+      "id": "shoulder_raise",
+      "name": "กางแขนด้านข้าง (Shoulder Abduction)",
+      "target_angle": 90,
+      "hold_seconds": 3,
+      "reps": 10
+    },
+    {
+      "id": "overhead_reach",
+      "name": "ยกแขนขึ้นเหนือศีรษะ (Overhead Reach)",
+      "target_angle": 120,
+      "hold_seconds": 3,
+      "reps": 10
+    },
+    {
+      "id": "elbow_flexion",
+      "name": "งอและเหยียดข้อศอก (Elbow Flexion)",
+      "target_angle": 140,
+      "hold_seconds": 2,
+      "reps": 12
+    }
+  ],
+  "face_vector": null,
+  "face_image_url": null,
+  "created_at": "2026-10-14",
+  "last_active": "พร้อมรับบริการ"
+}

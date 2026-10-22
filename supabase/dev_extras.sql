@@ -2,7 +2,7 @@
 -- DR.TECH.CARE: DEV & STAGING EXTRAS (STAGING ONLY)
 -- Includes: Staging Seed Fixtures & Real-Table RLS Test Suite
 -- Note: Test suite is wrapped in BEGIN ... ROLLBACK.
--- Generated: 2026-10-19T04:57:20.399Z
+-- Generated: 2026-10-21T16:09:17.953Z
 -- ========================================================
 
 
