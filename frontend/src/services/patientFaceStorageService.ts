@@ -15,7 +15,13 @@ import { FaceRegistryService } from './faceRegistryService';
 import { resolveDefaultApiUrl } from '../config/apiConfig';
 import { cameraOrientationService } from './cameraOrientationService';
 import { supabaseService } from './supabaseService';
-import { BIOMETRIC_CONFIG, BiometricMatchLevel, evaluateBiometricMatchLevel } from '../config/biometricConfig';
+import {
+  BIOMETRIC_CONFIG,
+  BiometricMatchLevel,
+  evaluateBiometricMatchLevel,
+  evaluateBiometricMatchWithMargin,
+  BiometricEvaluationDecision,
+} from '../config/biometricConfig';
 
 export interface PatientProfileData {
   patient_id: string; // e.g. P-6022, P-0012
@@ -160,6 +166,88 @@ export interface MatchEvaluation {
   comparisons: FaceMatchComparisonResult[];
   matchLevel?: BiometricMatchLevel;
   nearMatchCandidate?: PatientFaceBinding | null;
+  isAmbiguous?: boolean;
+  margin?: number;
+  secondCandidate?: PatientFaceBinding | null;
+  reasonTh?: string;
+}
+
+/**
+ * ตรวจสอบว่าเวกเตอร์เป็นค่าคงที่/เวกเตอร์จำลอง (Dummy/Uniform Vector) หรือไม่
+ * เช่น new Array(128).fill(0.08) หรือเวกเตอร์ที่เป็น 0 ทั้งหมด
+ * เวกเตอร์ประเภทนี้ต้องถูกปฏิเสธทันทีเพื่อป้องกันการจับคู่กับผู้ใช้ผิดคน
+ */
+export function isDummyOrUniformVector(vec: number[] | null | undefined): boolean {
+  if (!vec || !Array.isArray(vec) || vec.length !== 128) return true;
+  let min = vec[0];
+  let max = vec[0];
+  let sum = 0;
+  for (let i = 0; i < vec.length; i++) {
+    const val = vec[i];
+    if (isNaN(val) || !isFinite(val)) return true;
+    if (val < min) min = val;
+    if (val > max) max = val;
+    sum += val;
+  }
+  // ถ้าส่วนต่างระหว่างค่าสูงสุดและต่ำสุดน้อยกว่า 0.005 (เช่น เวกเตอร์ fill 0.08 ทั้งหมด)
+  if (max - min < 0.005) return true;
+
+  const mean = sum / vec.length;
+  let varianceSum = 0;
+  for (let i = 0; i < vec.length; i++) {
+    varianceSum += (vec[i] - mean) ** 2;
+  }
+  const variance = varianceSum / vec.length;
+  // เวกเตอร์ใบหน้าจริงของมนุษย์จาก ResNet-34 จะมี variance กระจายตัวสม่ำเสมอ (> 0.0001)
+  return variance < 0.0001;
+}
+
+/**
+ * แฮชรหัส PIN ด้วย SHA-256 ผสม Salt ตามมาตรฐานความปลอดภัย PDPA
+ * ห้ามจัดเก็บหรือส่ง PIN เป็นข้อความธรรมดา (Plaintext)
+ */
+export async function hashPin(pin: string, salt: string = BIOMETRIC_CONFIG.PIN_SALT): Promise<string> {
+  const cleanPin = pin.trim();
+  const salted = `${salt}_${cleanPin}_${salt}`;
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    try {
+      const msgBuffer = new TextEncoder().encode(salted);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+    } catch {
+      // ดำเนินการต่อด้วย Fallback ด้านล่าง
+    }
+  }
+  // Simple Fallback hash algorithm for environments without Web Crypto subtle
+  let h1 = 0xdeadbeef, h2 = 0x41c64e6d;
+  for (let i = 0; i < salted.length; i++) {
+    const ch = salted.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return `sha256_fallback_${(h2 >>> 0).toString(16).padStart(8, '0')}${(h1 >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+/**
+ * ตรวจสอบความถูกต้องของรหัส PIN เทียบกับค่าที่บันทึกไว้
+ */
+export async function verifyPin(inputPin: string, storedHashOrPin?: string | null): Promise<boolean> {
+  if (!inputPin || !storedHashOrPin) return false;
+  const cleanInput = inputPin.trim();
+  const cleanStored = String(storedHashOrPin).trim();
+  if (!cleanInput || !cleanStored) return false;
+
+  const computedHash = await hashPin(cleanInput);
+  if (computedHash === cleanStored) return true;
+
+  // รองรับกรณี legacy hash แบบเดิม (pin_hash_xxx หรือ sha256 ไม่ใส่ salt)
+  if (cleanStored === cleanInput) return true;
+  if (cleanStored.includes(cleanInput) && cleanStored.startsWith('pin_hash_')) return true;
+
+  return false;
 }
 
 /**
@@ -992,8 +1080,8 @@ class PatientFaceStorageService {
     candidates: PatientFaceBinding[],
     similarityThreshold: number = BIOMETRIC_CONFIG.THRESHOLD_PASS
   ): MatchEvaluation {
-    if (!liveVector || liveVector.length !== 128 || !candidates.length) {
-      console.warn('⚠️ [FACE MATCH]: Invalid live vector or empty candidate database');
+    // 1. Fail-closed: ตรวจสอบความถูกต้องของเวกเตอร์ใบหน้าสดและรายชื่อผู้ป่วยในระบบ
+    if (!liveVector || !Array.isArray(liveVector) || liveVector.length !== 128 || !candidates || !candidates.length) {
       return {
         matched: null,
         bestScore: 0,
@@ -1001,20 +1089,50 @@ class PatientFaceStorageService {
         bestDistance: 2.0,
         comparisons: [],
         matchLevel: 'no-match',
+        reasonTh: 'ไม่มีเวกเตอร์ใบหน้าสดที่ถูกต้อง หรือไม่มีข้อมูลผู้ป่วยที่ลงทะเบียนในระบบ (Default Deny / Fail-Closed)',
+      };
+    }
+
+    // ป้องกันการนำเวกเตอร์คงที่หรือ dummy มาเทียบ
+    if (isDummyOrUniformVector(liveVector)) {
+      return {
+        matched: null,
+        bestScore: 0,
+        bestScorePercent: 0,
+        bestDistance: 2.0,
+        comparisons: [],
+        matchLevel: 'no-match',
+        reasonTh: 'เวกเตอร์ใบหน้าสดไม่มีความแปรผันเชิงชีวมิติ (Uniform/Dummy live vector detected)',
       };
     }
 
     const normLive = this.normalizeVector(liveVector);
     const comparisons: FaceMatchComparisonResult[] = [];
-    let bestMatch: PatientFaceBinding | null = null;
-    let lowestDistance = 999.0;
-    let highestSimilarity = -1;
 
-    // Strictly evaluate ONLY genuine registered patient accounts (exclude any placeholder accounts like 'ผู้ป่วยใหม่')
+    // 2. กรองเฉพาะบัญชีจริงที่มีเวกเตอร์ชีวมิติจริง (ไม่เอาผู้ป่วยจำลอง และไม่เอาเวกเตอร์ dummy)
     const eligibleCandidates = candidates.filter(
-      (cand) => !isPlaceholderPatientName(cand.name, cand.status)
+      (cand) =>
+        cand &&
+        !isPlaceholderPatientName(cand.name, cand.status) &&
+        Array.isArray(cand.vector) &&
+        cand.vector.length === 128 &&
+        !isDummyOrUniformVector(cand.vector)
     );
 
+    // Fail-closed หากในฐานข้อมูลไม่มีเวกเตอร์จริงที่ใช้งานได้เลย
+    if (eligibleCandidates.length === 0) {
+      return {
+        matched: null,
+        bestScore: 0,
+        bestScorePercent: 0,
+        bestDistance: 2.0,
+        comparisons: [],
+        matchLevel: 'no-match',
+        reasonTh: 'ไม่พบบัญชีผู้ป่วยที่มีข้อมูลเวกเตอร์ชีวมิติที่ถูกต้องในระบบ (Fail-closed)',
+      };
+    }
+
+    // 3. เปรียบเทียบ 1:N กับผู้ป่วยทุกคนที่ลงทะเบียนไว้
     for (const cand of eligibleCandidates) {
       const normCand = this.normalizeVector(cand.vector);
       const dist = this.computeEuclideanDistance(normLive, normCand);
@@ -1030,92 +1148,79 @@ class PatientFaceStorageService {
         similarityPercent: `${simPercent}%`,
         has_image: Boolean(cand.face_image_url),
       });
-
-      if (cosSim > highestSimilarity) {
-        highestSimilarity = cosSim;
-        lowestDistance = dist;
-        bestMatch = cand;
-      }
     }
 
-    // Sort comparisons by highest similarity first
+    // จัดเรียงตามความคล้ายคลึงสูงสุดก่อน (อันดับ 1, อันดับ 2, ...)
     comparisons.sort((a, b) => b.similarity - a.similarity);
 
-    // [CONSOLE LOGS & DEBUGGING]: Log the list of compared patients and resulting similarity percentage scores
-    console.log('[BIOMETRIC LOGIN] Candidate Comparisons Table (3-Tier):');
-    console.table(
-      comparisons.map((c) => ({
-        HN: c.patient_code,
-        Name: c.name,
-        Distance: c.distance,
-        CosineSimilarity: c.similarity,
-        SimilarityPercent: c.similarityPercent,
-      }))
-    );
+    const top1Result = comparisons[0];
+    const top2Result = comparisons.length > 1 ? comparisons[1] : null;
 
+    const top1Cand = eligibleCandidates.find(
+      (c) => String(c.patientId) === String(top1Result.patient_id) || c.patientCode === top1Result.patient_code
+    ) || null;
+
+    const top2Cand = top2Result
+      ? eligibleCandidates.find(
+          (c) => String(c.patientId) === String(top2Result.patient_id) || c.patientCode === top2Result.patient_code
+        ) || null
+      : null;
+
+    const highestSimilarity = top1Result.similarity;
+    const secondSimilarity = top2Result ? top2Result.similarity : -1;
+    const lowestDistance = top1Result.distance;
     const highestPercent = Math.max(0, Math.min(100, Math.round(highestSimilarity * 100)));
-    const matchLevel = evaluateBiometricMatchLevel(highestSimilarity);
 
-    // กรณีที่ 1: ผ่านเกณฑ์ Auto-Login (>= 88%)
-    if (matchLevel === 'pass' && bestMatch) {
-      console.log('🎯 [FACE MATCH SUCCESS - AUTO LOGIN]:', {
-        matched_patient_id: bestMatch.patientId,
-        matched_hn: bestMatch.patientCode,
-        matched_name: bestMatch.name,
-        distance: Number(lowestDistance.toFixed(4)),
-        similarity: `${highestPercent}%`,
-        threshold: `${Math.round(similarityThreshold * 100)}%`,
-        tier: 'PASS (>= 88%)',
-      });
+    // 4. ประเมินผลแบบ 3-Tier พร้อมตรวจสอบ Margin ระหว่างอันดับ 1 และอันดับ 2
+    const decision = evaluateBiometricMatchWithMargin(highestSimilarity, secondSimilarity);
 
+    // กรณีที่ 1: ผ่านเกณฑ์ Auto-Login (>= 88% และมี Margin เหนืออันดับ 2 ชัดเจน >= 0.08)
+    if (decision.matchLevel === 'pass' && top1Cand) {
       return {
-        matched: bestMatch,
+        matched: top1Cand,
+        nearMatchCandidate: null,
+        secondCandidate: top2Cand,
         bestScore: highestSimilarity,
         bestScorePercent: highestPercent,
         bestDistance: Number(lowestDistance.toFixed(4)),
         comparisons,
         matchLevel: 'pass',
+        isAmbiguous: false,
+        margin: decision.margin,
+        reasonTh: decision.reasonTh,
       };
     }
 
-    // กรณีที่ 2: เกือบตรง (75% - 87%) ยืนยันตัวตนเพิ่มเติม
-    if (matchLevel === 'near-match' && bestMatch) {
-      console.log('🟡 [FACE MATCH NEAR-MATCH - REQUIRE SECONDARY AUTH]:', {
-        candidate_hn: bestMatch.patientCode,
-        candidate_name: bestMatch.name,
-        distance: Number(lowestDistance.toFixed(4)),
-        similarity: `${highestPercent}%`,
-        tier: 'NEAR-MATCH (75-87%)',
-      });
-
+    // กรณีที่ 2: เกือบตรง (75% - 87%) หรือคนหน้าคล้ายกัน (Margin < 0.08) -> ต้องยืนยัน PIN
+    if (decision.matchLevel === 'near-match' && top1Cand) {
       return {
         matched: null,
-        nearMatchCandidate: bestMatch,
+        nearMatchCandidate: top1Cand,
+        secondCandidate: top2Cand,
         bestScore: highestSimilarity,
         bestScorePercent: highestPercent,
         bestDistance: Number(lowestDistance.toFixed(4)),
         comparisons,
         matchLevel: 'near-match',
+        isAmbiguous: decision.isAmbiguous,
+        margin: decision.margin,
+        reasonTh: decision.reasonTh,
       };
     }
 
-    // กรณีที่ 3: ไม่ตรง (< 75%)
-    console.warn('❌ [FACE MATCH NO-MATCH (< 75%)]:', {
-      lowest_distance: Number(lowestDistance.toFixed(4)),
-      highest_similarity: `${highestPercent}%`,
-      required_threshold: `${Math.round(similarityThreshold * 100)}%`,
-      candidate_count: candidates.length,
-      tier: 'NO-MATCH (< 75%)',
-    });
-
+    // กรณีที่ 3: ไม่ตรงกับใครเลยในระบบ (< 75%)
     return {
       matched: null,
       nearMatchCandidate: null,
+      secondCandidate: null,
       bestScore: Math.max(0, highestSimilarity),
       bestScorePercent: highestPercent,
       bestDistance: Number(lowestDistance.toFixed(4)),
       comparisons,
       matchLevel: 'no-match',
+      isAmbiguous: false,
+      margin: decision.margin,
+      reasonTh: decision.reasonTh,
     };
   }
 
@@ -1425,6 +1530,10 @@ class PatientFaceStorageService {
    * Alias for backwards compatibility
    */
   public purgePatientFaceData(patientIdOrCode: string | number): boolean {
+    return this.deletePatientDirectoryAndData(patientIdOrCode);
+  }
+
+  public deletePatientRecord(patientIdOrCode: string | number): boolean {
     return this.deletePatientDirectoryAndData(patientIdOrCode);
   }
 

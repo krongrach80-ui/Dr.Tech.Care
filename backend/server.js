@@ -896,53 +896,97 @@ const server = http.createServer(async (req, res) => {
       const body = await parseBody(req);
       const embedding = body.embedding || body.face_vector;
 
-      if (!Array.isArray(embedding) || embedding.length === 0) {
-        return sendJson(res, 400, { status: 'error', message: 'Invalid or missing face embedding vector' });
+      if (!Array.isArray(embedding) || embedding.length !== 128) {
+        return sendJson(res, 400, { status: 'error', message: 'Invalid or missing 128-D face embedding vector' });
+      }
+
+      // ตรวจสอบ Dummy/Uniform Vector (เช่น fill 0.08 ทั้งหมด)
+      const isDummy = (() => {
+        let min = embedding[0], max = embedding[0], sum = 0;
+        for (let i = 0; i < embedding.length; i++) {
+          const v = embedding[i];
+          if (isNaN(v) || !isFinite(v)) return true;
+          if (v < min) min = v;
+          if (v > max) max = v;
+          sum += v;
+        }
+        if (max - min < 0.005) return true;
+        const mean = sum / embedding.length;
+        let vSum = 0;
+        for (let i = 0; i < embedding.length; i++) vSum += (embedding[i] - mean) ** 2;
+        return (vSum / embedding.length) < 0.0001;
+      })();
+
+      if (isDummy) {
+        return sendJson(res, 400, { status: 'error', message: 'Rejecting invalid dummy/uniform face embedding vector' });
       }
 
       // Check against all enrolled faces in DB
-      let bestMatch = null;
-      let highestSimilarity = -1;
-      let lowestDistance = 999;
+      const candidates = db.patients.filter((p) => Array.isArray(p.face_vector) && p.face_vector.length === 128);
+      if (candidates.length === 0) {
+        return sendJson(res, 200, {
+          status: 'failed',
+          match: false,
+          message: 'ฐานข้อมูลยังไม่มีข้อมูลใบหน้าที่ลงทะเบียน (Default Deny / Fail-Closed)',
+        });
+      }
 
-      const candidates = db.patients.filter((p) => Array.isArray(p.face_vector) && p.face_vector.length > 0);
-
+      const scored = [];
       for (const p of candidates) {
         const sim = cosineSimilarity(embedding, p.face_vector);
         const dist = euclideanDistance(embedding, p.face_vector);
-
-        if (sim > highestSimilarity) {
-          highestSimilarity = sim;
-          lowestDistance = dist;
-          bestMatch = p;
-        }
+        scored.push({ patient: p, similarity: sim, distance: dist });
       }
 
+      scored.sort((a, b) => b.similarity - a.similarity);
+      const top1 = scored[0];
+      const top2 = scored.length > 1 ? scored[1] : null;
+
       const SIMILARITY_THRESHOLD = 0.88;
-      const DISTANCE_THRESHOLD = 0.45;
+      const DISTANCE_THRESHOLD = 0.49;
+      const MARGIN_MIN = 0.08;
 
-      const isMatch = highestSimilarity >= SIMILARITY_THRESHOLD && lowestDistance <= DISTANCE_THRESHOLD;
+      const margin = top2 ? top1.similarity - top2.similarity : 1.0;
 
-      if (isMatch && bestMatch) {
-        const token = `face-token-${bestMatch.code}-${Date.now()}`;
+      // กรณีที่ 1: คะแนนสูง แต่สูสีกับอันดับ 2 (Lookalike / Ambiguous)
+      if (top1.similarity >= SIMILARITY_THRESHOLD && top2 && margin < MARGIN_MIN) {
+        return sendJson(res, 200, {
+          status: 'ambiguous',
+          match: false,
+          require_pin: true,
+          candidate_hn: top1.patient.code,
+          candidate_name: top1.patient.name,
+          similarity: top1.similarity,
+          similarity_percent: Math.round(top1.similarity * 100),
+          margin: Number(margin.toFixed(4)),
+          message: 'ตรวจพบใบหน้าที่ใกล้เคียงกันหลายรายในระบบ (หน้าคล้ายกัน) กรุณายืนยันตัวตนด้วยรหัส PIN',
+        });
+      }
+
+      const isMatch = top1.similarity >= SIMILARITY_THRESHOLD && top1.distance <= DISTANCE_THRESHOLD && margin >= MARGIN_MIN;
+
+      if (isMatch && top1.patient) {
+        const token = `face-token-${top1.patient.code}-${Date.now()}`;
         return sendJson(res, 200, {
           status: 'success',
           match: true,
-          similarity: highestSimilarity,
-          similarity_percent: Math.round(highestSimilarity * 100),
-          distance: lowestDistance,
+          similarity: top1.similarity,
+          similarity_percent: Math.round(top1.similarity * 100),
+          distance: top1.distance,
+          margin: Number(margin.toFixed(4)),
           token,
-          patient: bestMatch,
-          message: `ยืนยันตัวตนสำเร็จ: ยินดีต้อนรับคุณ ${bestMatch.name}`,
+          patient: top1.patient,
+          message: `ยืนยันตัวตนสำเร็จ: ยินดีต้อนรับคุณ ${top1.patient.name}`,
         });
       }
 
       return sendJson(res, 200, {
         status: 'failed',
         match: false,
-        similarity: highestSimilarity,
-        similarity_percent: Math.round(Math.max(0, highestSimilarity) * 100),
-        distance: lowestDistance,
+        similarity: top1.similarity,
+        similarity_percent: Math.round(Math.max(0, top1.similarity) * 100),
+        distance: top1.distance,
+        margin: Number(margin.toFixed(4)),
         message: 'ไม่พบใบหน้าที่ตรงกับฐานข้อมูลส่วนกลาง',
       });
     }

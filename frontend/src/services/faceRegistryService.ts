@@ -32,7 +32,7 @@ export interface MatchResult {
 }
 
 import { BIOMETRIC_CONFIG } from '../config/biometricConfig';
-import { isPlaceholderPatientName } from './patientFaceStorageService';
+import { isPlaceholderPatientName, isDummyOrUniformVector } from './patientFaceStorageService';
 
 const STORAGE_KEY = 'strongcare_enrolled_faces';
 // เกณฑ์ความปลอดภัยชีวมิติระดับมาตรฐานการแพทย์ (ResNet-34 3-Tier)
@@ -239,6 +239,7 @@ export class FaceRegistryService {
       let minDistance = 999;
 
       for (const storedVec of p.embeddings) {
+        if (!storedVec || isDummyOrUniformVector(storedVec)) continue;
         const sim = this.cosineSimilarity(queryEmbedding, storedVec);
         const dist = this.euclideanDistance(queryEmbedding, storedVec);
 
@@ -277,10 +278,11 @@ export class FaceRegistryService {
     const second = scoredProfiles.length > 1 ? scoredProfiles[1] : null;
     const margin = second ? Math.max(0, top.bestSim - second.bestSim) : top.bestSim;
 
-    // ตรวจสอบทั้ง 2 เกณฑ์เพื่อความแม่นยำ 100% ป้องกันคนอื่นสแกนติด
+    // ตรวจสอบทั้ง 3 เกณฑ์: Cosine >= 0.88, Distance <= 0.49 และมี Margin เหนืออันดับ 2 >= 0.08
     const isCosinePass = top.bestSim >= cosineThreshold;
     const isDistancePass = top.bestDist <= distanceThreshold;
-    const isMatch = isCosinePass && isDistancePass;
+    const isMarginPass = !second || margin >= (BIOMETRIC_CONFIG.MARGIN_MIN || 0.08);
+    const isMatch = isCosinePass && isDistancePass && isMarginPass;
 
     return {
       match: isMatch,

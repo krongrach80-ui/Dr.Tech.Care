@@ -12,6 +12,7 @@ import {
   FlipVertical,
   RotateCw,
   FlipHorizontal,
+  Trash2,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { livenessEngine } from '../../services/livenessEngine';
@@ -50,6 +51,8 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
+  const [pdpaConsent, setPdpaConsent] = useState<boolean>(false);
+  const [isDeletingFace, setIsDeletingFace] = useState<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -243,9 +246,70 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
     reader.readAsDataURL(file);
   };
 
+  // Delete face data per PDPA Sec 33 (Right to Erasure)
+  const handleDeleteFaceData = async () => {
+    if (!patient) return;
+    const confirmDelete = window.confirm(
+      `คุณต้องการลบข้อมูลใบหน้าชีวมิติของ ${patient.name} ตามสิทธิ PDPA ใช่หรือไม่?\n\n(หลังจากลบแล้ว คนไข้จะไม่สามารถสแกนใบหน้าที่ตู้ Kiosk ได้ จนกว่าจะลงทะเบียนใหม่)`
+    );
+    if (!confirmDelete) return;
+
+    setIsDeletingFace(true);
+    setErrorMessage(null);
+    const hn = patient.code || (patient as any).patient_code || String(patient.id);
+
+    try {
+      // 1. Supabase Cloud delete
+      if (supabaseService.isConfigured()) {
+        await supabase
+          .from('patients')
+          .update({
+            face_vector: null,
+            face_image_url: null,
+            photo: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('patient_code', hn);
+      }
+
+      // 2. Local Face Registry delete
+      faceRegistryService.removeProfile(hn);
+
+      // 3. Isolated Patient Face Storage delete
+      patientFaceStorageService.deletePatientRecord(hn);
+
+      // 4. Update Hospital Store
+      updateUser(patient.id, {
+        biometricVector: undefined,
+        face_vector: undefined,
+        face_image_url: undefined,
+      });
+
+      upsertPatientFromSupabase({
+        patient_code: hn,
+        name: patient.name,
+        face_vector: undefined,
+        photo: null,
+        face_image_url: undefined,
+      });
+
+      onSuccessToast?.(`✓ ลบข้อมูลชีวมิติของ ${patient.name} ออกจากระบบเรียบร้อยตามคำขอ PDPA`);
+      onClose();
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'ไม่สามารถลบข้อมูลชีวมิติได้');
+    } finally {
+      setIsDeletingFace(false);
+    }
+  };
+
   // Save Vector & Sync to Supabase + Realtime
   const handleSaveToDatabase = async () => {
     if (!patient || !capturedVector) return;
+
+    if (!pdpaConsent) {
+      setErrorMessage('กรุณาทำเครื่องหมายยินยอมประมวลผลข้อมูลชีวมิติ (PDPA Consent) ก่อนทำการบันทึก');
+      return;
+    }
 
     setIsSaving(true);
     setErrorMessage(null);
@@ -697,6 +761,21 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
             </div>
           )}
 
+          {/* PDPA Biometric Consent Agreement */}
+          <div className="p-3.5 bg-amber-50/90 border border-amber-300 rounded-2xl">
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={pdpaConsent}
+                onChange={(e) => setPdpaConsent(e.target.checked)}
+                className="mt-0.5 rounded border-amber-400 text-emerald-600 focus:ring-emerald-500 cursor-pointer w-4 h-4 shrink-0"
+              />
+              <span className="text-[11px] leading-relaxed text-amber-950 font-bold">
+                🛡️ <strong>ความยินยอมข้อมูลชีวมิติ (PDPA Consent):</strong> ข้าพเจ้ายินยอมให้ประมวลผลข้อมูลเวกเตอร์ใบหน้า 128 มิติ (ไม่เก็บภาพถ่ายดิบ) เพื่อใช้ในการยืนยันตัวตนทางการแพทย์ ณ ตู้ Kiosk ตาม พ.ร.บ. คุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562 และรับทราบว่าสามารถขอลบข้อมูลได้ตลอดเวลา (Right to Erasure)
+              </span>
+            </label>
+          </div>
+
           {/* Biometric Status Summary */}
           {capturedVector && (
             <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl space-y-2">
@@ -712,19 +791,34 @@ export const PatientFaceEnrollModal: React.FC<PatientFaceEnrollModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="py-2.5 px-4 rounded-xl text-slate-600 hover:bg-slate-200 text-xs font-bold transition cursor-pointer"
-          >
-            ยกเลิก
-          </button>
+        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="py-2.5 px-4 rounded-xl text-slate-600 hover:bg-slate-200 text-xs font-bold transition cursor-pointer"
+            >
+              ยกเลิก
+            </button>
+
+            {Boolean(patient.face_vector || patient.biometricVector) && (
+              <button
+                type="button"
+                onClick={handleDeleteFaceData}
+                disabled={isDeletingFace || isSaving}
+                className="py-2.5 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                title="ลบข้อมูลใบหน้าชีวมิติตามสิทธิ PDPA (Right to Erasure)"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeletingFace ? 'กำลังลบ...' : 'ลบข้อมูลชีวมิติ (PDPA)'}</span>
+              </button>
+            )}
+          </div>
 
           <button
             type="button"
             onClick={handleSaveToDatabase}
-            disabled={!capturedVector || isSaving || isSuccess}
+            disabled={!capturedVector || !pdpaConsent || isSaving || isSuccess}
             className="py-3 px-6 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:opacity-95 text-white font-extrabold text-sm shadow-md shadow-emerald-500/25 active:scale-95 transition flex items-center gap-2 disabled:opacity-40 cursor-pointer"
           >
             {isSuccess ? (

@@ -61,8 +61,17 @@ import { livenessEngine } from '../../services/livenessEngine';
 import { PDPAConsentModal } from '../Biometrics/PDPAConsentModal';
 import { LivenessScanHUD } from '../Biometrics/LivenessScanHUD';
 import { LivenessFrameData, LivenessChallenge } from '../../types/biometrics';
-import { patientSyncService } from '../../services/patientSyncService';
-import { patientFaceStorageService, PatientFaceBinding, isPlaceholderPatientName } from '../../services/patientFaceStorageService';
+import {
+  patientFaceStorageService,
+  PatientFaceBinding,
+  isPlaceholderPatientName,
+  isDummyOrUniformVector,
+  verifyPin,
+  hashPin,
+} from '../../services/patientFaceStorageService';
+import { verifyStaffPassword } from '../../services/authSecurityService';
+import { PatientFaceEnrollModal } from '../Hospital/PatientFaceEnrollModal';
+import { api } from '../../services/api';
 import { cameraOrientationService, CameraOrientation, CameraRotation } from '../../services/cameraOrientationService';
 import { supabase, PATIENTS_REALTIME_CHANNEL } from '../../lib/supabase';
 import { BIOMETRIC_CONFIG, BiometricMatchLevel, cosineToDistance, cosineToPercent } from '../../config/biometricConfig';
@@ -604,6 +613,73 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
   // Near-Match Modal State (75% - 87% ยืนยันตัวตนเพิ่มเติมด้วย PIN 6 หลัก)
   const [showNearMatchModal, setShowNearMatchModal] = useState<boolean>(false);
   const [nearMatchCandidate, setNearMatchCandidate] = useState<PatientFaceBinding | null>(null);
+  const [nearMatchIsAmbiguous, setNearMatchIsAmbiguous] = useState<boolean>(false);
+
+  // Security Hardening: Rate Limiting & Temporary Lockout (5 ผิด -> ล็อกชั่วคราว 60 วินาที)
+  const [failedAttemptsCount, setFailedAttemptsCount] = useState<number>(0);
+  const [lockoutUntil, setLockoutUntil] = useState<number | null>(null);
+  const [lockoutRemainingSec, setLockoutRemainingSec] = useState<number>(0);
+
+  // Staff Bypass Modal State (ป้องกันการข้ามระบบโดยไม่ยืนยันตัวตนเจ้าหน้าที่)
+  const [showStaffBypassModal, setShowStaffBypassModal] = useState<boolean>(false);
+  const [staffPinInput, setStaffPinInput] = useState<string>('');
+  const [staffPinError, setStaffPinError] = useState<string | null>(null);
+  const [isVerifyingStaff, setIsVerifyingStaff] = useState<boolean>(false);
+  const [showFaceEnrollModal, setShowFaceEnrollModal] = useState<boolean>(false);
+
+  // ตรวจสอบสถานะ Lockout จาก sessionStorage ตอนโหลดหน้า
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem('drtechcare_kiosk_lockout_until');
+      if (saved) {
+        const parsed = Number(saved);
+        if (parsed && parsed > Date.now()) {
+          setLockoutUntil(parsed);
+        }
+      }
+    } catch {}
+  }, []);
+
+  // ตัวนับเวลาถอยหลังระหว่างถูก Lockout
+  useEffect(() => {
+    if (!lockoutUntil) {
+      setLockoutRemainingSec(0);
+      return;
+    }
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((lockoutUntil - Date.now()) / 1000));
+      setLockoutRemainingSec(remaining);
+      if (remaining <= 0) {
+        setLockoutUntil(null);
+        setFailedAttemptsCount(0);
+        try {
+          sessionStorage.removeItem('drtechcare_kiosk_lockout_until');
+        } catch {}
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [lockoutUntil]);
+
+  // ฟังก์ชันเพิ่มจำนวนครั้งที่ลองผิดพลาด และสั่งล็อกเมื่อครบ 5 ครั้ง
+  const handleIncrementFailedAttempt = useCallback(() => {
+    setFailedAttemptsCount((prev) => {
+      const newCount = prev + 1;
+      if (newCount >= BIOMETRIC_CONFIG.MAX_FAILED_ATTEMPTS) {
+        const lockUntil = Date.now() + BIOMETRIC_CONFIG.LOCKOUT_DURATION_MS;
+        setLockoutUntil(lockUntil);
+        setShowNearMatchModal(false);
+        setShowNoAccountModal(false);
+        setShowPinModal(false);
+        setShowStaffBypassModal(false);
+        try {
+          sessionStorage.setItem('drtechcare_kiosk_lockout_until', String(lockUntil));
+        } catch {}
+      }
+      return newCount;
+    });
+  }, []);
 
   // Cooldown State & Tracking
   const [cooldownRemainingSec, setCooldownRemainingSec] = useState<number>(0);
@@ -1385,18 +1461,15 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
         vector128 = collectedVectors[0];
       }
 
-      if (!vector128) {
-        if (isDemoMode) {
-          vector128 = getRegisteredPatientVector('P-0012');
-        } else {
-          setIsScanning(false);
-          setBiometricState('idle');
-          setBiometricPhase(0);
-          setScanStep('front');
-          setScanStatusMessage('⚠️ ตรวจจับใบหน้าไม่ชัดเจน กรุณามองตรงเข้าหากล้องและเพิ่มแสงสว่าง');
-          audioFeedback.playHoldTick();
-          return;
-        }
+      // Default deny / Fail-closed: ห้ามใช้ Dummy/Fallback ข้ามการสแกนเด็ดขาด
+      if (!vector128 || isDummyOrUniformVector(vector128)) {
+        setIsScanning(false);
+        setBiometricState('idle');
+        setBiometricPhase(0);
+        setScanStep('front');
+        setScanStatusMessage('⚠️ ตรวจจับใบหน้าไม่ชัดเจน กรุณามองตรงเข้าหากล้องและเพิ่มแสงสว่าง');
+        audioFeedback.playHoldTick();
+        return;
       }
 
       // [AUTOMATIC IMAGE COMPRESSION]:
@@ -1431,7 +1504,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 }
               }
 
-              if (vec128) {
+              if (vec128 && !isDummyOrUniformVector(vec128)) {
                 let photo = p.photo || p.avatar_url || p.face_image_url;
                 if (!photo && typeof p.medical_history === 'string' && p.medical_history.includes('FACE_PHOTO:')) {
                   const pMatch = p.medical_history.match(/FACE_PHOTO:(data:image\/[^\s\n]+)/);
@@ -1464,7 +1537,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           if (isPlaceholderPatientName(r.patient_profile.full_name, r.patient_profile.status)) return;
           const code = r.patient_profile.patient_id.toUpperCase();
           const parsed = patientFaceStorageService.parseVector(r.biometric_data.face_vector);
-          if (parsed) {
+          if (parsed && !isDummyOrUniformVector(parsed)) {
             const savedImg =
               r.biometric_data.registered_face_url ||
               patientFaceStorageService.getProfileFaceImage(code);
@@ -1504,7 +1577,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               patientFaceStorageService.getPatientFaceImage(u.code) ||
               patientFaceStorageService.getPatientFaceImage(u.id);
 
-            if (parsed && u.code) {
+            if (parsed && !isDummyOrUniformVector(parsed) && u.code) {
               const code = u.code.toUpperCase();
               if (!candidateMap.has(code)) {
                 candidateMap.set(code, {
@@ -1535,7 +1608,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           if (!p.patientCode || isPlaceholderPatientName(p.name)) return;
           const key = p.patientCode.toUpperCase();
           const parsed = patientFaceStorageService.parseVector(p.embeddings?.[0]);
-          if (parsed && !candidateMap.has(key)) {
+          if (parsed && !isDummyOrUniformVector(parsed) && !candidateMap.has(key)) {
             const savedImg =
               p.face_image_url ||
               patientFaceStorageService.getPatientFaceImage(p.patientCode) ||
@@ -1774,8 +1847,9 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           }, 1200);
           biometricTimersRef.current.push(t4);
         } else if (evaluation.matchLevel === 'near-match') {
-          // [NEAR-MATCH: 75% - 87%]: ใบหน้าคล้ายคลึงแต่ยังไม่มั่นใจ ให้ยืนยันตัวตนเพิ่มเติม
-          console.info(`[KIOSK] Near-match detected (Similarity: ${evaluation.bestScorePercent}%). Secondary authentication required.`);
+          // [NEAR-MATCH: 75% - 87% หรือ Lookalike Margin Ambiguity]: ใบหน้าใกล้เคียงหรือสูสีกันเกินไป
+          setNearMatchIsAmbiguous(Boolean(evaluation.isAmbiguous));
+          console.info(`[KIOSK] Near-match / Lookalike ambiguity detected (Similarity: ${evaluation.bestScorePercent}%, Margin: ${evaluation.margin}). Secondary PIN auth required.`);
           consecutiveFailStartTimeRef.current = null;
           consecutiveFailFramesRef.current = 0;
           setIsScanning(false);
@@ -1788,12 +1862,18 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
           const candidate = evaluation.nearMatchCandidate || (evaluation.comparisons[0] as any) || null;
           setNearMatchCandidate(candidate);
           setShowNearMatchModal(true);
-          setScanStatusMessage('🟡 ตรวจพบข้อมูลใบหน้าใกล้เคียง กรุณายืนยันตัวตนเพิ่มเติม');
+          setScanStatusMessage(
+            evaluation.isAmbiguous
+              ? '🟡 ตรวจพบใบหน้าใกล้เคียงกันหลายราย (Margin < 8%) กรุณายืนยันตัวตนด้วยรหัส PIN'
+              : '🟡 ตรวจพบข้อมูลใบหน้าใกล้เคียง กรุณายืนยันตัวตนเพิ่มเติม'
+          );
 
           audioFeedback.playRepSuccess();
           try {
             voiceAssistant.speak(
-              'ระบบพบข้อมูลใบหน้าที่ใกล้เคียงค่ะ เพื่อความปลอดภัยของข้อมูลทางการแพทย์ กรุณายืนยันตัวตนเพิ่มเติมด้วยรหัส PIN ค่ะ',
+              evaluation.isAmbiguous
+                ? 'ระบบตรวจพบใบหน้าใกล้เคียงกันหลายรายค่ะ เพื่อความปลอดภัย กรุณายืนยันตัวตนด้วยรหัส PIN ค่ะ'
+                : 'ระบบพบข้อมูลใบหน้าที่ใกล้เคียงค่ะ เพื่อความปลอดภัยของข้อมูลทางการแพทย์ กรุณายืนยันตัวตนเพิ่มเติมด้วยรหัส PIN ค่ะ',
               { level: 'system' }
             );
           } catch {}
@@ -1818,6 +1898,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             failElapsedMs >= BIOMETRIC_CONFIG.NO_MATCH_CONSECUTIVE_MS ||
             consecutiveFailFramesRef.current >= BIOMETRIC_CONFIG.MIN_FAIL_FRAMES
           ) {
+            handleIncrementFailedAttempt();
             consecutiveFailStartTimeRef.current = null;
             consecutiveFailFramesRef.current = 0;
             setBiometricState('no-match');
@@ -2550,132 +2631,85 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
     setPinError(null);
   };
 
-  const handleSelectQuickPatient = (pat: Patient, pinCode: string) => {
+  const handleSelectQuickPatient = (pat: Patient) => {
+    // กำหนดคนไข้เป้าหมายที่จะยืนยัน PIN (ห้ามล็อกอินอัตโนมัติโดยเด็ดขาด)
     const targetCode = pat.patient_code || (pat as any).code || 'P-0001';
-    const safePat: Patient = {
-      ...pat,
-      id: pat.id,
-      patient_code: targetCode,
-      code: targetCode,
+    setNearMatchCandidate({
+      patientId: pat.id,
+      patientCode: targetCode,
       name: pat.name,
-      age: pat.age || 65,
-      gender: pat.gender || 'male',
-      notes: pat.notes || (pat as any).diagnosis || (pat as any).chiefComplaint || 'ฟื้นฟูกายภาพบำบัด',
-      photo: pat.photo || (pat as any).face_image_url,
-      face_image_url: (pat as any).face_image_url || pat.photo,
-    };
-    const exactPlan = treatmentPlans.find(
-      (p) =>
-        (p.patientCode && p.patientCode.toLowerCase() === targetCode.toLowerCase()) ||
-        (p.patientName && safePat.name.includes(p.patientName)) ||
-        p.patientId === safePat.id
-    );
-    setActivePatient(safePat);
-    selectPatient(safePat);
-    if (exactPlan) setActivePlan(exactPlan);
-    setPinInput(pinCode);
+      vector: [],
+      face_image_url: pat.photo,
+      age: pat.age,
+      gender: pat.gender,
+    });
+    setPinInput('');
     setPinError(null);
-    stopMediaStream();
-    if (onLoginComplete) {
-      onLoginComplete(safePat);
-    }
-    setTimeout(() => {
-      setShowPinModal(false);
-      audioFeedback.playRepSuccess();
-      changeStep(5);
-    }, 300);
+    audioFeedback.playHoldTick();
   };
 
-  const handleVerifyPinSubmit = () => {
+  const handleVerifyPinSubmit = async () => {
     const cleanPin = pinInput.trim();
     if (!cleanPin) {
-      setPinError('กรุณาป้อนรหัส PIN หรือรหัสคนไข้');
+      setPinError('กรุณาป้อนรหัส PIN 4-6 หลัก');
       return;
     }
 
-    const cleanUpper = cleanPin.toUpperCase();
-    const cleanLower = cleanPin.toLowerCase();
+    // ตรวจสอบความถูกต้องของรหัส PIN กับข้อมูลในฐานข้อมูล (ห้ามใช้ fallback สากล)
+    let authenticatedPatient: UserAccount | null = null;
 
-    // 1. Search in patient store and hospital users by HN, username, name, phone, or PIN/password
-    const patientUsers = users.filter((u) => u.role === 'patient');
-
-    // Direct match by HN / Code / Username / Phone / Name
-    let matchedPatient = patientUsers.find((u) => {
-      const codeUpper = (u.code || '').toUpperCase();
-      const codeNumber = (u.code || '').replace(/\D/g, '');
-      const pinNumber = cleanPin.replace(/\D/g, '');
-      const usernameClean = (u.username || '').toLowerCase();
-      const nameClean = (u.name || '').toLowerCase();
-      const phoneClean = (u.phone || '').replace(/\D/g, '');
-
-      return (
-        codeUpper === cleanUpper ||
-        (codeNumber && pinNumber && codeNumber === pinNumber) ||
-        usernameClean === cleanLower ||
-        usernameClean === `user_${cleanLower}` ||
-        `@${usernameClean}` === cleanLower ||
-        nameClean === cleanLower ||
-        nameClean.includes(cleanLower) ||
-        (phoneClean && pinNumber && phoneClean.includes(pinNumber))
+    // 1. ถ้ามีบัญชีเป้าหมายที่เลือกไว้ (เช่น จาก Near-match หรือการเลือก HN)
+    if (nearMatchCandidate) {
+      const targetUser = users.find(
+        (u) =>
+          u.role === 'patient' &&
+          ((u.code && u.code.toLowerCase() === nearMatchCandidate.patientCode.toLowerCase()) ||
+            String(u.id) === String(nearMatchCandidate.patientId))
       );
-    });
-
-    // Match by PIN or Password if numeric PIN entered
-    if (!matchedPatient) {
-      matchedPatient = patientUsers.find((u) => {
-        const uPin = (u as any).pin || (u as any).password;
-        return uPin === cleanPin;
-      });
-    }
-
-    // Match from patientStore patients list
-    if (!matchedPatient) {
-      const fromPatStore = patients.find((p) => {
-        const pCodeUpper = (p.patient_code || (p as any).code || '').toUpperCase();
-        const pNameLower = (p.name || '').toLowerCase();
-        return pCodeUpper === cleanUpper || pNameLower === cleanLower;
-      });
-      if (fromPatStore) {
-        matchedPatient = {
-          id: fromPatStore.id,
-          code: fromPatStore.patient_code,
-          name: fromPatStore.name,
-          age: fromPatStore.age,
-          gender: fromPatStore.gender as any,
-          phone: fromPatStore.phone,
-          diagnosis: fromPatStore.notes,
-          role: 'patient',
-          status: 'active',
-        } as any;
+      if (targetUser) {
+        const secret = (targetUser as any).pin_hash || targetUser.password || (targetUser as any).pin;
+        if (secret && (await verifyPin(cleanPin, secret))) {
+          authenticatedPatient = targetUser;
+        }
       }
     }
 
-    // Fallback: If cleanPin is '1234' or '123456' and no specific patient matched, pick the active patient or first patient in store!
-    if (!matchedPatient && (cleanPin === '1234' || cleanPin === '123456')) {
-      if (activePatient && activePatient.name && activePatient.name !== 'ผู้รับบริการ' && activePatient.patient_code) {
-        matchedPatient = activePatient as any;
-      } else if (patientUsers.length > 0) {
-        matchedPatient = patientUsers[0];
+    // 2. หากยังไม่พบ ให้ตรวจสอบว่า PIN ตรงกับผู้ป่วยคนใดในระบบที่มีรหัสลับตรงกัน
+    if (!authenticatedPatient) {
+      const patientUsers = users.filter((u) => u.role === 'patient');
+      for (const pat of patientUsers) {
+        const secret = (pat as any).pin_hash || pat.password || (pat as any).pin;
+        if (secret && (await verifyPin(cleanPin, secret))) {
+          authenticatedPatient = pat;
+          break;
+        }
       }
     }
 
-    if (matchedPatient) {
-      const targetCode = matchedPatient.code || (matchedPatient as any).patient_code || 'P-0001';
+    // 3. ยืนยันตัวตนสำเร็จ
+    if (authenticatedPatient) {
+      setFailedAttemptsCount(0);
+      setLockoutUntil(null);
+      try {
+        sessionStorage.removeItem('drtechcare_kiosk_lockout_until');
+      } catch {}
+
+      const targetHN = authenticatedPatient.code || (authenticatedPatient as any).patient_code || 'P-0001';
       const patObj: Patient = {
-        id: typeof matchedPatient.id === 'number' ? matchedPatient.id : (Number(matchedPatient.id) || 1),
-        patient_code: targetCode,
-        code: targetCode,
-        name: matchedPatient.name,
-        age: Number(matchedPatient.age) || 65,
-        gender: (matchedPatient.gender as any) || 'male',
-        notes: (matchedPatient as any).diagnosis || (matchedPatient as any).chiefComplaint || (matchedPatient as any).notes || 'ฟื้นฟูกายภาพบำบัด',
-        photo: (matchedPatient as any).face_image_url || (matchedPatient as any).photo,
-        face_image_url: (matchedPatient as any).face_image_url || (matchedPatient as any).photo,
+        id: typeof authenticatedPatient.id === 'number' ? authenticatedPatient.id : (Number(authenticatedPatient.id) || 1),
+        patient_code: targetHN,
+        code: targetHN,
+        name: authenticatedPatient.name,
+        age: Number(authenticatedPatient.age) || 65,
+        gender: (authenticatedPatient.gender as any) || 'male',
+        notes: (authenticatedPatient as any).diagnosis || (authenticatedPatient as any).chiefComplaint || (authenticatedPatient as any).notes || 'ฟื้นฟูกายภาพบำบัด',
+        photo: (authenticatedPatient as any).face_image_url || (authenticatedPatient as any).photo,
+        face_image_url: (authenticatedPatient as any).face_image_url || (authenticatedPatient as any).photo,
       };
 
       const exactPlan = treatmentPlans.find(
         (p) =>
-          (p.patientCode && p.patientCode.toLowerCase() === targetCode.toLowerCase()) ||
+          (p.patientCode && p.patientCode.toLowerCase() === targetHN.toLowerCase()) ||
           (p.patientName && patObj.name.includes(p.patientName)) ||
           p.patientId === patObj.id
       );
@@ -2688,6 +2722,7 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       }
 
       setShowPinModal(false);
+      setNearMatchCandidate(null);
       stopMediaStream();
       audioFeedback.playRepSuccess();
       try {
@@ -2697,8 +2732,80 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
       return;
     }
 
-    setPinError('❌ ไม่พบบัญชีคนไข้ที่ตรงกับรหัสนี้ (กรุณากรอกรหัส HN เช่น P-0012 หรือแตะเลือกจากรายชื่อด้านบน)');
+    // 4. รหัสผิดพลาด: บันทึก failed attempt และคำนวณการล็อกชั่วคราว
+    handleIncrementFailedAttempt();
+    const remainingTries = Math.max(0, BIOMETRIC_CONFIG.MAX_FAILED_ATTEMPTS - (failedAttemptsCount + 1));
+    setPinError(
+      remainingTries > 0
+        ? `❌ รหัส PIN ไม่ถูกต้อง (เหลือโอกาสลองอีก ${remainingTries} ครั้ง ก่อนระบบล็อกชั่วคราว)`
+        : '⚠️ ป้อนรหัสผิดเกิน 5 ครั้ง ระบบถูกระงับชั่วคราว 60 วินาที'
+    );
     audioFeedback.playHoldTick();
+  };
+
+  // ยืนยันสิทธิ์เจ้าหน้าที่ (Staff Bypass Authentication & Clinical Audit Logging)
+  const handleVerifyStaffBypass = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!staffPinInput.trim()) {
+      setStaffPinError('กรุณากรอกรหัสผ่านหรือ PIN เจ้าหน้าที่');
+      return;
+    }
+    setIsVerifyingStaff(true);
+    setStaffPinError(null);
+
+    try {
+      const cleanInput = staffPinInput.trim();
+      let isAuthorized = false;
+
+      // 1. ตรวจสอบกับ DEFAULT_STAFF_PIN ใน config ('9999')
+      if (cleanInput === BIOMETRIC_CONFIG.DEFAULT_STAFF_PIN) {
+        isAuthorized = true;
+      }
+
+      // 2. ตรวจสอบกับบัญชีบุคลากรใน Hospital Store (Admin หรือ Therapist)
+      if (!isAuthorized) {
+        const staffUsers = users.filter((u) => u.role === 'admin' || u.role === 'therapist');
+        for (const staff of staffUsers) {
+          if (staff.password) {
+            const matches = await verifyStaffPassword(cleanInput, staff.password);
+            if (matches) {
+              isAuthorized = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (isAuthorized) {
+        // บันทึก Audit Log ทางคลินิก (PDPA Audit Trail)
+        try {
+          useHospitalStore.getState().addActivityLog(
+            'KIOSK_STAFF_BYPASS_AUTHORIZED',
+            'SYSTEM',
+            `เจ้าหน้าที่ยืนยันตัวตน Staff Bypass สำเร็จ (สถานี: ${kioskStationName})`
+          );
+        } catch {}
+
+        setFailedAttemptsCount(0);
+        setShowStaffBypassModal(false);
+        setStaffPinInput('');
+        onOpenHospitalPortal();
+      } else {
+        handleIncrementFailedAttempt();
+        setStaffPinError('รหัสผ่านหรือ PIN เจ้าหน้าที่ไม่ถูกต้อง');
+        try {
+          useHospitalStore.getState().addActivityLog(
+            'KIOSK_STAFF_BYPASS_FAILED',
+            'SYSTEM',
+            `ความพยายาม Staff Bypass ล้มเหลว (รหัสไม่ถูกต้อง) ที่สถานี ${kioskStationName}`
+          );
+        } catch {}
+      }
+    } catch (err: any) {
+      setStaffPinError('เกิดข้อผิดพลาดในการตรวจสอบสิทธิ์เจ้าหน้าที่');
+    } finally {
+      setIsVerifyingStaff(false);
+    }
   };
 
   return (
@@ -3221,6 +3328,34 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                   </p>
                 </div>
               </div>
+
+              {/* Legacy Patient Biometric Enrollment Banner (Step 4 Requirement) */}
+              {!faceRegistryService.getAllProfiles().some(
+                (p) =>
+                  (p.patientCode && p.patientCode.toLowerCase() === (activePatient.patient_code || activePatient.code || '').toLowerCase()) ||
+                  String(p.patientId) === String(activePatient.id)
+              ) && (
+                <div className="w-full mt-3 p-3.5 rounded-2xl bg-amber-50 border-2 border-amber-300 text-left space-y-1.5 animate-fadeIn shadow-xs">
+                  <div className="flex items-center gap-1.5 text-amber-900 font-extrabold text-xs">
+                    <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>แจ้งเตือน: บัญชียังไม่ได้ลงทะเบียนใบหน้า</span>
+                  </div>
+                  <p className="text-[11px] text-amber-950 leading-relaxed font-semibold">
+                    เพื่อความปลอดภัยระดับสูงตามมาตรฐาน PDPA กรุณาลงทะเบียนใบหน้า (Enrollment) เพื่อใช้งานสแกนใบหน้าในครั้งถัดไป
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      step5Countdown.togglePause();
+                      setShowFaceEnrollModal(true);
+                    }}
+                    className="w-full mt-1 py-2 px-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>📸 ลงทะเบียนใบหน้าตอนนี้ (Face Enrollment)</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* แถบนับถอยหลังซิงโครไนซ์ผ่าน useKioskCountdown */}
@@ -3674,43 +3809,15 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               </p>
             )}
 
-            {/* Quick Patient Selector from actual registered patients in system */}
-            {users.filter((u) => u.role === 'patient').length > 0 && (
-              <div className="w-full mb-3">
-                <span className="text-[11px] font-bold text-slate-500 block mb-1">
-                  แตะชื่อคนไข้เพื่อเข้าสู่ระบบทันที:
+            {/* แสดงชื่อบัญชีคนไข้ที่กำลังยืนยัน PIN (ถ้ามี) */}
+            {nearMatchCandidate && (
+              <div className="w-full bg-emerald-50 border border-emerald-200 rounded-2xl p-3 mb-3 text-center">
+                <span className="text-xs font-black text-emerald-900 block">
+                  ยืนยันตัวตนสำหรับ: คุณ {nearMatchCandidate.name}
                 </span>
-                <div className="grid grid-cols-2 gap-1.5 text-[11px] max-h-28 overflow-y-auto p-0.5">
-                  {users
-                    .filter((u) => u.role === 'patient')
-                    .map((pat) => (
-                      <button
-                        key={pat.id}
-                        type="button"
-                        onClick={() =>
-                          handleSelectQuickPatient(
-                            {
-                              id: pat.id,
-                              patient_code: pat.code,
-                              code: pat.code,
-                              name: pat.name,
-                              age: pat.age || 65,
-                              gender: (pat.gender as any) || 'male',
-                              notes: pat.diagnosis || pat.chiefComplaint || 'ฟื้นฟูกายภาพบำบัด',
-                              photo: pat.face_image_url,
-                              face_image_url: pat.face_image_url,
-                            },
-                            pat.code
-                          )
-                        }
-                        className="p-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold border border-emerald-200 text-left truncate cursor-pointer transition flex items-center gap-1.5"
-                        title={`เข้าสู่ระบบ ${pat.name} (${pat.code})`}
-                      >
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                        <span className="truncate">{pat.name} ({pat.code})</span>
-                      </button>
-                    ))}
-                </div>
+                <span className="text-[11px] text-emerald-700 font-bold block mt-0.5">
+                  รหัสประจำตัว HN: {nearMatchCandidate.patientCode}
+                </span>
               </div>
             )}
 
@@ -3865,7 +3972,9 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 type="button"
                 onClick={() => {
                   setShowNearMatchModal(false);
-                  onOpenHospitalPortal();
+                  setShowStaffBypassModal(true);
+                  setStaffPinInput('');
+                  setStaffPinError(null);
                 }}
                 className="w-full py-2.5 px-3 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-extrabold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
               >
@@ -3986,64 +4095,15 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
                 type="button"
                 onClick={() => {
                   setShowNoAccountModal(false);
-                  onOpenHospitalPortal();
+                  setShowStaffBypassModal(true);
+                  setStaffPinInput('');
+                  setStaffPinError(null);
                 }}
                 className="w-full py-2.5 px-3 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-extrabold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
               >
                 <Shield className="w-4 h-4 text-amber-700" />
                 <span>🛡️ เจ้าหน้าที่เข้าสู่ระบบบุคลากร / รพ. (Staff Bypass)</span>
               </button>
-
-              {/* Registered patients quick entry list */}
-              {users.filter((u) => u.role === 'patient').length > 0 && (
-                <div className="w-full mt-2 pt-2 border-t border-slate-200 text-left">
-                  <span className="text-[11px] font-bold text-slate-700 block mb-1">
-                    👤 หรือเลือกล็อกอินด้วยบัญชีคนไข้ในระบบ:
-                  </span>
-                  <div className="flex flex-col gap-1.5 max-h-36 overflow-y-auto">
-                    {users
-                      .filter((u) => u.role === 'patient')
-                      .map((pat) => (
-                        <button
-                          key={pat.id}
-                          type="button"
-                          onClick={() => {
-                            setShowNoAccountModal(false);
-                            const targetHN = pat.code || (pat as any).patient_code || 'P-0001';
-                            const targetPatient: Patient = {
-                              id: typeof pat.id === 'number' ? pat.id : (Number(pat.id) || 1),
-                              patient_code: targetHN,
-                              code: targetHN,
-                              name: pat.name,
-                              age: pat.age || 65,
-                              gender: (pat.gender as any) || 'male',
-                              notes: pat.diagnosis || pat.chiefComplaint || 'ฟื้นฟูกายภาพบำบัด',
-                              face_image_url: pat.face_image_url,
-                              photo: pat.face_image_url,
-                            };
-                            const exactPlan = treatmentPlans.find(
-                              (p) =>
-                                (p.patientCode && p.patientCode.toLowerCase() === targetHN.toLowerCase()) ||
-                                (p.patientName && targetPatient.name.includes(p.patientName)) ||
-                                p.patientId === targetPatient.id
-                            );
-                            setActivePatient(targetPatient);
-                            selectPatient(targetPatient);
-                            if (exactPlan) setActivePlan(exactPlan);
-                            if (onLoginComplete) onLoginComplete(targetPatient);
-                            changeStep(5);
-                          }}
-                          className="w-full py-2 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-900 font-bold text-xs transition flex items-center justify-between cursor-pointer"
-                        >
-                          <span className="truncate">{pat.name} (HN: {pat.code})</span>
-                          <span className="text-[10px] bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded-full font-extrabold shrink-0">
-                            เข้าสู่ระบบ ➔
-                          </span>
-                        </button>
-                      ))}
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -4229,7 +4289,9 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
               }
             } catch {}
             stopMediaStream();
-            onOpenHospitalPortal();
+            setShowStaffBypassModal(true);
+            setStaffPinInput('');
+            setStaffPinError(null);
           }}
           className="bg-white/95 hover:bg-emerald-50 border-2 border-[#1E8A4C] text-[#1E8A4C] font-bold text-xs px-3.5 py-2 rounded-full shadow-md flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
           id="btnKioskHospitalPortal"
@@ -4524,6 +4586,188 @@ export const KioskSixStepWorkflow: React.FC<KioskSixStepWorkflowProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* โมดอล: ยืนยันตัวตนเจ้าหน้าที่สำหรับ Staff Bypass (ป้องกันการข้ามการตรวจสิทธิ์) */}
+      {showStaffBypassModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[9999] flex items-center justify-center p-3 sm:p-4 animate-fadeIn">
+          <div className="w-full max-w-md bg-white rounded-[32px] p-6 shadow-2xl border-2 border-amber-400 relative flex flex-col items-center text-center animate-scaleUp">
+            <button
+              onClick={() => {
+                setShowStaffBypassModal(false);
+                setStaffPinInput('');
+                setStaffPinError(null);
+              }}
+              className="absolute top-4 right-4 p-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="w-16 h-16 rounded-full bg-amber-100 border-4 border-amber-300 text-amber-700 flex items-center justify-center mb-3 shadow-inner">
+              <Shield className="w-8 h-8 stroke-[2.5]" />
+            </div>
+
+            <h3 className="text-xl font-black text-slate-900 tracking-tight">
+              ยืนยันตัวตนเจ้าหน้าที่ (Staff Bypass)
+            </h3>
+            <p className="text-xs text-slate-600 font-bold mt-1 max-w-xs">
+              กรุณากรอกรหัสผ่านเจ้าหน้าที่หรือ PIN บุคลากร เพื่อเข้าสู่ระบบจัดการและบันทึกประวัติความปลอดภัย (Audit Log)
+            </p>
+
+            <form onSubmit={handleVerifyStaffBypass} className="w-full mt-4 space-y-3 text-left">
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1">
+                  รหัสผ่านเจ้าหน้าที่ / PIN เจ้าหน้าที่
+                </label>
+                <input
+                  type="password"
+                  value={staffPinInput}
+                  onChange={(e) => {
+                    setStaffPinInput(e.target.value);
+                    setStaffPinError(null);
+                  }}
+                  autoFocus
+                  placeholder="กรอก PIN หรือรหัสผ่านเจ้าหน้าที่..."
+                  className="w-full px-4 py-3 rounded-2xl border-2 border-slate-300 text-base font-bold tracking-widest text-center focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-200 transition"
+                />
+              </div>
+
+              {staffPinError && (
+                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{staffPinError}</span>
+                </div>
+              )}
+
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 space-y-1">
+                <div className="flex items-center gap-1 font-bold text-slate-700">
+                  <Lock className="w-3.5 h-3.5 text-slate-500" />
+                  <span>มาตรการความปลอดภัยและ PDPA:</span>
+                </div>
+                <p>
+                  • ทุกการเข้าสู่ระบบแบบข้ามขั้นตอนจะถูกบันทึกใน Audit Trail พร้อมเวลาและสถานี
+                </p>
+                <p>
+                  • รหัสเริ่มต้นระบบบุคลากร: <code className="bg-amber-100 text-amber-900 px-1 py-0.5 rounded font-black">{BIOMETRIC_CONFIG.DEFAULT_STAFF_PIN}</code> หรือรหัสผ่านของนักกายภาพบำบัด
+                </p>
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowStaffBypassModal(false);
+                    setStaffPinInput('');
+                    setStaffPinError(null);
+                  }}
+                  className="flex-1 py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={isVerifyingStaff || !staffPinInput.trim()}
+                  className="flex-1 py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300 text-white font-black text-xs shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  {isVerifyingStaff ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>กำลังตรวจสอบ...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>ยืนยันสิทธิ์เจ้าหน้าที่</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* โอเวอร์เลย์ล็อกชั่วคราว: เมื่อพยายามป้อนรหัสหรือสแกนผิดเกิน 5 ครั้ง */}
+      {lockoutRemainingSec > 0 && (
+        <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-lg z-[10000] flex items-center justify-center p-4 animate-fadeIn">
+          <div className="w-full max-w-md bg-white rounded-[36px] p-8 shadow-2xl border-4 border-rose-500 flex flex-col items-center text-center animate-scaleUp">
+            <div className="w-24 h-24 rounded-full bg-rose-100 border-4 border-rose-400 text-rose-600 flex items-center justify-center mb-4 shadow-inner animate-pulse">
+              <Lock className="w-12 h-12 stroke-[2.5]" />
+            </div>
+
+            <div className="inline-flex items-center gap-1.5 bg-rose-100 text-rose-800 px-3 py-1 rounded-full text-xs font-black mb-2">
+              <ShieldAlert className="w-4 h-4 text-rose-600" />
+              <span>ความปลอดภัยสูงสุด (Rate Limit Exceeded)</span>
+            </div>
+
+            <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+              ตู้ Kiosk ถูกระงับชั่วคราว
+            </h2>
+
+            <p className="text-xs sm:text-sm font-bold text-slate-600 mt-2 leading-relaxed">
+              ตรวจพบการพยายามยืนยันตัวตนไม่สำเร็จเกิน {BIOMETRIC_CONFIG.MAX_FAILED_ATTEMPTS} ครั้งติดต่อกัน ระบบจึงระงับการเข้าถึงชั่วคราวเพื่อปกป้องข้อมูลส่วนบุคคลทางการแพทย์ (PDPA)
+            </p>
+
+            <div className="my-6 p-4 rounded-2xl bg-rose-50 border-2 border-rose-200 w-full flex flex-col items-center justify-center">
+              <span className="text-xs font-extrabold text-rose-700">สามารถลองใหม่อีกครั้งได้ใน</span>
+              <span className="text-4xl font-black text-rose-600 tracking-wider my-1">
+                {lockoutRemainingSec}
+              </span>
+              <span className="text-[11px] font-bold text-slate-500">วินาที</span>
+            </div>
+
+            <div className="w-full space-y-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowStaffBypassModal(true);
+                  setStaffPinInput('');
+                  setStaffPinError(null);
+                }}
+                className="w-full py-3 px-4 rounded-2xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-extrabold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Shield className="w-4 h-4 text-amber-700" />
+                <span>สำหรับเจ้าหน้าที่: ปลดล็อกด้วย Staff PIN</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* โมดอลลงทะเบียนใบหน้าสำหรับผู้ป่วยเดิมที่ยังไม่มี Face Vector (Step 4 Migration) */}
+      {showFaceEnrollModal && activePatient && (
+        <PatientFaceEnrollModal
+          isOpen={showFaceEnrollModal}
+          onClose={() => setShowFaceEnrollModal(false)}
+          patient={
+            users.find(
+              (u) =>
+                u.role === 'patient' &&
+                ((u.code && u.code.toLowerCase() === (activePatient.patient_code || activePatient.code || '').toLowerCase()) ||
+                  String(u.id) === String(activePatient.id))
+            ) || ({
+              id: typeof activePatient.id === 'number' ? activePatient.id : 1,
+              username: (activePatient.patient_code || 'patient').toLowerCase(),
+              name: activePatient.name,
+              code: activePatient.patient_code || activePatient.code || 'P-0001',
+              role: 'patient',
+              status: 'active',
+              age: activePatient.age,
+              gender: activePatient.gender,
+              created_at: new Date().toISOString(),
+            } as UserAccount)
+          }
+          onSuccess={(updatedData) => {
+            setShowFaceEnrollModal(false);
+            audioFeedback.playRepSuccess();
+            try {
+              voiceAssistant.speak('ลงทะเบียนใบหน้าเรียบร้อยแล้วค่ะ', { level: 'system' });
+            } catch {}
+          }}
+          onSuccessToast={(msg) => {
+            console.log(msg);
+          }}
+        />
       )}
 
       {/* PDPA Biometric Consent Modal */}

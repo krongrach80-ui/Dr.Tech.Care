@@ -85,7 +85,48 @@ export const BIOMETRIC_CONFIG = {
   MAX_ATTEMPTS: 3,
 
   // =========================================================================
-  // 4. การแสดงผล UX & โหมดดีบัก (Privacy & Transparency)
+  // 4. ความปลอดภัยทางการแพทย์ขั้นสูง & ป้องกันคนหน้าคล้าย (Margin & Anti-Lookalike)
+  // =========================================================================
+
+  /**
+   * ผลต่างความคล้ายคลึงขั้นต่ำระหว่างอันดับ 1 และอันดับ 2 (Margin Delta)
+   * หาก (Top1 - Top2) < 0.08 (8%) ระบบจะถือว่าเป็น "ไม่แน่ใจ / หน้าคล้ายกัน" (Ambiguous)
+   * และจะบังคับให้ยืนยันตัวตนด้วยรหัส PIN 6 หลักของบัญชีนั้นทันที ไม่อนุญาตให้ Auto-Login
+   */
+  MARGIN_MIN: 0.08,
+
+  /**
+   * จำนวนครั้งที่อนุญาตให้พยายามยืนยันตัวตนผิดพลาดสูงสุด (สแกนหน้าไม่ผ่าน หรือ ใส่ PIN ผิด)
+   * ต่อ 1 เซสชัน/เครื่อง ก่อนสั่งล็อกระบบชั่วคราว (Temporary Lockout)
+   */
+  MAX_FAILED_ATTEMPTS: 5,
+
+  /**
+   * ระยะเวลาล็อกระบบชั่วคราวเมื่อพยายามผิดเกินกำหนด (มิลลิวินาที)
+   * 60,000 ms = 1 นาที (พร้อมหน้าจอตัวนับถอยหลัง)
+   */
+  LOCKOUT_DURATION_MS: 60000,
+
+  /**
+   * จำนวนตัวอย่างเวกเตอร์ใบหน้าขั้นต่ำในการลงทะเบียน (Enrollment Samples)
+   * ต้องเก็บอย่างน้อย 3 มุมมอง (หน้าตรง, หันซ้ายเล็กน้อย, หันขวาเล็กน้อย)
+   */
+  ENROLL_MIN_SAMPLES: 3,
+  ENROLL_MAX_SAMPLES: 5,
+
+  /**
+   * รหัส PIN สำหรับเจ้าหน้าที่ข้ามระบบในกรณีฉุกเฉิน (Staff Bypass Emergency PIN)
+   * ต้องผ่านการยืนยันตัวตนและบันทึก Audit Log ทุกครั้ง
+   */
+  DEFAULT_STAFF_PIN: '9999',
+
+  /**
+   * Salt สำหรับการแฮชรหัส PIN (ป้องกัน Rainbow Table Attack)
+   */
+  PIN_SALT: 'drtechcare_biometric_salt_2026',
+
+  // =========================================================================
+  // 5. การแสดงผล UX & โหมดดีบัก (Privacy & Transparency)
   // =========================================================================
 
   /**
@@ -117,16 +158,68 @@ export function cosineToPercent(cosSim: number): number {
 }
 
 /**
- * ฟังก์ชันประเมินระดับผลการสแกนใบหน้า (3 ระดับ)
+ * ฟังก์ชันประเมินระดับผลการสแกนใบหน้า (3 ระดับ พร้อมตรวจสอบ Margin ป้องกันคนหน้าคล้าย)
  */
 export type BiometricMatchLevel = 'pass' | 'near-match' | 'no-match';
 
-export function evaluateBiometricMatchLevel(similarityScore: number): BiometricMatchLevel {
+export interface BiometricEvaluationDecision {
+  matchLevel: BiometricMatchLevel;
+  isAmbiguous: boolean;
+  margin: number;
+  reasonTh: string;
+}
+
+export function evaluateBiometricMatchLevel(
+  similarityScore: number,
+  secondSimilarityScore: number = -1
+): BiometricMatchLevel {
+  const decision = evaluateBiometricMatchWithMargin(similarityScore, secondSimilarityScore);
+  return decision.matchLevel;
+}
+
+export function evaluateBiometricMatchWithMargin(
+  similarityScore: number,
+  secondSimilarityScore: number = -1
+): BiometricEvaluationDecision {
+  // กรณีที่ 1: คะแนนไม่ถึงเกณฑ์ขั้นต่ำ (< 0.75) -> ไม่ตรงแน่นอน
+  if (similarityScore < BIOMETRIC_CONFIG.THRESHOLD_NEAR) {
+    return {
+      matchLevel: 'no-match',
+      isAmbiguous: false,
+      margin: secondSimilarityScore >= 0 ? Math.max(0, similarityScore - secondSimilarityScore) : 1.0,
+      reasonTh: 'ความคล้ายคลึงต่ำกว่าเกณฑ์ขั้นต่ำ (< 75%)',
+    };
+  }
+
+  // กรณีที่มีคะแนนอันดับ 2 (มีผู้ป่วยมากกว่า 1 คนในฐานข้อมูล)
+  const hasSecondCandidate = secondSimilarityScore >= 0;
+  const margin = hasSecondCandidate ? similarityScore - secondSimilarityScore : 1.0;
+
+  // กรณีที่ 2: คะแนนถึงเกณฑ์ Auto-login (>= 0.88)
   if (similarityScore >= BIOMETRIC_CONFIG.THRESHOLD_PASS) {
-    return 'pass';
+    // ตรวจสอบ Margin กับอันดับ 2: ถ้าสูสีกันเกินไป (< 0.08) ถือว่า "ไม่แน่ใจ / หน้าคล้ายกัน"
+    if (hasSecondCandidate && margin < BIOMETRIC_CONFIG.MARGIN_MIN) {
+      return {
+        matchLevel: 'near-match',
+        isAmbiguous: true,
+        margin: Number(margin.toFixed(4)),
+        reasonTh: `คะแนนอันดับ 1 (${Math.round(similarityScore * 100)}%) และอันดับ 2 (${Math.round(secondSimilarityScore * 100)}%) ใกล้เคียงกันเกินไป (Margin ${(margin * 100).toFixed(1)}% < 8.0%) ต้องยืนยัน PIN`,
+      };
+    }
+
+    return {
+      matchLevel: 'pass',
+      isAmbiguous: false,
+      margin: Number(margin.toFixed(4)),
+      reasonTh: 'ผ่านเกณฑ์ตรวจสอบชัดเจน (ความคล้ายคลึงสูงและมี Margin ชัดเจน)',
+    };
   }
-  if (similarityScore >= BIOMETRIC_CONFIG.THRESHOLD_NEAR) {
-    return 'near-match';
-  }
-  return 'no-match';
+
+  // กรณีที่ 3: คะแนนอยู่ในช่วงก้ำกึ่ง Near-match (75% - 87%)
+  return {
+    matchLevel: 'near-match',
+    isAmbiguous: false,
+    margin: Number(margin.toFixed(4)),
+    reasonTh: 'ความคล้ายคลึงอยู่ในเกณฑ์เกือบตรง (75% - 87%) ต้องยืนยัน PIN',
+  };
 }
