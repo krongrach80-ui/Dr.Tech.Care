@@ -1,0 +1,45 @@
+{
+  "id": 8,
+  "code": "P-0008",
+  "username": "suda",
+  "name": "นางสุดา ศรีอ่อน",
+  "first_name": "นางสุดา",
+  "last_name": "ศรีอ่อน",
+  "age": 75,
+  "gender": "female",
+  "phone": "087-654-3210",
+  "status": "suspended",
+  "diagnosis": "ฟื้นฟูหลังผ่าตัดเปลี่ยนข้อสะโพกเทียม (Post THA)",
+  "chief_complaint": "ฟื้นฟูหลังผ่าตัดเปลี่ยนข้อสะโพกเทียม (Post THA)",
+  "medical_history": "",
+  "treatment_plan": "",
+  "assignedTherapistName": "กภ. พิมพ์ชนก สุขเกษม",
+  "assignedTherapistId": 2,
+  "assigned_exercises": [
+    {
+      "id": "shoulder_raise",
+      "name": "กางแขนด้านข้าง (Shoulder Abduction)",
+      "target_angle": 90,
+      "hold_seconds": 3,
+      "reps": 10
+    },
+    {
+      "id": "overhead_reach",
+      "name": "ยกแขนขึ้นเหนือศีรษะ (Overhead Reach)",
+      "target_angle": 120,
+      "hold_seconds": 3,
+      "reps": 10
+    },
+    {
+      "id": "elbow_flexion",
+      "name": "งอและเหยียดข้อศอก (Elbow Flexion)",
+      "target_angle": 140,
+      "hold_seconds": 2,
+      "reps": 12
+    }
+  ],
+  "face_vector": null,
+  "face_image_url": null,
+  "created_at": "2026-10-14",
+  "last_active": "พร้อมรับบริการ"
+}

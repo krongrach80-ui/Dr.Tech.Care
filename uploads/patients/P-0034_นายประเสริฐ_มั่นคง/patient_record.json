@@ -1,0 +1,45 @@
+{
+  "id": 34,
+  "code": "P-0034",
+  "username": "prasert",
+  "name": "นายประเสริฐ มั่นคง",
+  "first_name": "นายประเสริฐ",
+  "last_name": "มั่นคง",
+  "age": 70,
+  "gender": "male",
+  "phone": "082-111-2233",
+  "status": "active",
+  "diagnosis": "โรคหลอดเลือดสมองระยะฟื้นตัว กล้ามเนื้อซีกขวาอ่อนแรง (Post Stroke Hemiparesis)",
+  "chief_complaint": "โรคหลอดเลือดสมองระยะฟื้นตัว กล้ามเนื้อซีกขวาอ่อนแรง (Post Stroke Hemiparesis)",
+  "medical_history": "",
+  "treatment_plan": "",
+  "assignedTherapistName": "กภ. พิมพ์ชนก สุขเกษม",
+  "assignedTherapistId": 2,
+  "assigned_exercises": [
+    {
+      "id": "shoulder_raise",
+      "name": "กางแขนด้านข้าง (Shoulder Abduction)",
+      "target_angle": 90,
+      "hold_seconds": 3,
+      "reps": 10
+    },
+    {
+      "id": "overhead_reach",
+      "name": "ยกแขนขึ้นเหนือศีรษะ (Overhead Reach)",
+      "target_angle": 120,
+      "hold_seconds": 3,
+      "reps": 10
+    },
+    {
+      "id": "elbow_flexion",
+      "name": "งอและเหยียดข้อศอก (Elbow Flexion)",
+      "target_angle": 140,
+      "hold_seconds": 2,
+      "reps": 12
+    }
+  ],
+  "face_vector": null,
+  "face_image_url": null,
+  "created_at": "2026-10-14",
+  "last_active": "พร้อมรับบริการ"
+}

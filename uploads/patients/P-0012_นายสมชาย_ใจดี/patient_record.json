@@ -1,0 +1,45 @@
+{
+  "id": 12,
+  "code": "P-0012",
+  "username": "somchai",
+  "name": "นายสมชาย ใจดี",
+  "first_name": "นายสมชาย",
+  "last_name": "ใจดี",
+  "age": 68,
+  "gender": "male",
+  "phone": "081-998-1122",
+  "status": "active",
+  "diagnosis": "ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder - Subacute Phase)",
+  "chief_complaint": "ข้อไหล่ติดระยะฟื้นฟู (Frozen Shoulder - Subacute Phase)",
+  "medical_history": "",
+  "treatment_plan": "",
+  "assignedTherapistName": "กภ. ธนากร วงศ์สวัสดิ์",
+  "assignedTherapistId": 1,
+  "assigned_exercises": [
+    {
+      "id": "shoulder_raise",
+      "name": "กางแขนด้านข้าง (Shoulder Abduction)",
+      "target_angle": 90,
+      "hold_seconds": 3,
+      "reps": 10
+    },
+    {
+      "id": "overhead_reach",
+      "name": "ยกแขนขึ้นเหนือศีรษะ (Overhead Reach)",
+      "target_angle": 120,
+      "hold_seconds": 3,
+      "reps": 10
+    },
+    {
+      "id": "elbow_flexion",
+      "name": "งอและเหยียดข้อศอก (Elbow Flexion)",
+      "target_angle": 140,
+      "hold_seconds": 2,
+      "reps": 12
+    }
+  ],
+  "face_vector": null,
+  "face_image_url": "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&auto=format&fit=crop&q=80",
+  "created_at": "2026-10-14",
+  "last_active": "พร้อมรับบริการ"
+}
